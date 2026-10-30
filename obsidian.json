@@ -10,11 +10,11 @@
     "es": "Obsidian API"
   },
   "description": {
-    "en": "A runtime other mods build on: the game's data by name, checked changes that can be undone, and named actions. It does nothing by itself.",
-    "pt-BR": "Um runtime para outros mods: os dados do jogo por nome, alterações verificadas que podem ser desfeitas e ações prontas. Sozinho, não faz nada.",
-    "zh-CN": "供其他模组使用的运行时：按名称访问游戏数据、可撤销的安全修改和现成操作。单独启用时不起作用。",
-    "fr": "Un runtime pour les autres mods : les données du jeu par nom, des modifications vérifiées et réversibles, et des actions prêtes à l'emploi. Seul, il ne fait rien.",
-    "es": "Un runtime para otros mods: los datos del juego por nombre, cambios verificados que se pueden deshacer y acciones listas. Por sí solo no hace nada."
+    "en": "A library other mods build on: the game's data by name, checked changes that can be undone, and named actions. It does nothing by itself.",
+    "pt-BR": "Uma biblioteca para outros mods: os dados do jogo por nome, alterações verificadas que podem ser desfeitas e ações prontas. Sozinho, não faz nada.",
+    "zh-CN": "供其他模组使用的库：按名称访问游戏数据、可撤销的安全修改和现成操作。单独启用时不起作用。",
+    "fr": "Une bibliothèque pour les autres mods : les données du jeu par nom, des modifications vérifiées et réversibles, et des actions prêtes à l'emploi. Seul, il ne fait rien.",
+    "es": "Una biblioteca para otros mods: los datos del juego por nombre, cambios verificados que se pueden deshacer y acciones listas. Por sí solo no hace nada."
   },
   "authors": [
     "Obsidian"

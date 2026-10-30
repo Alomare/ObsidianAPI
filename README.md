@@ -1,6 +1,6 @@
 # Obsidian API
 
-A runtime for [Obsidian](https://github.com/Alomare/ObsidianModManager) mods on HELLDIVERS (2015). It gives other mods the game's data by name, checked changes that can be undone, and ready actions. It does nothing by itself. [Obsidian Trainer](https://github.com/Alomare/ObsidianTrainer) is built on it and uses nothing you can't use.
+A library for [Obsidian](https://github.com/Alomare/ObsidianModManager) mods on HELLDIVERS (2015). It gives other mods the game's data by name, checked changes that can be undone, and ready actions. It does nothing by itself. [Obsidian Trainer](https://github.com/Alomare/ObsidianTrainer) is built on it and uses nothing you can't use.
 
 It has been tested solo and offline, but not yet with a second player.
 
