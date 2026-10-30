@@ -1,0 +1,35 @@
+# A release: pushing a tag like v1.2.0 packs the mod into a zip and publishes it, and Obsidian offers
+# it as an update to anyone on an older version. The tag has to match "version" in obsidian.json.
+#
+# A tag with a suffix (v1.2.0-beta.1) makes a prerelease, which Obsidian doesn't offer, so use one to
+# try a build by hand. What goes in the zip is set by export-ignore in .gitattributes.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The tag matches obsidian.json
+        run: |
+          have=$(jq -r .version obsidian.json)
+          [ "$have" = "${GITHUB_REF_NAME#v}" ] || { echo "obsidian.json says $have, the tag says $GITHUB_REF_NAME"; exit 1; }
+
+      - name: Pack and publish
+        run: |
+          id=$(jq -r .id obsidian.json)
+          version="${GITHUB_REF_NAME#v}"
+          git archive --format=zip --prefix="$id/" -o "$id-$version.zip" "$GITHUB_SHA"
+          pre=""
+          [[ "$GITHUB_REF_NAME" == *-* ]] && pre="--prerelease"
+          gh release create "$GITHUB_REF_NAME" "$id-$version.zip" --title "$(jq -r .name.en obsidian.json) $version" --generate-notes $pre
