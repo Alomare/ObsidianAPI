@@ -6,7 +6,7 @@ It has been tested solo and offline, but not yet with a second player.
 
 ## How to Use
 
-Obsidian API comes with Obsidian, in the STARTER PACK folder, and updates from this repository. Mods that need it switch it on with them, so players don't have to.
+Obsidian API comes with Obsidian, in the Obsidian Kit folder, and updates from this repository. Mods that need it switch it on with them, so players don't have to.
 
 To build on it, list it in your mod's `obsidian.json`:
 
