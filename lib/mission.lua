@@ -333,6 +333,7 @@ effects.define({ id = "mutator",
 		if not (timed and ctx.name == "game" and ctx.unit and game.is_host()) then return end
 		mutator_timer = mutator_timer + dt
 		if mutator_timer >= timed.interval then
+			-- Zero first: a drop that fails waits for its turn, rather than trying every frame.
 			mutator_timer = 0
 			mutator_timer = -drop_near(ctx, timed)
 		end
