@@ -1,6 +1,5 @@
 -- Obsidian API: a runtime other mods build on. Nothing here does anything by itself. A mod lists
 -- "obsidian.api" in requires and asks for it with obsidian.import("obsidian.api").
--- Everything goes through the game's own paths: see docs/superpowers/specs/2026-10-30-obsidian-api-design.md.
 local game = obsidian.module("lib/game")
 local effects = obsidian.module("lib/effects")
 local edits = obsidian.module("lib/edits")
