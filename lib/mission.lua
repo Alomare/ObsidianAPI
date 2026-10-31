@@ -3,6 +3,8 @@
 -- this peer owns, so an object a client is using can be missed; each action says what it reached.
 local game = obsidian.module("lib/game")
 local effects = obsidian.module("lib/effects")
+local catalog = obsidian.module("lib/catalog")
+local stratagems = obsidian.module("lib/stratagems")
 
 local M = {}
 
@@ -57,6 +59,55 @@ local function finish_boss()
 		end
 	end
 end
+
+-- Every objective of this mission: { name, text, type, state, group, done, total, position }. state:
+-- pending, complete or failed. done and total: the count the objective list shows, where it has one.
+-- position: a plain copy of the first marker, or nil.
+function M.objectives()
+	local st = mission_state()
+	local out = {}
+	if not (st and st.mission_manager) then return out end
+	for _, o in ipairs(st.mission_manager:get_objectives()) do
+		local params = o.params or {}
+		local at = o.position and o.position[1]
+		out[#out + 1] = { name = o.name, text = (string.gsub(catalog.text(o.name), "#AMOUNT", tostring(params[2]))), type = o.type, state = o.state,
+			group = o.group, done = params[1], total = params[2], position = at and { x = at.x, y = at.y, z = at.z } or nil }
+	end
+	return out
+end
+
+-- Convoys and escorted people can't die. The game switches them on and off as they move, so this
+-- repeats, and on the way out gives them what the game would have set by then. Masters only: a
+-- client holding one of these keeps it mortal.
+local protect_timer = 0
+
+local function convoy_safe(state)
+	return state.mission_state ~= "pending" or state.enabled == true
+end
+
+local function each_protected(fn)
+	for unit, ctx in pairs(game.masters("objective_convoy")) do fn(unit, convoy_safe(ctx.state)) end
+	for unit, ctx in pairs(game.masters("npc_escort")) do fn(unit, ctx.state.in_goal == true) end
+end
+
+local function protect(unit)
+	local health = game.master(unit, "health")
+	if health and not health.invincible then game.command(unit, "health", "set_invincible", true) end
+end
+
+effects.define({ id = "protect_objectives",
+	apply = function() each_protected(protect) end,
+	frame = function(_, _, dt)
+		protect_timer = protect_timer + dt
+		if protect_timer >= 1 then
+			protect_timer = 0
+			each_protected(protect)
+		end
+	end,
+	remove = function()
+		each_protected(function(unit, safe) game.command(unit, "health", "set_invincible", safe) end)
+	end,
+})
 
 -- The console leaves a player standing in a terminal it has finished. Only this peer's own avatar
 -- can be told, so a client in a terminal has to step out by hand.
@@ -225,6 +276,81 @@ effects.define({ id = "no_game_over",
 		if ctx.name == "game" and game.is_host() then ctx.state.game_over_timer = 999 end
 	end,
 })
+
+-- The game's proving ground modifiers, in any mission. One at a time, as the game has them. Two are
+-- read live from the level's params, a field that's empty in a normal mission. Level generation reads
+-- it too, so it's set only with an avatar on the map, and a real proving ground keeps its own. The
+-- other two are timers: flares near a player, every drop_interval, as the proving grounds drop them.
+M.MUTATORS = { "super_boots", "what_goes_around", "orbital_support", "orbital_bombardments" }
+
+local READ_LIVE = { super_boots = true, what_goes_around = true }
+local TIMED = {
+	orbital_support = { interval = 20, subtypes = { "support", "support_weapon" } },
+	orbital_bombardments = { interval = 15, subtypes = { "strike" }, gives_warning = true },
+}
+local live_params = {}
+local mutator_timer = 0
+
+local function set_params(ctx, name)
+	local level = ctx.name == "game" and type(ctx.state) == "table" and ctx.state.generated_level
+	if not level then return end
+	if not READ_LIVE[name] then
+		if level.provinggrounds_params == live_params then level.provinggrounds_params = nil end
+	elseif ctx.unit and (level.provinggrounds_params == nil or level.provinggrounds_params == live_params) then
+		live_params.sub_modifier = name
+		level.provinggrounds_params = live_params
+	end
+end
+
+-- One flare 4 to 10 m from a player. Answers the extra wait until the next one.
+local function drop_near(ctx, timed)
+	local names = {}
+	for _, subtype in ipairs(timed.subtypes) do
+		for _, item in ipairs(catalog.by_subtype(subtype)) do names[#names + 1] = item.name end
+	end
+	local avatars = game.all_avatars()
+	if #names == 0 or #avatars == 0 then return 0 end
+	local s = catalog.stratagem(names[math.random(#names)])
+	local at = game.global("Unit").world_position(avatars[math.random(#avatars)].unit, 0)
+	local points = game.global("SpatialSpawnUtlity").generate_points_in_donut(at, 4, 10, 360, game.global("Quaternion").identity(), 1, 1, ctx.state.world_proxy:get_world())
+	local activation = s.activation_time or 0
+	if not timed.gives_warning then
+		stratagems.call_unowned(s, points[1], 0)
+		return 0
+	end
+	stratagems.call_unowned(s, points[1], math.max(activation, 2))
+	return activation
+end
+
+effects.define({ id = "mutator",
+	apply = function(ctx, name)
+		mutator_timer = 0
+		set_params(ctx, name)
+	end,
+	frame = function(ctx, name, dt)
+		set_params(ctx, name)
+		local timed = TIMED[name]
+		if not (timed and ctx.name == "game" and ctx.unit and game.is_host()) then return end
+		mutator_timer = mutator_timer + dt
+		if mutator_timer >= timed.interval then
+			mutator_timer = 0
+			mutator_timer = -drop_near(ctx, timed)
+		end
+	end,
+	remove = function(ctx)
+		local level = type(ctx.state) == "table" and ctx.state.generated_level
+		if level and level.provinggrounds_params == live_params then level.provinggrounds_params = nil end
+	end,
+})
+
+-- name: one of MUTATORS, or nil or false for none.
+function M.mutator(name)
+	if not name then return effects.set("mutator", false) end
+	for _, known in ipairs(M.MUTATORS) do
+		if known == name then return effects.set("mutator", name) end
+	end
+	return false, "unknown_mutator"
+end
 
 function M.spawn_samples()
 	local st = mission_state()

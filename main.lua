@@ -14,6 +14,11 @@ local stratagems = obsidian.module("lib/stratagems")
 local enemies = obsidian.module("lib/enemies")
 local mission = obsidian.module("lib/mission")
 local progress = obsidian.module("lib/progress")
+local events = obsidian.module("lib/events")
+local combat = obsidian.module("lib/combat")
+local vehicles = obsidian.module("lib/vehicles")
+local lobby = obsidian.module("lib/lobby")
+local ui = obsidian.module("lib/ui")
 
 obsidian.on_require("foundation/lua/debug/debug", console.install)
 obsidian.on_frame(console.install)
@@ -33,6 +38,7 @@ obsidian.on_frame(function()
 	local dt = rawget(_G, "ENGINE_DT") or 0.016
 	game.tick()
 	effects.tick(dt)
+	events.tick()
 end)
 
 -- Stat-changed play earns no Steam achievements. The hook is the mod's, so it's off when the mod is.
@@ -47,6 +53,14 @@ end)
 
 obsidian.hook("LoadoutSettings", "find_stratagem", function(original, queue, ...)
 	return stratagems.find(function(q) return original(q) end, queue, ...)
+end)
+
+obsidian.hook("HealthComponent", "calculate_damage", combat.health)
+obsidian.hook("ShieldComponent", "calculate_damage", combat.shield)
+
+obsidian.hook("StratagemsDisabledAreaComponent", "is_unit_inside_any_area", function(original, ...)
+	if effects.is_on("ignore_jammers") then return false end
+	return original(...)
 end)
 
 obsidian.hook("StateMissionStart", "update", function(original, self, ...)
@@ -69,4 +83,9 @@ return {
 	enemies = enemies,
 	mission = mission,
 	progress = progress,
+	events = events,
+	combat = combat,
+	vehicles = vehicles,
+	lobby = lobby,
+	ui = ui,
 }

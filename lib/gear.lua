@@ -145,6 +145,27 @@ function M.give_perk(name)
 	return false, "not_available"
 end
 
+function M.remove_perk()
+	local unit, why = my_unit()
+	if not unit then return false, why end
+	return change_perk(unit, 0, nil)
+end
+
+-- path: a backpack_path from catalog.backpacks. The game reads settings no other path has, outside
+-- any pcall, so a path from elsewhere is refused. upgrade as in give_weapon. The old pack drops.
+function M.give_backpack(path, upgrade)
+	local unit, why = my_unit()
+	if not unit then return false, why end
+	local item = catalog.backpack(path)
+	if not item then return false, "not_available" end
+	local value, problem = upgrade_value(unit, item.stratagem, upgrade)
+	if not value then return false, problem end
+	local settings = game.global("LuaSettingsManager"):get_modified_settings(path, value)
+	local info = settings and settings.backpack_info
+	game.command(unit, "inventory", "set_backpack", { backpack_path = path, num_uses = info and info.num_uses or 0, upgrade_value = value })
+	return true
+end
+
 function M.refill_backpack()
 	local unit, why = my_unit()
 	if not unit then return false, why end
@@ -166,6 +187,7 @@ local function vehicle()
 	if alive(seat) then return seat end
 	return nil
 end
+M.current_vehicle = vehicle
 
 function M.repair_vehicle()
 	local v = vehicle()
@@ -181,6 +203,13 @@ function M.refill_vehicle()
 		aux().queue_command_master_interface(v, "weapon", "set_ammo", { num_rounds = 1000000, num_mags = 1000000 })
 	end
 	game.command(v, "exosuit_inventory", "set_full_ammo")
+	-- Some vehicles carry their guns as units of their own, such as the arms of the second exosuit.
+	local seat = game.master(v, "seat")
+	for _, weapon in ipairs(seat and seat.seat_weapon_units or {}) do
+		if weapon ~= v and alive(weapon) and aux().owned(weapon) and aux().has_interface(weapon, "weapon") then
+			aux().queue_command_master_interface(weapon, "weapon", "set_ammo", { num_rounds = 1000000, num_mags = 1000000 })
+		end
+	end
 	return true
 end
 

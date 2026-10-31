@@ -35,6 +35,11 @@
     "lib/stratagems.lua",
     "lib/enemies.lua",
     "lib/mission.lua",
-    "lib/progress.lua"
+    "lib/progress.lua",
+    "lib/events.lua",
+    "lib/combat.lua",
+    "lib/vehicles.lua",
+    "lib/lobby.lua",
+    "lib/ui.lua"
   ]
 }

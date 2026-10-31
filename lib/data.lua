@@ -80,6 +80,13 @@ M.fields = {
 	{ family="stratagem", scope="stratagem", sample="stratagem_turret", path="num_uses", type="number", min=1, max=255, apply="loadout", opt=true, label="Uses", meaning="Absent means unlimited" },
 	{ family="status", scope="status", sample="heavy_burn", path="power", type="number", min=0, max=1000, apply="live", opt=true, label="Damage over time", meaning="Burn and damage statuses; ignores armor" },
 	{ family="status", scope="status", sample="heavy_burn", path="duration", type="number", min=0.1, max=60, apply="live", label="Duration", meaning="Copied when the status is applied" },
+	{ family="status", scope="status", sample="flashbang_slow", path="amount", type="number", min=0, max=1, apply="use", label="Slow amount", meaning="Speed becomes 1 - amount; copied when the status is applied" },
+	{ family="vehicle", scope="unit", sample="gameobjects/gameobject_mechsuit_01", path="vehicle_info.move_speed", type="number", min=0.5, max=30, apply="use", label="Top speed", meaning="Read as the vehicle starts up, so get out and back in" },
+	{ family="vehicle", scope="unit", sample="gameobjects/gameobject_bike_01", path="vehicle_info.turn_speed", type="number", min=0.01, max=360, apply="use", label="Turn speed", meaning="Exosuits: a blend under 1, less is quicker. Others: degrees a second" },
+	{ family="vehicle", scope="unit", sample="gameobjects/gameobject_mechsuit_01", path="vehicle_info.acceleration", type="number", min=0.5, max=60, apply="spawn", label="Acceleration", meaning="Sent to the mover when the vehicle spawns" },
+	{ family="vehicle", scope="unit", sample="gameobjects/gameobject_mechsuit_01", path="vehicle_info.deceleration", type="number", min=0.5, max=60, apply="spawn", label="Braking", meaning="Sent to the mover when the vehicle spawns" },
+	{ family="backpack", scope="unit", sample="equipment/equipment_jumppack_01", path="backpack_info.num_uses", type="number", min=1, max=60, apply="spawn", label="Uses on pickup", meaning="The smallest network field for it is uint6" },
+	{ family="backpack", scope="unit", sample="equipment/equipment_jumppack_01", path="backpack_info.num_uses_max", type="number", min=1, max=60, apply="spawn", label="Most uses", meaning="Cap for refills" },
 	{ family="toughness", scope="unit", sample="characters/bug_warrior/bug_warrior", path="health_info.armor_max", type="number", min=0, max=20000, apply="spawn", label="Armor (grazing)", meaning="Armor at 90 degrees incidence" },
 	{ family="toughness", scope="unit", sample="characters/bug_warrior/bug_warrior", path="health_info.health", type="number", min=1, max=32767, apply="spawn", label="Health", meaning="hitpoints is int16; bosses exceed it in shipped data" },
 	-- Enemies

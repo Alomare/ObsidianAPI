@@ -139,6 +139,72 @@ function M.kill_near(radius)
 	return true
 end
 
+function M.kill(unit)
+	if not game.in_mission() then return false, "not_in_mission" end
+	if not game.slaves("enemy")[unit] then return false, "no_enemy" end
+	kill(unit, game.my_unit())
+	return true
+end
+
+local function alive_enemy(unit)
+	local units = game.global("Unit")
+	if not (unit and units.alive(unit) and game.slaves("enemy")[unit]) then return nil end
+	local health = aux().state(unit, "health")
+	return health and not health.is_dead and health or nil
+end
+
+-- What the game knows about one enemy: { key, name, faction, boss, hitpoints, max_hitpoints, owned }.
+-- The catalog fields are nil for a unit it doesn't list.
+function M.info(unit)
+	local health = alive_enemy(unit)
+	if not health then return nil end
+	local path = game.global("Unit").get_data(unit, "unit_path")
+	local enemy = path and catalog.enemy(path) or {}
+	return { key = enemy.key, name = enemy.name, faction = enemy.faction, boss = enemy.boss,
+		hitpoints = health.hitpoints, max_hitpoints = health.max_hitpoints, owned = aux().owned(unit) }
+end
+
+-- The closest living enemy to a position, or to the player, and how far it is.
+function M.nearest(pos)
+	local units, v3 = game.global("Unit"), game.global("Vector3")
+	if not pos then
+		local me = game.my_unit()
+		if not me then return nil end
+		pos = units.world_position(me, 0)
+	end
+	local best, best_distance = nil, math.huge
+	for _, unit in ipairs(M.list()) do
+		local distance = v3.distance(units.world_position(unit, 0), pos)
+		if distance < best_distance then best, best_distance = unit, distance end
+	end
+	return best, best and best_distance or nil
+end
+
+-- A hit of no power that carries the status, the way weapons do it, so it reaches the owner from any
+-- peer. The status command itself fails on an enemy this peer doesn't own.
+function M.apply_status(unit, template)
+	if not game.in_mission() then return false, "not_in_mission" end
+	local templates = game.global("StatusTemplateSettings")
+	if not (templates and templates[template]) then return false, "unknown_status" end
+	if not alive_enemy(unit) then return false, "no_enemy" end
+	local me = game.my_unit()
+	aux().queue_command_interface(unit, "damageable", "do_damage",
+		{ power = 0, angle_hit = 0, angle_incidence = 0, owner_unit = me, attacker_unit = me, hit_status_effects = { template } })
+	return true
+end
+
+function M.stun_near(radius)
+	if not game.in_mission() then return false, "not_in_mission" end
+	local me = game.my_unit()
+	if not me then return false, "no_avatar" end
+	local units, v3 = game.global("Unit"), game.global("Vector3")
+	local at = units.world_position(me, 0)
+	for _, unit in ipairs(M.list()) do
+		if v3.distance(units.world_position(unit, 0), at) <= radius then M.apply_status(unit, "flashbang_stun") end
+	end
+	return true
+end
+
 -- Gone with no corpse, no kill and no objective progress: a clean-up.
 function M.despawn_all()
 	local _, _, st = managers()
@@ -301,5 +367,92 @@ effects.define({ id = "enemy_cap",
 		if em then release(em, "max_num_enemies") end
 	end,
 })
+
+-- field of a manager, as an effect. which: 1 for the encounter manager, 2 for the patrol manager.
+local function held_number(id, which, field)
+	local function manager()
+		return (select(which, managers()))
+	end
+	local function write(_, value)
+		local m = manager()
+		if m and game.is_host() then hold(m, field, value) end
+	end
+	effects.define({ id = id, apply = write, frame = write,
+		remove = function()
+			local m = manager()
+			if m then release(m, field) end
+		end,
+	})
+end
+
+-- The budget of each encounter. The mission keeps its seed, its waves and its objectives.
+held_number("enemy_difficulty", 1, "mission_difficulty")
+held_number("patrol_count", 2, "max_num_patrols")
+held_number("patrol_interval", 2, "patrol_spawn_interval")
+
+local PRESSURE = {
+	cap = { id = "enemy_cap", min = 1, max = M.MAX_CAP },
+	difficulty = { id = "enemy_difficulty", min = 1, max = 15 },
+	patrols = { id = "patrol_count", min = 0, max = 60 },
+	interval = { id = "patrol_interval", min = 1, max = 120 },
+}
+
+-- Bigger fights with no change to the seed. t: cap, difficulty, patrols, interval. A number sets one,
+-- false gives it back to the game, and one left out stays as it is.
+function M.set_pressure(t)
+	if not game.is_host() then return false, "host_only" end
+	for key, rule in pairs(PRESSURE) do
+		local v = t[key]
+		if v ~= nil and v ~= false and not (type(v) == "number" and v >= rule.min and v <= rule.max) then return false, "out_of_range" end
+	end
+	for key, rule in pairs(PRESSURE) do
+		if t[key] ~= nil then effects.set(rule.id, t[key]) end
+	end
+	return true
+end
+
+-- Names of the waves this mission's faction can have.
+function M.waves()
+	local em = managers()
+	local out = {}
+	for _, wave in ipairs(catalog.waves(em and em.mission_enemy)) do out[#out + 1] = wave.name end
+	return out
+end
+
+local function wave_loaded(wave, groups)
+	for _, event in ipairs(wave.events or {}) do
+		for _, g in ipairs(event.groups or {}) do
+			local group = groups[g.group]
+			if not group then return false end
+			for _, u in ipairs(group.units or {}) do
+				local enemy = catalog.enemy(u.unit_path)
+				if not enemy or not M.available(enemy) then return false end
+			end
+		end
+	end
+	return true
+end
+
+-- A named wave now, at a position or ten metres ahead. Its groups are spawned directly: the game only
+-- runs a wave it picked itself, with bookkeeping that a forced one would break.
+function M.force_wave(name, pos)
+	local em = managers()
+	if not em then return false, "not_in_mission" end
+	if not game.is_host() then return false, "host_only" end
+	if em.encounters_disabled then return false, "spawns_off" end
+	local wave
+	for _, w in ipairs(catalog.waves(em.mission_enemy)) do
+		if w.name == name then wave = w end
+	end
+	if not wave then return false, "unknown_wave" end
+	local groups = game.global("EnemyGroupSettings")
+	if not wave_loaded(wave, groups) then return false, "not_loaded" end
+	pos = pos or world.ahead(10)
+	if not pos then return false, "no_position" end
+	for _, event in ipairs(wave.events or {}) do
+		for _, g in ipairs(event.groups or {}) do em:spawn_group(pos, groups[g.group], nil, wave.cost) end
+	end
+	return true
+end
 
 return M

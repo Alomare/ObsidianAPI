@@ -60,6 +60,10 @@ effects.define({ id = "fast_pods",
 	end,
 })
 
+-- The game's one question about a no-stratagem zone. The hook in main.lua answers it, and the session
+-- gate turns the hook off, so there's nothing to undo here.
+effects.define({ id = "ignore_jammers", remove = function() end })
+
 -- Any first arrow calls the chosen stratagem. The hook in main.lua reads selected.
 effects.define({ id = "any_arrow" })
 
@@ -131,6 +135,40 @@ function M.edit(name, field, value)
 		if upgrade[field] ~= nil then opts.also[#opts.also + 1] = "upgrades." .. level .. "." .. field end
 	end
 	return edits.set_table(catalog.text(name), s, field, value, opts)
+end
+
+-- The flare the game's own timed drops use, in proving grounds and fortify objectives. The rest
+-- follows from it as from a thrown one: the sound, the countdown, the patrol alert, and for Reinforce
+-- the respawn. A stratagem refused in a no-stratagem zone goes back to its owner, if it has one.
+local FLARE = "gameobjects/flare_01"
+
+local function spawn_flare(s, pos, delay, owner, upgrade)
+	local st = game.state()
+	if not (type(st) == "table" and st.entity_spawner) then return false, "not_in_mission" end
+	local flare = st.entity_spawner:spawn_entity(FLARE, pos, game.global("Quaternion").identity(), nil,
+		{ has_been_thrown = true, stratagem_id = s.id, extra_activation_time = delay, owner_unit = owner, upgrade_value = upgrade })
+	game.command(flare, "stratagem", "set_thrown_direction", game.box(game.global("Vector3")(0, 0, 0)))
+	return true
+end
+
+-- A real call-in at a position, delay seconds on top of its own, at the level the player owns. No
+-- cooldown or use is spent.
+function M.call(name, pos, delay)
+	local unit, why = my_unit()
+	if not unit then return false, why end
+	if not pos then return false, "no_position" end
+	local s = catalog.stratagem(name)
+	if not s then return false, "not_available" end
+	delay = delay or 0
+	if type(delay) ~= "number" or delay ~= delay or delay < 0 or delay > 600 then return false, "out_of_range" end
+	local inv = game.master(unit, "inventory")
+	local owned = inv and inv.item_upgrades
+	return spawn_flare(s, pos, delay, unit, owned and owned[s.name] or 0)
+end
+
+-- As the proving grounds do it: nobody's stratagem, at its base level.
+function M.call_unowned(s, pos, delay)
+	return spawn_flare(s, pos, delay or 0, nil, 0)
 end
 
 -- Sends a stratagem to a position with no flare and no call-in.
