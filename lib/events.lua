@@ -7,7 +7,9 @@ local game = obsidian.module("lib/game")
 local M = { delegate = nil }
 
 -- The game's own names. What each one carries is in the wiki.
-M.NAMES = { "on_enemy_killed", "on_enemy_spawned", "on_player_death", "on_objective_completed", "on_stratagem_activated", "on_avatar_extract" }
+M.NAMES = { "on_enemy_killed", "on_enemy_spawned", "on_player_death", "on_objective_completed", "on_stratagem_activated", "on_avatar_extract",
+	"on_killed", "on_dead", "on_health_downed", "on_damage_taken", "on_health_received", "on_stratagem_pre_activated", "on_stratagem_used",
+	"on_stratagem_wielded", "on_extract_shuttle_landed", "on_add_to_stat", "on_pause", "on_mission_end" }
 
 local lists = {}
 local listener = {}
