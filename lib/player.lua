@@ -150,6 +150,220 @@ effects.define({ id = "noclip",
 	end,
 })
 
+-- What a perk or the settings had before an effect changed it, per unit, to give back. A new avatar
+-- starts clean, and the effect goes on it again.
+local held = setmetatable({}, { __mode = "k" })
+
+local function remember(unit, key, value)
+	local old = held[unit]
+	if not old then
+		old = {}
+		held[unit] = old
+	end
+	if old[key] == nil then old[key] = value end
+end
+
+local function recall(unit, key)
+	local old = unit and held[unit]
+	local value = old and old[key]
+	if old then old[key] = nil end
+	return value
+end
+
+-- Armor lives twice: the guarded copy on the master, and the copy the damage sums read. The perk
+-- that sets it sends both (perk_settings.lua:166,173).
+local function set_armor(unit, low, high)
+	local data = { armor_min = low, armor_max = high }
+	game.command(unit, "health", "armor", data)
+	aux().queue_command_slave(unit, "health", "armor", data)
+end
+
+effects.define({ id = "armor",
+	apply = function(ctx, value)
+		local health = game.master(ctx.unit, "health")
+		if not health then return end
+		remember(ctx.unit, "armor_min", health.armor_min or 0)
+		remember(ctx.unit, "armor_max", health.armor_max or 0)
+		set_armor(ctx.unit, value, value)
+	end,
+	remove = function(ctx)
+		local low, high = recall(ctx.unit, "armor_min"), recall(ctx.unit, "armor_max")
+		if low then set_armor(ctx.unit, low, high) end
+	end,
+})
+
+-- A value on a plain field, set by the component's command, with what was there given back.
+local function field_effect(id, component, command, field)
+	effects.define({ id = id,
+		apply = function(ctx, value)
+			local state = game.master(ctx.unit, component)
+			if not state then return end
+			remember(ctx.unit, id, state[field])
+			game.command(ctx.unit, component, command, value)
+		end,
+		remove = function(ctx)
+			local old = recall(ctx.unit, id)
+			if old ~= nil then game.command(ctx.unit, component, command, old) end
+		end,
+	})
+end
+
+field_effect("sprint_speed", "character", "move_speed_sprint_max", "move_speed_sprint_max")
+field_effect("throw_range", "character", "set_throw_range_multiplier", "throw_range_multiplier")
+field_effect("acceleration", "mover", "acceleration", "acceleration")
+field_effect("deceleration", "mover", "deceleration", "deceleration")
+
+-- An on and off pair of one command.
+local function switch_effect(id, component, command, on, off)
+	effects.define({ id = id,
+		apply = function(ctx)
+			if ctx.unit then game.command(ctx.unit, component, command, on) end
+		end,
+		remove = function(ctx)
+			if ctx.unit then game.command(ctx.unit, component, command, off) end
+		end,
+	})
+end
+
+switch_effect("ignore_slow", "mover", "ignore_slow", true, false)
+-- Off, the camera stops holding the player inside the screen.
+switch_effect("no_screen_leash", "mover", "keep_inside_screen", false, true)
+
+-- Getting out of a seat shows the model again, so the frame function looks.
+effects.define({ id = "hide_model",
+	apply = function(ctx)
+		if ctx.unit then game.command(ctx.unit, "customization", "set_visible", false) end
+	end,
+	frame = function(ctx)
+		local state = game.master(ctx.unit, "customization")
+		if state and state.visible ~= false then game.command(ctx.unit, "customization", "set_visible", false) end
+	end,
+	remove = function(ctx)
+		if ctx.unit then game.command(ctx.unit, "customization", "set_visible", true) end
+	end,
+})
+
+-- The look only: armor values are the armor effect's. A player with the perk keeps it on the way out.
+effects.define({ id = "heavy_armor_look",
+	apply = function(ctx)
+		local state = game.master(ctx.unit, "customization")
+		if not state then return end
+		remember(ctx.unit, "heavy_armor", state.heavy_armor or 1)
+		game.command(ctx.unit, "customization", "enable_heavy_armor")
+	end,
+	remove = function(ctx)
+		if recall(ctx.unit, "heavy_armor") == 1 then game.command(ctx.unit, "customization", "disable_heavy_armor") end
+	end,
+})
+
+local function boxed_color(c)
+	return game.global("QuaternionAux").box_elements({}, 255, c[1], c[2], c[3])
+end
+
+-- The outline a player shows through walls. value: { r, g, b }.
+effects.define({ id = "outline_color",
+	apply = function(ctx, value)
+		if ctx.unit then game.command(ctx.unit, "customization", "set_silhouette_color", boxed_color(value)) end
+	end,
+	remove = function(ctx)
+		local go = ctx.record and ctx.record.player_go
+		local colors = game.global("GameSettings").player_colors
+		local own = go and (not go.has or go:has("index")) and colors and colors[go:get("index")]
+		if ctx.unit and own then game.command(ctx.unit, "customization", "set_silhouette_color", own) end
+	end,
+})
+
+function M.set_outline(r, g, b)
+	if r == nil then return effects.set("outline_color", false) end
+	for _, n in ipairs({ r, g or false, b or false }) do
+		if not (type(n) == "number" and n >= 0 and n <= 255) then return false, "out_of_range" end
+	end
+	return effects.set("outline_color", { r, g, b })
+end
+
+local function status_settings(name)
+	local templates = game.global("StatusTemplateSettings")
+	return templates and templates[name]
+end
+
+local function known_element(name)
+	for _, template in pairs(game.global("StatusTemplateSettings") or {}) do
+		if template.element == name then return true end
+	end
+	return false
+end
+
+-- The game indexes its template table with this name outside any pcall, so an unknown one is refused.
+-- name: a status template or an element such as "fire".
+function M.clear_status(name)
+	local unit, why = my_unit()
+	if not unit then return false, why end
+	if status_settings(name) then
+		game.command(unit, "status", "remove_status", name)
+	elseif known_element(name) then
+		game.command(unit, "status", "remove_statuses_by_element", name)
+	else
+		return false, "unknown_status"
+	end
+	return true
+end
+
+local function immunity_effect(name)
+	local id = "immune_" .. name
+	if effects.defs[id] then return id end
+	local element = not status_settings(name)
+	effects.define({ id = id,
+		apply = function(ctx)
+			if ctx.unit then game.command(ctx.unit, "status", element and "add_immunity_element" or "add_immunity_status", name) end
+		end,
+		-- The game only adds these, so they come off the plain table.
+		remove = function(ctx)
+			local state = game.master(ctx.unit, "status")
+			local list = state and state[element and "immunities_elements" or "immunities_statuses"]
+			if list then list[name] = nil end
+		end,
+	})
+	return id
+end
+
+-- name as in clear_status. Stays on across respawns, until on is false.
+function M.immune(name, on)
+	if not (status_settings(name) or known_element(name)) then return false, "unknown_status" end
+	return effects.set(immunity_effect(name), on ~= false)
+end
+
+function M.knockdown()
+	local unit, why = my_unit()
+	if not unit then return false, why end
+	game.command(unit, "character", "do_knockdown")
+	return true
+end
+
+-- Drops what the player carries, such as a hard drive.
+function M.drop_carried()
+	local unit, why = my_unit()
+	if not unit then return false, why end
+	game.command(unit, "character", "drop_carry")
+	return true
+end
+
+-- Adds hitpoints, past the maximum if asked to: the game doesn't stop it here.
+function M.heal_by(amount)
+	local unit, why = my_unit()
+	if not unit then return false, why end
+	if not (type(amount) == "number" and amount > 0 and amount < 1000000) then return false, "out_of_range" end
+	game.command(unit, "health", "do_heal", amount)
+	return true
+end
+
+function M.set_health(hitpoints)
+	local unit, why = my_unit()
+	if not unit then return false, why end
+	if not (type(hitpoints) == "number" and hitpoints > 0 and hitpoints < 1000000) then return false, "out_of_range" end
+	game.command(unit, "health", "set_hitpoints", hitpoints)
+	return true
+end
+
 function M.heal()
 	local unit, why = my_unit()
 	if not unit then return false, why end
