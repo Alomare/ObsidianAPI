@@ -27,7 +27,9 @@ obsidian.keybind("panic", function()
 end)
 ```
 
-Actions answer `true`, or `false` and a short reason such as `"host_only"` or `"not_in_mission"`. The Obsidian API page in the app's Wiki covers the rest.
+Actions answer `true`, or `false` and a short reason such as `"host_only"` or `"not_in_mission"`.
+
+The API is a library: it runs as a session mod only when a session mod requires it. A client mod can require it too and stay a client mod. It can then read the game's data and use `api.ui`, `api.audio` and `api.events`, and anything that changes the shared game answers `false, "needs_session"`. The Obsidian API page in the app's Wiki covers the rest.
 
 ## Releasing
 

@@ -18,7 +18,7 @@ local wanted = false
 local function noop() end
 
 local function dispatch(name, ...)
-	if not obsidian.session.cleared() then return end
+	if game.session_mode and not obsidian.session.cleared() then return end
 	for _, entry in ipairs(lists[name]) do
 		local ok, err = pcall(entry.run, ...)
 		if not ok then obsidian.log("event " .. name .. ": " .. tostring(err)) end

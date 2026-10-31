@@ -5,6 +5,10 @@
 -- goes through the game's own setter, and data edits refuse those keys (see edits.lua).
 local M = { due = {} }
 
+-- This library is a session mod when a session mod requires it, and a client mod otherwise. A loader
+-- from before obsidian.scope always runs it as a session mod.
+M.session_mode = not obsidian.scope or obsidian.scope() == "session"
+
 local function global(name)
 	return rawget(_G, name)
 end

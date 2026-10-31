@@ -1,7 +1,7 @@
 {
   "obsidian": 1,
   "id": "obsidian.api",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "name": {
     "en": "Obsidian API",
     "pt-BR": "Obsidian API",
@@ -19,7 +19,7 @@
   "authors": [
     "Obsidian"
   ],
-  "scope": "session",
+  "scope": "library",
   "entry": "main.lua",
   "source": "https://github.com/Alomare/ObsidianAPI",
   "modules": [

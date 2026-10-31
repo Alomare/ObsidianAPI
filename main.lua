@@ -20,20 +20,6 @@ local lobby = obsidian.module("lib/lobby")
 local audio = obsidian.module("lib/audio")
 local ui = obsidian.module("lib/ui")
 
-obsidian.on_require("foundation/lua/debug/debug", console.install)
-obsidian.on_frame(console.install)
-
--- Effects and edits come off when the session stops being cleared, and go back when it clears.
-obsidian.on_session(function(on)
-	if on then
-		effects.resume()
-		edits.resume()
-	else
-		effects.pause()
-		edits.pause()
-	end
-end)
-
 obsidian.on_frame(function()
 	local dt = rawget(_G, "ENGINE_DT") or 0.016
 	game.tick()
@@ -42,52 +28,76 @@ obsidian.on_frame(function()
 	enemies.tick()
 end)
 
--- Stat-changed play earns no Steam achievements. The hook is the mod's, so it's off when the mod is.
-obsidian.hook("UserManager", "unlock_trophy", function()
-	obsidian.log("achievement held back while Obsidian API is on")
-end)
+-- Everything that can change the shared game is set up only when a session mod needs this library.
+if game.session_mode then
+	obsidian.on_require("foundation/lua/debug/debug", console.install)
+	obsidian.on_frame(console.install)
 
-obsidian.hook("CameraManager", "add_shake", function(original, ...)
-	if effects.is_on("no_camera_shake") then return end
-	return original(...)
-end)
+	-- Effects and edits come off when the session stops being cleared, and go back when it clears.
+	obsidian.on_session(function(on)
+		if on then
+			effects.resume()
+			edits.resume()
+		else
+			effects.pause()
+			edits.pause()
+		end
+	end)
 
-obsidian.hook("LoadoutSettings", "find_stratagem", function(original, queue, ...)
-	return stratagems.find(function(q) return original(q) end, queue, ...)
-end)
+	-- Stat-changed play earns no Steam achievements. The hook is the mod's, so it's off when the mod is.
+	obsidian.hook("UserManager", "unlock_trophy", function()
+		obsidian.log("achievement held back while Obsidian API is on")
+	end)
 
-obsidian.hook("HealthComponent", "calculate_damage", combat.health)
-obsidian.hook("ShieldComponent", "calculate_damage", combat.shield)
+	obsidian.hook("CameraManager", "add_shake", function(original, ...)
+		if effects.is_on("no_camera_shake") then return end
+		return original(...)
+	end)
 
-obsidian.hook("StratagemsDisabledAreaComponent", "is_unit_inside_any_area", function(original, ...)
-	if effects.is_on("ignore_jammers") then return false end
-	return original(...)
-end)
+	obsidian.hook("LoadoutSettings", "find_stratagem", function(original, queue, ...)
+		return stratagems.find(function(q) return original(q) end, queue, ...)
+	end)
 
-obsidian.hook("StateMissionStart", "update", function(original, self, ...)
-	mission.on_mission_start_update(self)
-	return original(self, ...)
-end)
+	obsidian.hook("HealthComponent", "calculate_damage", combat.health)
+	obsidian.hook("ShieldComponent", "calculate_damage", combat.shield)
 
+	obsidian.hook("StratagemsDisabledAreaComponent", "is_unit_inside_any_area", function(original, ...)
+		if effects.is_on("ignore_jammers") then return false end
+		return original(...)
+	end)
+
+	obsidian.hook("StateMissionStart", "update", function(original, self, ...)
+		mission.on_mission_start_update(self)
+		return original(self, ...)
+	end)
+end
+
+-- A loader from before obsidian.session.guard runs an update of this mod as a session mod, where
+-- the mods calling it are already gated, so it hands out the real tables.
+local guard = obsidian.session.guard or function(t) return t end
+
+-- What a client mod may call: reading, undoing, and changes only this player sees or hears. A function
+-- not listed here needs a session mod and a cleared session.
 return {
 	version = 1,
-	game = game,
-	effects = effects,
-	edits = edits,
-	console = console,
+	game = guard(game, { "state", "state_name", "in_mission", "on_ship", "is_host", "lobby", "alone", "me", "avatar", "my_unit", "component",
+		"all_avatars", "box", "unbox", "master", "masters", "slaves", "forfeit_progress", "hold_progress", "after", "global" }),
+	effects = guard(effects, { "define", "get", "is_on", "clear", "active" }),
+	edits = guard(edits, { "value", "table_value", "original", "list", "count", "revert", "revert_where", "table_changed", "revert_table", "revert_all" }),
+	console = guard(console, { "denied", "commands" }),
 	data = data,
 	catalog = catalog,
-	world = world,
-	player = player,
-	gear = gear,
-	stratagems = stratagems,
-	enemies = enemies,
-	mission = mission,
-	progress = progress,
-	events = events,
-	combat = combat,
+	world = guard(world, { "shading", "flash", "cursor", "ahead", "clear_decals" }),
+	player = guard(player, { "lives" }),
+	gear = guard(gear),
+	stratagems = guard(stratagems),
+	enemies = guard(enemies, { "available", "list", "count", "carried", "room", "info", "nearest", "near", "max_enemies", "waves" }),
+	mission = guard(mission, { "objectives", "params" }),
+	progress = guard(progress, { "samples", "max_samples", "loadout", "upgrades", "upgrade_limit", "rank", "owned_cosmetics" }),
+	events = guard(events, { "on", "off" }),
+	combat = guard(combat),
 	vehicles = vehicles,
 	lobby = lobby,
-	ui = ui,
+	ui = guard(ui, { "hint", "open", "close", "menus" }),
 	audio = audio,
 }
