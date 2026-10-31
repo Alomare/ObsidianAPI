@@ -144,7 +144,7 @@ local FLARE = "gameobjects/flare_01"
 
 local function spawn_flare(s, pos, delay, owner, upgrade)
 	local st = game.state()
-	if not (type(st) == "table" and st.entity_spawner) then return false, "not_in_mission" end
+	if not (game.in_mission() and st.entity_spawner) then return false, "not_in_mission" end
 	local flare = st.entity_spawner:spawn_entity(FLARE, pos, game.global("Quaternion").identity(), nil,
 		{ has_been_thrown = true, stratagem_id = s.id, extra_activation_time = delay, owner_unit = owner, upgrade_value = upgrade })
 	game.command(flare, "stratagem", "set_thrown_direction", game.box(game.global("Vector3")(0, 0, 0)))

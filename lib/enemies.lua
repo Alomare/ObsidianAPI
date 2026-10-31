@@ -101,7 +101,7 @@ end
 -- Non-enemy things by unit path, with no package check: only paths from mission_common belong here.
 function M.spawn_entity(path, pos)
 	local st = game.state()
-	if not (type(st) == "table" and st.entity_spawner) then return false, "not_in_mission" end
+	if not (game.in_mission() and st.entity_spawner) then return false, "not_in_mission" end
 	if not pos then return false, "no_position" end
 	st.entity_spawner:spawn_entity(path, pos, game.global("Quaternion").identity(), nil, {})
 	return true
