@@ -1,5 +1,5 @@
--- Game content by name. Lists come from the game's own tables where it has them, and paid content
--- a player doesn't own is left out: DLC stays paid.
+-- Game content by name. Lists come from the game's own tables where it has them, and what a player
+-- hasn't unlocked is left out, as the Loadout screen does: locked items stay locked, and DLC stays paid.
 local game = obsidian.module("lib/game")
 local data = obsidian.module("lib/data")
 
@@ -39,11 +39,57 @@ function M.usable(name)
 	return ok2 and can == true
 end
 
+local earned = { xp = nil, count = nil, names = nil }
+
+local function add_all(names, list)
+	for _, name in ipairs(list or {}) do names[name] = true end
+end
+
+-- What this player has by rank, by reward and from the start. Looked at again when the XP or the list
+-- of rewards changes. nil before there's a save to read.
+local function earned_names()
+	local save, users = game.global("SaveManager"), game.global("UserManager")
+	if not (save and users) then return nil end
+	local id = users:get_user_id()
+	local xp, rewards = save:user_get("player_xp", id) or 0, save:user_get("item_unlocks", id) or {}
+	if earned.names and earned.xp == xp and earned.count == #rewards then return earned.names end
+	local names = {}
+	add_all(names, rewards)
+	local settings = game.global("LoadoutSettings")
+	if settings then
+		add_all(names, settings.static_stratagems)
+		local first = settings.default_loadout or {}
+		add_all(names, { first.perk, first.primary_weapon, first.sidearm_weapon })
+		add_all(names, first.stratagems)
+	end
+	local progression = game.global("ProgressionSettings")
+	for _, rank in ipairs(progression and progression.ranks or {}) do
+		if rank.required_xp <= xp then
+			for _, list in pairs(rank.unlocks) do add_all(names, list) end
+		end
+	end
+	earned.xp, earned.count, earned.names = xp, #rewards, names
+	return names
+end
+
+-- True for an item the Loadout screen would offer this player (menu_screen_loadout.lua:142): earned,
+-- or in a paid pack they own.
+function M.unlocked(name)
+	if not M.usable(name) then return false end
+	local dlc = game.global("DlcSettings")
+	if dlc and dlc.is_item_dlc then
+		local ok, is_dlc = pcall(dlc.is_item_dlc, name)
+		if ok and is_dlc then return true end
+	end
+	local names = earned_names()
+	return names ~= nil and names[name] == true
+end
+
 local function loadout(category)
 	local settings = game.global("LoadoutSettings")
 	local out = {}
 	for _, item in ipairs(settings and settings[category] or {}) do
-		if M.usable(item.name) then out[#out + 1] = item end
+		if M.unlocked(item.name) then out[#out + 1] = item end
 	end
 	return out
 end
@@ -190,7 +236,8 @@ function M.cosmetics(slot)
 	local settings = game.global("CustomizationSettings")
 	local out = {}
 	for i, item in ipairs(settings and settings[slot] or {}) do
-		if not item.name or M.usable(item.name) then out[#out + 1] = { index = i, name = item.name } end
+		-- Gender isn't something a player unlocks.
+		if slot == "gender" or not item.name or M.unlocked(item.name) then out[#out + 1] = { index = i, name = item.name } end
 	end
 	return out
 end

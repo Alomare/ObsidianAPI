@@ -103,11 +103,14 @@ local function upgrade_value(unit, name, upgrade)
 end
 
 -- slot: primary_weapon, sidearm_weapon or support_weapon. The old weapon drops as a pickup.
--- upgrade: a value from 0 to 15, or nil for what the player owns for that weapon.
+-- upgrade: a value from 0 to 15, or nil for what the player owns for that weapon. A weapon the
+-- player hasn't unlocked is refused.
 function M.give_weapon(slot, path, upgrade)
 	local unit, why = my_unit()
 	if not unit then return false, why end
-	local value, problem = upgrade_value(unit, catalog.item_name(path), upgrade)
+	local name = catalog.item_name(path)
+	if not name then return false, "not_available" end
+	local value, problem = upgrade_value(unit, name, upgrade)
 	if not value then return false, problem end
 	game.command(unit, "inventory", "set_weapon", { weapon_slot = slot, weapon_path = path, upgrade_value = value, infinite_mags = false, ignore_set_ammo = true })
 	return true
@@ -137,7 +140,7 @@ end
 function M.give_perk(name)
 	local unit, why = my_unit()
 	if not unit then return false, why end
-	if not catalog.usable(name) then return false, "not_available" end
+	if not catalog.unlocked(name) then return false, "not_available" end
 	if name == "perk_lasersight" and not game.alone() then return false, "alone_only" end
 	for id, perk in ipairs(game.global("LoadoutSettings").perks) do
 		if perk.name == name then return change_perk(unit, id, name) end

@@ -176,10 +176,10 @@ function M.slaves(name)
 	return em and em:get_slave_entities(name) or {}
 end
 
--- The mission under way pays no XP. For anything that finishes a mission for the player. A loader
--- from before this exists runs an update of this mod too, so it's asked for by name.
-function M.forfeit_xp()
-	local forfeit = obsidian.session.forfeit_xp
+-- The mission under way adds nothing to the save. For anything that changes how a mission plays out.
+-- A loader from before this exists runs an update of this mod too, so it's asked for by name.
+function M.forfeit_progress()
+	local forfeit = obsidian.session.forfeit_progress
 	if forfeit then forfeit() end
 end
 
