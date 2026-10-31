@@ -205,18 +205,77 @@ function M.stun_near(radius)
 	return true
 end
 
+-- Living enemies within a radius of a position, or of the player, nearest first.
+function M.near(radius, pos)
+	local units, v3 = game.global("Unit"), game.global("Vector3")
+	if not pos then
+		local me = game.my_unit()
+		if not me then return {} end
+		pos = units.world_position(me, 0)
+	end
+	local found, distances = {}, {}
+	for _, unit in ipairs(M.list()) do
+		local distance = v3.distance(units.world_position(unit, 0), pos)
+		if distance <= radius then
+			found[#found + 1] = unit
+			distances[unit] = distance
+		end
+	end
+	table.sort(found, function(a, b) return distances[a] < distances[b] end)
+	return found
+end
+
+-- A hit from the player, as apply_status sends it, so it reaches the owner and armor counts. statuses:
+-- a list of status templates that go with it, or nil.
+function M.damage(unit, power, statuses)
+	if not game.in_mission() then return false, "not_in_mission" end
+	if not (type(power) == "number" and power >= 0 and power < 1000000) then return false, "out_of_range" end
+	if not alive_enemy(unit) then return false, "no_enemy" end
+	local templates = game.global("StatusTemplateSettings")
+	for _, template in ipairs(statuses or {}) do
+		if not (templates and templates[template]) then return false, "unknown_status" end
+	end
+	local me = game.my_unit()
+	aux().queue_command_interface(unit, "damageable", "do_damage",
+		{ power = power, angle_hit = 0, angle_incidence = 0, owner_unit = me, attacker_unit = me, hit_status_effects = statuses })
+	return true
+end
+
+-- The owner sets it, by command or by the game's own request, as a kill does.
+function M.set_hitpoints(unit, hitpoints)
+	if not game.in_mission() then return false, "not_in_mission" end
+	if not (type(hitpoints) == "number" and hitpoints > 0 and hitpoints < 1000000) then return false, "out_of_range" end
+	if not alive_enemy(unit) then return false, "no_enemy" end
+	if aux().owned(unit) then
+		aux().queue_command_master(unit, "health", "set_hitpoints", hitpoints)
+	else
+		game.state().network_router:transmit_to(aux().owner(unit), "rpc_set_hitpoints_request", unit, nil, nil, hitpoints)
+	end
+	return true
+end
+
+local function despawn(st, unit)
+	if aux().owned(unit) then
+		aux().queue_command_master(unit, "enemy", "remove_from_group", unit)
+		st.entity_spawner:despawn_entity(unit)
+	else
+		st.network_router:transmit_to(aux().owner(unit), "rpc_despawn_enemy_unit", unit)
+	end
+end
+
 -- Gone with no corpse, no kill and no objective progress: a clean-up.
 function M.despawn_all()
 	local _, _, st = managers()
 	if not st then return false, "not_in_mission" end
-	for _, unit in ipairs(M.list()) do
-		if aux().owned(unit) then
-			aux().queue_command_master(unit, "enemy", "remove_from_group", unit)
-			st.entity_spawner:despawn_entity(unit)
-		else
-			st.network_router:transmit_to(aux().owner(unit), "rpc_despawn_enemy_unit", unit)
-		end
-	end
+	for _, unit in ipairs(M.list()) do despawn(st, unit) end
+	return true
+end
+
+function M.despawn(unit)
+	local _, _, st = managers()
+	if not st then return false, "not_in_mission" end
+	if not alive_enemy(unit) then return false, "no_enemy" end
+	despawn(st, unit)
 	return true
 end
 
@@ -318,6 +377,37 @@ function M.add_patrol()
 	if not game.is_host() then return false, "host_only" end
 	pm:add_patrol_on_spawner()
 	return true
+end
+
+-- Race packages this mod loaded. The game unloads only the one it asked for.
+local loaded = {}
+
+-- Every peer needs the package to mirror a unit, so it's for solo play. The flush stops the game for
+-- a moment, as the game's own console does (encounter_manager.lua:736-753).
+function M.load_faction(name)
+	if not game.in_mission() then return false, "not_in_mission" end
+	if not game.alone() then return false, "alone_only" end
+	local known = false
+	for _, faction in ipairs({ "bugs", "cyborgs", "illuminates" }) do
+		if faction == name then known = true end
+	end
+	if not known then return false, "unknown_faction" end
+	local packages = game.global("Boot").package_manager
+	local path = PACKAGE_PREFIX .. "race_" .. name
+	if packages:is_package_online(path) then return true end
+	packages:load_package(path, true)
+	loaded[path] = true
+	return true
+end
+
+-- From the frame callback. The units are gone with the world by the first frame off a mission.
+function M.tick()
+	if next(loaded) == nil or game.in_mission() then return end
+	local packages = game.global("Boot").package_manager
+	for path in pairs(loaded) do
+		packages:unload_package(path)
+		loaded[path] = nil
+	end
 end
 
 function M.max_enemies()

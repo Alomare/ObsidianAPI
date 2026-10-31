@@ -39,6 +39,7 @@ obsidian.on_frame(function()
 	game.tick()
 	effects.tick(dt)
 	events.tick()
+	enemies.tick()
 end)
 
 -- Stat-changed play earns no Steam achievements. The hook is the mod's, so it's off when the mod is.
