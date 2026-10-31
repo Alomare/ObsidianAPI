@@ -26,6 +26,44 @@ function M.hint(text, seconds)
 	return true
 end
 
+-- A menu of the ship by name, as a terminal opens it: "armory", "encyclopedia", "training", "main",
+-- "loadout" and so on. A menu reads the player who opened it, and Loadout and the briefing read the
+-- mission, so opts.seed gives them one. opts.pad is a pad number, nil for the main player's.
+function M.open(name, opts)
+	local st = game.state()
+	if type(st) ~= "table" or type(st.show_menu) ~= "function" or type(st.screens) ~= "table" then return false, "not_on_ship" end
+	if not st.screens[name] then return false, "unknown_menu" end
+	opts = opts or {}
+	if opts.seed ~= nil and type(opts.seed) ~= "number" then return false, "bad_type" end
+	local settings = game.global("GameSettings")
+	local params = { user_pad_number = opts.pad or settings.get_main_pad_number() }
+	if opts.seed then
+		st.mission_seed = opts.seed
+		params.mission_seed = opts.seed
+		game.global("SaveManager"):set("next_mission_seed", opts.seed)
+	end
+	st:show_menu(name, params)
+	return true
+end
+
+-- Closes the top menu.
+function M.close()
+	local st = game.state()
+	if type(st) ~= "table" or type(st.pop_menu) ~= "function" then return false, "not_on_ship" end
+	if not (type(st.active_screens) == "table" and #st.active_screens > 0) then return false, "no_menu" end
+	st:pop_menu()
+	return true
+end
+
+-- The name of every menu this state can open.
+function M.menus()
+	local st = game.state()
+	local out = {}
+	for name in pairs(type(st) == "table" and type(st.screens) == "table" and st.screens or {}) do out[#out + 1] = name end
+	table.sort(out)
+	return out
+end
+
 -- The map's own units, as the HUD works them out: centred, turned 45 degrees, and scaled to fit 350
 -- at zoom 1. This value, the field's default, means no ping.
 local NO_PING = -1000
