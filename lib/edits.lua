@@ -250,6 +250,18 @@ function M.revert_where(settings_path, path)
 	return false
 end
 
+function M.table_changed(t, path)
+	local at, k = locate(t, path)
+	return at ~= nil and M.journal[at] ~= nil and M.journal[at][k] ~= nil
+end
+
+function M.revert_table(t, path)
+	for _, r in ipairs(M.records) do
+		if r.table == t and r.path == path then return M.revert(r.id) end
+	end
+	return false
+end
+
 function M.revert_all()
 	M.records = {}
 	restore_journal()

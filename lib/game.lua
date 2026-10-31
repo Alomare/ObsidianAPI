@@ -163,17 +163,22 @@ function M.master(unit, component)
 	return aux.state_master(unit, component)
 end
 
--- Unit -> context maps for a component, master or every peer's slave copy.
-function M.masters(name)
+-- A state registers only the components it uses, the ship very few, and the game's getters index nil
+-- on any other name.
+local function entities(name, getter)
 	local st = M.state()
 	local em = type(st) == "table" and st.entity_manager
-	return em and em:get_master_entities(name) or {}
+	if not (em and em:has_entities(name)) then return {} end
+	return em[getter](em, name)
+end
+
+-- Unit -> context maps for a component, master or every peer's slave copy.
+function M.masters(name)
+	return entities(name, "get_master_entities")
 end
 
 function M.slaves(name)
-	local st = M.state()
-	local em = type(st) == "table" and st.entity_manager
-	return em and em:get_slave_entities(name) or {}
+	return entities(name, "get_slave_entities")
 end
 
 -- The mission under way adds nothing to the save. For anything that changes how a mission plays out.

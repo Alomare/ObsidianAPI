@@ -50,6 +50,22 @@ function M.count()
 	return #M.list()
 end
 
+-- The game keeps to 16 enemies, and a map holding far more took a mission down with no error. The
+-- Trainer stops here, though spawn doesn't: this is a chosen line, not a measured limit.
+M.MAX_SAFE = 64
+
+-- Every enemy the map is carrying: corpses count until they decay, and the queue spawns any moment.
+function M.carried()
+	local n = 0
+	for _ in pairs(game.slaves("enemy")) do n = n + 1 end
+	local em, pm = managers()
+	return n + (em and em.num_queued_enemies or 0) + (pm and pm.num_queued_enemies or 0)
+end
+
+function M.room()
+	return math.max(0, M.MAX_SAFE - M.carried())
+end
+
 local function spawn_position(where)
 	if where == "cursor" then return world.cursor() end
 	return world.ahead(8)
