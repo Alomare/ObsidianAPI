@@ -176,6 +176,13 @@ function M.slaves(name)
 	return em and em:get_slave_entities(name) or {}
 end
 
+-- The mission under way pays no XP. For anything that finishes a mission for the player. A loader
+-- from before this exists runs an update of this mod too, so it's asked for by name.
+function M.forfeit_xp()
+	local forfeit = obsidian.session.forfeit_xp
+	if forfeit then forfeit() end
+end
+
 -- Runs fn after this many frames, for work the game needs spread over frames.
 function M.after(frames, fn)
 	M.due[#M.due + 1] = { left = frames, fn = fn }

@@ -13,13 +13,14 @@ local function aux()
 end
 
 function M.current()
+	if not game.in_mission() then return nil end
 	return gear.current_vehicle()
 end
 
 -- The vehicle this player is driving, once it's theirs.
 function M.driven()
-	local v = gear.current_vehicle()
-	if game.master(v, "vehicle") then return v end
+	local v = M.current()
+	if v and game.master(v, "vehicle") then return v end
 	return nil
 end
 

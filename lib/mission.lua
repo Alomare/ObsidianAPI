@@ -122,6 +122,7 @@ end
 function M.finish_objectives()
 	if not mission_state() then return false, "not_in_mission" end
 	if not game.is_host() then return false, "host_only" end
+	game.forfeit_xp()
 	leave_terminal()
 	each_objective("complete_objectives")
 	finish_fortify()
@@ -143,6 +144,7 @@ function M.win()
 	local st = mission_state()
 	if not st then return false, "not_in_mission" end
 	if not game.is_host() then return false, "host_only" end
+	game.forfeit_xp()
 	for _, p in ipairs(st.players) do
 		if p.player_go:exists() and p.player_go:owned() then p.player_go:set("has_extracted", true) end
 	end
@@ -199,7 +201,10 @@ end
 
 effects.define({ id = "fast_extract",
 	frame = function(ctx)
-		if ctx.name == "game" then extract_step() end
+		if ctx.name == "game" then
+			game.forfeit_xp()
+			extract_step()
+		end
 	end,
 	remove = function()
 		local beacon = game.component("extract_beacon")
