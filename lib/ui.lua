@@ -32,7 +32,7 @@ end
 function M.open(name, opts)
 	local st = game.state()
 	if type(st) ~= "table" or type(st.show_menu) ~= "function" or type(st.screens) ~= "table" then return false, "not_on_ship" end
-	if not st.screens[name] then return false, "unknown_menu" end
+	if not st.screens[name] then return false, "unknown" end
 	opts = opts or {}
 	if opts.seed ~= nil and type(opts.seed) ~= "number" then return false, "bad_type" end
 	local settings = game.global("GameSettings")
@@ -50,7 +50,7 @@ end
 function M.close()
 	local st = game.state()
 	if type(st) ~= "table" or type(st.pop_menu) ~= "function" then return false, "not_on_ship" end
-	if not (type(st.active_screens) == "table" and #st.active_screens > 0) then return false, "no_menu" end
+	if not (type(st.active_screens) == "table" and #st.active_screens > 0) then return false, "out_of_range" end
 	st:pop_menu()
 	return true
 end
