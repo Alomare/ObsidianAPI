@@ -18,6 +18,7 @@ local events = obsidian.module("lib/events")
 local combat = obsidian.module("lib/combat")
 local vehicles = obsidian.module("lib/vehicles")
 local lobby = obsidian.module("lib/lobby")
+local audio = obsidian.module("lib/audio")
 local ui = obsidian.module("lib/ui")
 
 obsidian.on_require("foundation/lua/debug/debug", console.install)
@@ -89,4 +90,5 @@ return {
 	vehicles = vehicles,
 	lobby = lobby,
 	ui = ui,
+	audio = audio,
 }

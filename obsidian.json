@@ -40,6 +40,7 @@
     "lib/combat.lua",
     "lib/vehicles.lua",
     "lib/lobby.lua",
-    "lib/ui.lua"
+    "lib/ui.lua",
+    "lib/audio.lua"
   ]
 }
