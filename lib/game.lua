@@ -183,6 +183,12 @@ function M.forfeit_progress()
 	if forfeit then forfeit() end
 end
 
+-- Every mission adds nothing to the save while the calling mod is on, and the loading screen says so.
+function M.hold_progress()
+	local hold = obsidian.session.hold_progress
+	if hold then hold() end
+end
+
 -- Runs fn after this many frames, for work the game needs spread over frames.
 function M.after(frames, fn)
 	M.due[#M.due + 1] = { left = frames, fn = fn }

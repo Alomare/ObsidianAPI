@@ -1,5 +1,6 @@
--- Game content by name. Lists come from the game's own tables where it has them, and what a player
--- hasn't unlocked is left out, as the Loadout screen does: locked items stay locked, and DLC stays paid.
+-- Game content by name. Lists come from the game's own tables where it has them, and paid content
+-- a player doesn't own is left out: DLC stays paid. What a player has unlocked by playing doesn't
+-- matter here. unlocked() answers that for a mod that wants to know.
 local game = obsidian.module("lib/game")
 local data = obsidian.module("lib/data")
 
@@ -73,7 +74,7 @@ local function earned_names()
 end
 
 -- True for an item the Loadout screen would offer this player (menu_screen_loadout.lua:142): earned,
--- or in a paid pack they own.
+-- or in a paid pack they own. The lists here don't use it.
 function M.unlocked(name)
 	if not M.usable(name) then return false end
 	local dlc = game.global("DlcSettings")
@@ -89,7 +90,7 @@ local function loadout(category)
 	local settings = game.global("LoadoutSettings")
 	local out = {}
 	for _, item in ipairs(settings and settings[category] or {}) do
-		if M.unlocked(item.name) then out[#out + 1] = item end
+		if M.usable(item.name) then out[#out + 1] = item end
 	end
 	return out
 end
@@ -131,6 +132,25 @@ local function each_crate_item(s, fn)
 		local settings = item.unit_path and lsm:get_settings_by_unit_path(item.unit_path)
 		if settings then fn(settings, item.unit_path) end
 	end
+end
+
+-- True for a unit path of a paid weapon this player doesn't own, in the loadout lists or in a crate.
+function M.unowned_path(path)
+	local settings, lsm = game.global("LoadoutSettings"), game.global("LuaSettingsManager")
+	for _, category in ipairs({ "primary_weapon", "sidearm_weapon" }) do
+		for _, item in ipairs(settings and settings[category] or {}) do
+			if item.unit_path == path and not M.usable(item.name) then return true end
+		end
+	end
+	local unowned = false
+	for _, s in ipairs(settings and settings.stratagems or {}) do
+		if not M.usable(s.name) then
+			each_crate_item(s, function(_, unit_path)
+				if unit_path == path or lsm:get_settings_path_by_unit_path(unit_path) == path then unowned = true end
+			end)
+		end
+	end
+	return unowned
 end
 
 -- Every pack in a crate of a stratagem this player can use: { name, unit_path, stratagem }. The path
@@ -236,8 +256,7 @@ function M.cosmetics(slot)
 	local settings = game.global("CustomizationSettings")
 	local out = {}
 	for i, item in ipairs(settings and settings[slot] or {}) do
-		-- Gender isn't something a player unlocks.
-		if slot == "gender" or not item.name or M.unlocked(item.name) then out[#out + 1] = { index = i, name = item.name } end
+		if not item.name or M.usable(item.name) then out[#out + 1] = { index = i, name = item.name } end
 	end
 	return out
 end
