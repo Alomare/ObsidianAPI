@@ -98,6 +98,90 @@ function M.upgrade_all()
 	return true
 end
 
+local function copy(t)
+	local out = {}
+	for k, v in pairs(t or {}) do out[k] = type(v) == "table" and copy(v) or v end
+	return out
+end
+
+-- The set the next spawn uses: { perk, primary_weapon, sidearm_weapon, stratagems }, by name.
+function M.loadout()
+	local save = game.global("SaveManager")
+	return save and copy(save:user_get("loadout", user())) or nil
+end
+
+-- t: any of those keys. stratagems maps the free slots, 1 to 4 after the four every player has, to
+-- names. It's in the save at once and applies at the next spawn. The Loadout screen starts from the first preset, so
+-- that goes along with it, and paid or unknown items go back to the default, as the game does when
+-- it reads a save. The save can't get an item the player hasn't unlocked past that screen.
+function M.set_loadout(t)
+	local ok, why = can_edit()
+	if not ok then return false, why end
+	if type(t) ~= "table" then return false, "bad_type" end
+	local save, id = game.global("SaveManager"), user()
+	local settings = game.global("LoadoutSettings")
+	local l = copy(save:user_get("loadout", id))
+	if next(l) == nil then l = copy(settings.default_loadout) end
+	l.perk = t.perk or l.perk
+	l.primary_weapon = t.primary_weapon or l.primary_weapon
+	l.sidearm_weapon = t.sidearm_weapon or l.sidearm_weapon
+	if t.stratagems then
+		local fixed = #settings.static_stratagems
+		for i in pairs(t.stratagems) do
+			if type(i) ~= "number" or i % 1 ~= 0 or i < 1 or fixed + i > settings.nr_of_stratagem_slots then return false, "out_of_range" end
+		end
+		for i, name in pairs(t.stratagems) do l.stratagems[fixed + i] = name end
+	end
+	l = game.global("Boot").ensure_loadout(id, l)
+	save:user_set("loadout", l, id)
+	local presets = save:user_get("loadouts", id)
+	if presets and presets[1] then
+		presets = copy(presets)
+		presets[1] = copy(l)
+		save:user_set("loadouts", presets, id)
+	end
+	persist()
+	return true
+end
+
+function M.upgrades()
+	local save = game.global("SaveManager")
+	return save and copy(save:user_get("item_upgrades", user())) or {}
+end
+
+local function upgradeable(name)
+	local settings = game.global("LoadoutSettings")
+	for _, category in ipairs({ "primary_weapon", "sidearm_weapon", "stratagems" }) do
+		for _, item in ipairs(settings[category] or {}) do
+			if item.name == name and item.upgrades then return item, category end
+		end
+	end
+	return nil
+end
+
+-- The highest value set_upgrade takes for an item, nil for one with no upgrades.
+function M.upgrade_limit(name)
+	local item, category = upgradeable(name)
+	if not item then return nil end
+	return game.global("LoadoutSettings").get_max_upgrade_value(item, category)
+end
+
+-- name: a weapon or stratagem. value: its upgrades as the game keeps them, a bit each for a weapon, a
+-- level for a stratagem, from 0 to the item's most. Upgrades of paid items the player doesn't own
+-- would do nothing, so they're refused here.
+function M.set_upgrade(name, value)
+	local ok, why = can_edit()
+	if not ok then return false, why end
+	if not upgradeable(name) or not catalog.usable(name) then return false, "not_available" end
+	if type(value) ~= "number" or value % 1 ~= 0 or value < 0 or value > M.upgrade_limit(name) then return false, "out_of_range" end
+	local save, id = game.global("SaveManager"), user()
+	local map = copy(save:user_get("item_upgrades", id))
+	map[name] = value
+	save:user_set("item_upgrades", map, id)
+	persist()
+	return true
+end
+
 function M.rank()
 	local save, settings = game.global("SaveManager"), game.global("ProgressionSettings")
 	if not (save and settings) then return nil end
