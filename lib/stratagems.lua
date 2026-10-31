@@ -1,6 +1,7 @@
 -- Stratagems: cooldowns, uses, call-in time and getting one without the arrows.
 local game = obsidian.module("lib/game")
 local effects = obsidian.module("lib/effects")
+local edits = obsidian.module("lib/edits")
 local catalog = obsidian.module("lib/catalog")
 
 local M = { selected = nil }
@@ -113,6 +114,23 @@ function M.give(name)
 		map.give_stratagem({ "give_stratagem", name }, "give_stratagem " .. name)
 	end
 	return true
+end
+
+-- A field of a stratagem, at every upgrade level. Levels can set the field for themselves, and the
+-- game applies them over the base, so an edit of the base alone would stop at the first of those.
+function M.edit(name, field, value)
+	local s = catalog.stratagem(name)
+	if not s then return false, "not_available" end
+	local opts = { also = {}, keep = "stratagem:" .. name }
+	for _, f in ipairs(catalog.fields("stratagem")) do
+		if f.path == field then
+			opts.min, opts.max, opts.apply, opts.new = f.min, f.max, f.apply, f.opt
+		end
+	end
+	for level, upgrade in ipairs(s.upgrades or {}) do
+		if upgrade[field] ~= nil then opts.also[#opts.also + 1] = "upgrades." .. level .. "." .. field end
+	end
+	return edits.set_table(catalog.text(name), s, field, value, opts)
 end
 
 -- Sends a stratagem to a position with no flare and no call-in.

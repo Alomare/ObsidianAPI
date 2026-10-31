@@ -1,6 +1,7 @@
 -- Weapons, ammunition, grenades, perks, backpacks and vehicles of the local player.
 local game = obsidian.module("lib/game")
 local effects = obsidian.module("lib/effects")
+local catalog = obsidian.module("lib/catalog")
 
 local M = {}
 
@@ -89,19 +90,59 @@ function M.set_grenade(path)
 	return true
 end
 
+-- The upgrade a new item gets: the one asked for, or what the player owns for it. The game keeps
+-- those by item name, and the upgradeable component asserts outside 0 to 15.
+local function upgrade_value(unit, name, upgrade)
+	if upgrade == nil then
+		local inv = inventory(unit)
+		local owned = inv and inv.item_upgrades
+		return owned and name and owned[name] or 0
+	end
+	if type(upgrade) ~= "number" or upgrade % 1 ~= 0 or upgrade < 0 or upgrade > 15 then return nil, "out_of_range" end
+	return upgrade
+end
+
 -- slot: primary_weapon, sidearm_weapon or support_weapon. The old weapon drops as a pickup.
-function M.give_weapon(slot, path)
+-- upgrade: a value from 0 to 15, or nil for what the player owns for that weapon.
+function M.give_weapon(slot, path, upgrade)
 	local unit, why = my_unit()
 	if not unit then return false, why end
-	game.command(unit, "inventory", "set_weapon", { weapon_slot = slot, weapon_path = path, upgrade_value = 0, infinite_mags = false, ignore_set_ammo = true })
+	local value, problem = upgrade_value(unit, catalog.item_name(path), upgrade)
+	if not value then return false, problem end
+	game.command(unit, "inventory", "set_weapon", { weapon_slot = slot, weapon_path = path, upgrade_value = value, infinite_mags = false, ignore_set_ammo = true })
 	return true
 end
 
+-- What the game's console does to change a perk, with two differences: this also starts from no perk,
+-- where the console stops on an error, and it marks the state dirty, so peers hear of it.
+local function change_perk(unit, id, name)
+	local c, perks = game.component("inventory"), game.global("PerkSettings")
+	local master, slave = inventory(unit), aux().state(unit, "inventory")
+	if not (c and perks and master) then return false, "no_avatar" end
+	local list = game.global("LoadoutSettings").perks
+	local old = master.perk and master.perk > 0 and perks[list[master.perk].name]
+	if old and old.remove_master then old.remove_master(unit, c, master.perk_context) end
+	if old and old.remove_slave and slave then old.remove_slave(unit, c, slave.perk_context) end
+	master.perk_context, master.perk = {}, id
+	if slave then slave.perk_context, slave.perk = {}, id end
+	local new = name and perks[name]
+	if new and new.setup_master then new.setup_master(unit, c, master.perk_context) end
+	if new and new.setup_slave and slave then new.setup_slave(unit, c, slave.perk_context) end
+	master.dirty = true
+	return true
+end
+
+-- Every other peer picks the new perk up with no setup, and laser sight's per-frame code needs its
+-- setup, so that one would fail inside their update. It's kept to solo play.
 function M.give_perk(name)
 	local unit, why = my_unit()
 	if not unit then return false, why end
-	game.command(unit, "inventory", "set_perk", name)
-	return true
+	if not catalog.usable(name) then return false, "not_available" end
+	if name == "perk_lasersight" and not game.alone() then return false, "alone_only" end
+	for id, perk in ipairs(game.global("LoadoutSettings").perks) do
+		if perk.name == name then return change_perk(unit, id, name) end
+	end
+	return false, "not_available"
 end
 
 function M.refill_backpack()

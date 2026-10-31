@@ -53,17 +53,21 @@ function M.sidearms() return loadout("sidearm_weapon") end
 function M.stratagems() return loadout("stratagems") end
 function M.perks() return loadout("perks") end
 
--- Support weapons are stratagems whose crate holds the weapon: { name, unit_path }.
+local function has_subtype(s, wanted)
+	for _, sub in ipairs(s.stratagem_subtypes or {}) do
+		if sub == wanted then return true end
+	end
+	return false
+end
+
+-- Support weapons are stratagems whose crate holds the weapon: { name, unit_path }. All of them carry
+-- the subtype weapon; support_weapon leaves out the mortar, recoilless, LAW and missile launcher.
 function M.support_weapons()
 	local lsm = game.global("LuaSettingsManager")
 	local out = {}
 	if not lsm then return out end
 	for _, s in ipairs(M.stratagems()) do
-		local is_support = false
-		for _, sub in ipairs(s.stratagem_subtypes or {}) do
-			if sub == "support_weapon" then is_support = true end
-		end
-		local crate = is_support and s.unit and lsm:get_settings_by_unit_path(s.unit)
+		local crate = has_subtype(s, "weapon") and s.unit and lsm:get_settings_by_unit_path(s.unit)
 		local content = crate and crate.supply_crate_info and crate.supply_crate_info.content
 		local pickup = content and content[1] and content[1].unit_path
 		local path = pickup and lsm:get_settings_path_by_unit_path(pickup)
@@ -75,6 +79,16 @@ end
 function M.stratagem(name)
 	for _, s in ipairs(M.stratagems()) do
 		if s.name == name then return s end
+	end
+	return nil
+end
+
+-- The stratagem or weapon a unit path belongs to, by the name the game keeps upgrades under.
+function M.item_name(unit_path)
+	for _, list in ipairs({ M.primaries(), M.sidearms(), M.support_weapons() }) do
+		for _, item in ipairs(list) do
+			if item.unit_path == unit_path then return item.name end
+		end
 	end
 	return nil
 end

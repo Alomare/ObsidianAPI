@@ -19,6 +19,9 @@ for word in string.gmatch([[
 	set_color_blindness_tritanopia set_color_blindness_tritanomaly set_color_blindness_complete
 ]], "%S+") do DENIED[word] = true end
 
+-- These load a race package on this peer alone, and a peer without it can't mirror the unit.
+local ALONE_ONLY = { spawn_enemy = true }
+
 local function noop() end
 
 local function split(line)
@@ -85,6 +88,7 @@ function M.run(line)
 	local name = args and args[1]
 	if not name then return false, "unknown" end
 	if DENIED[name] then return false, "denied" end
+	if ALONE_ONLY[name] and not game.alone() then return false, "alone_only" end
 	local ran, message = false, nil
 	for _, p in pairs(M.plugins) do
 		local fn = p.map[name]

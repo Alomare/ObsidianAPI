@@ -55,10 +55,22 @@ end
 
 -- Host of the lobby, or alone with no lobby at all.
 function M.is_host()
-	local network = global("NetworkGlobal")
-	local lobby = type(network) == "table" and network.lobby
+	local lobby = M.lobby()
 	if not lobby then return true end
 	return lobby:is_host() == true
+end
+
+function M.lobby()
+	local network = global("NetworkGlobal")
+	return type(network) == "table" and network.lobby or nil
+end
+
+-- Nobody else in the lobby. With no way to tell, it answers no: the callers are the risky actions.
+function M.alone()
+	local lobby = M.lobby()
+	if not lobby then return true end
+	local ok, members = pcall(lobby.members, lobby)
+	return ok and type(members) == "table" and #members <= 1
 end
 
 -- The local player's record. players[1] is the first player in the lobby, not this one.

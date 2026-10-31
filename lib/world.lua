@@ -115,6 +115,11 @@ effects.define({ id = "time_of_day",
 		local v = viewport()
 		if v then v:set_shading_environment_settings(value, 1) end
 	end,
+	remove = function(ctx)
+		local v = viewport()
+		local level = type(ctx.state) == "table" and ctx.state.generated_level
+		if v and level and level.shading_environment_setting then v:set_shading_environment_settings(level.shading_environment_setting, 1) end
+	end,
 })
 
 effects.define({ id = "gravity",

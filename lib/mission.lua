@@ -58,9 +58,20 @@ local function finish_boss()
 	end
 end
 
+-- The console leaves a player standing in a terminal it has finished. Only this peer's own avatar
+-- can be told, so a client in a terminal has to step out by hand.
+local function leave_terminal()
+	local unit = game.my_unit()
+	local character = game.master(unit, "character")
+	if character and character.current_interact_objective_unit then
+		game.command(unit, "character", "exit_interact_objective")
+	end
+end
+
 function M.finish_objectives()
 	if not mission_state() then return false, "not_in_mission" end
 	if not game.is_host() then return false, "host_only" end
+	leave_terminal()
 	each_objective("complete_objectives")
 	finish_fortify()
 	finish_escort()

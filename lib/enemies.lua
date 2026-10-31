@@ -259,4 +259,47 @@ function M.max_enemies()
 	return settings and settings.MAX_NUM_ALLOWED_ENEMIES
 end
 
+-- Numbers the managers read all mission. init_host writes them once per mission, so an effect holds
+-- each one from its frame function, and what the game had is kept per table to give back.
+local held = setmetatable({}, { __mode = "k" })
+
+local function hold(t, field, value)
+	local old = held[t]
+	if not old then
+		old = {}
+		held[t] = old
+	end
+	if old[field] == nil then old[field] = t[field] end
+	t[field] = value
+end
+
+local function release(t, field)
+	local old = held[t]
+	if old and old[field] ~= nil then
+		t[field] = old[field]
+		old[field] = nil
+	end
+end
+
+-- The most enemies at once. Waves stop at two limits: the global cap on all enemies, and the
+-- encounter manager's own, 6 to 12 by difficulty. The game asks only the host.
+M.MAX_CAP = 32
+
+local function hold_cap(_, value)
+	if not game.is_host() then return end
+	hold(game.global("GameSettings"), "MAX_NUM_ALLOWED_ENEMIES", value)
+	local em = managers()
+	if em then hold(em, "max_num_enemies", value) end
+end
+
+effects.define({ id = "enemy_cap",
+	apply = hold_cap,
+	frame = hold_cap,
+	remove = function()
+		release(game.global("GameSettings"), "MAX_NUM_ALLOWED_ENEMIES")
+		local em = managers()
+		if em then release(em, "max_num_enemies") end
+	end,
+})
+
 return M

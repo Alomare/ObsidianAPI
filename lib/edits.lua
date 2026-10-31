@@ -140,6 +140,10 @@ local function apply(r)
 		local problem = check(r.path, t[k], r.value, r)
 		if problem then return problem end
 		write(t, k, r.value)
+		for _, path in ipairs(r.also or {}) do
+			local at, key = locate(r.table, path)
+			if at then write(at, key, r.value) end
+		end
 	end
 	return nil
 end
@@ -185,10 +189,11 @@ function M.set_unit(settings_path, path, value, opts)
 end
 
 -- A value in any table the game reads: a stratagem, a status template, character_info.
+-- opts as above, and also: more paths in the table that take the same value, as one change.
 function M.set_table(target, t, path, value, opts)
 	opts = opts or {}
-	return record({ table = t, path = path, value = value, min = opts.min, max = opts.max, new = opts.new,
-		target = target, apply_when = opts.apply, owner = obsidian.caller() })
+	return record({ table = t, path = path, also = opts.also, value = value, min = opts.min, max = opts.max, new = opts.new,
+		target = target, apply_when = opts.apply, keep = opts.keep, owner = obsidian.caller() })
 end
 
 function M.value(settings_path, path)
@@ -218,7 +223,7 @@ end
 function M.list()
 	local out = {}
 	for i, r in ipairs(M.records) do
-		out[i] = { id = r.id, target = r.target, path = r.path, value = r.value, owner = r.owner, apply = r.apply_when, settings_path = r.settings_path }
+		out[i] = { id = r.id, target = r.target, path = r.path, value = r.value, owner = r.owner, apply = r.apply_when, settings_path = r.settings_path, keep = r.keep }
 	end
 	return out
 end
