@@ -354,6 +354,62 @@ function M.ahead(metres)
 	return units.world_position(unit, 0) + q.forward(units.local_rotation(unit, 0)) * metres
 end
 
+-- Props: a unit of the game that exists on this machine only, for what a mod shows in the level.
+-- Nothing goes over the network and no game system knows it, so it does nothing but be seen, with
+-- whatever glow and highlight the unit has. The unit has to be in a package the level has loaded: the
+-- engine stops the game for one it can't find (a mission's research samples, gameobjects/flare_01 and
+-- the enemies of a loaded faction are). pos: a vector or { x, y, z }. opts.scale: a size, 1 as made.
+-- Answers a prop with :move(pos), :scale(size) and :remove(), or nil and a reason.
+local Prop = {}
+Prop.__index = Prop
+
+local function vector(pos)
+	if pos == nil then return nil end
+	local ok, x, y, z = pcall(function() return pos.x, pos.y, pos.z end)
+	if not ok or type(x) ~= "number" or type(y) ~= "number" then return nil end
+	return game.global("Vector3")(x, y, type(z) == "number" and z or 0)
+end
+
+function M.prop(unit_name, pos, opts)
+	if type(unit_name) ~= "string" or unit_name == "" then return nil, "bad_type" end
+	local at = vector(pos)
+	if not at then return nil, "bad_type" end
+	local st = game.state()
+	local proxy = type(st) == "table" and st.world_proxy
+	if not (proxy and game.in_mission()) then return nil, "not_in_mission" end
+	local world = proxy:get_world()
+	local ok, unit = pcall(game.global("World").spawn_unit, world, unit_name, at)
+	if not ok or not unit then return nil, "unknown" end
+	local p = setmetatable({ unit = unit, world = world }, Prop)
+	if opts and type(opts.scale) == "number" then p:scale(opts.scale) end
+	return p
+end
+
+-- false once its level is gone, or it was removed.
+function Prop:alive()
+	if not self.unit then return false end
+	local ok, alive = pcall(game.global("Unit").alive, self.unit)
+	return ok and alive == true
+end
+
+function Prop:move(pos)
+	local at = vector(pos)
+	if not at or not self:alive() then return false end
+	game.global("Unit").teleport_local_position(self.unit, 0, at)
+	return true
+end
+
+function Prop:scale(size)
+	if type(size) ~= "number" or not self:alive() then return false end
+	game.global("Unit").set_local_scale(self.unit, 0, game.global("Vector3")(size, size, size))
+	return true
+end
+
+function Prop:remove()
+	if self:alive() then pcall(game.global("World").destroy_unit, self.world, self.unit) end
+	self.unit = nil
+end
+
 -- An explosion at a position. The game's own manager does the damage and the push.
 function M.explode(pos, power, radius)
 	local st = game.state()

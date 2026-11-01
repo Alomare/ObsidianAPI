@@ -100,4 +100,25 @@ function M.ping(pos)
 	return true
 end
 
+local function pack(...) return { n = select("#", ...), ... } end
+
+-- Runs fn with some of the game's text keys showing other words, as LocalizationManager gives them:
+-- texts is { key = words }. Only while fn runs, so a screen of the game can be reused with a mod's
+-- words and nothing else changes. Answers what fn answers; an error in fn is raised again after.
+function M.with_texts(texts, fn, ...)
+	if type(texts) ~= "table" or type(fn) ~= "function" then error("with_texts(texts, fn): bad_type", 2) end
+	local lm = game.global("LocalizationManager")
+	if type(lm) ~= "table" or type(lm.string) ~= "function" then return fn(...) end
+	local real = lm.string
+	lm.string = function(self, key, ...)
+		local own = texts[key]
+		if own ~= nil then return own end
+		return real(self, key, ...)
+	end
+	local r = pack(pcall(fn, ...))
+	lm.string = real
+	if not r[1] then error(r[2], 0) end
+	return unpack(r, 2, r.n)
+end
+
 return M
