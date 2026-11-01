@@ -25,6 +25,12 @@ jobs:
           have=$(jq -r .version obsidian.json)
           [ "$have" = "${GITHUB_REF_NAME#v}" ] || { echo "obsidian.json says $have, the tag says $GITHUB_REF_NAME"; exit 1; }
 
+      - name: The changelog has this version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v h="## $version" '$0 == h { on = 1; next } /^## / { on = 0 } on' CHANGELOG.md | sed '/./,$!d' > notes.md
+          [ -s notes.md ] || { echo "CHANGELOG.md has no section for $version"; exit 1; }
+
       - name: Pack and publish
         run: |
           id=$(jq -r .id obsidian.json)
@@ -32,4 +38,4 @@ jobs:
           git archive --format=zip --prefix="$id/" -o "$id-$version.zip" "$GITHUB_SHA"
           pre=""
           [[ "$GITHUB_REF_NAME" == *-* ]] && pre="--prerelease"
-          gh release create "$GITHUB_REF_NAME" "$id-$version.zip" --title "$(jq -r .name.en obsidian.json) $version" --generate-notes $pre
+          gh release create "$GITHUB_REF_NAME" "$id-$version.zip" --title "$(jq -r .name.en obsidian.json) $version" --notes-file notes.md $pre

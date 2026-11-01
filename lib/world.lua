@@ -359,7 +359,7 @@ end
 -- whatever glow and highlight the unit has. The unit has to be in a package the level has loaded: the
 -- engine stops the game for one it can't find (a mission's research samples, gameobjects/flare_01 and
 -- the enemies of a loaded faction are). pos: a vector or { x, y, z }. opts.scale: a size, 1 as made.
--- Answers a prop with :move(pos), :scale(size) and :remove(), or nil and a reason.
+-- Answers a prop with :move(pos), :scale(size), :flow(event) and :remove(), or nil and a reason.
 local Prop = {}
 Prop.__index = Prop
 
@@ -403,6 +403,13 @@ function Prop:scale(size)
 	if type(size) ~= "number" or not self:alive() then return false end
 	game.global("Unit").set_local_scale(self.unit, 0, game.global("Vector3")(size, size, size))
 	return true
+end
+
+-- Runs one of the unit's own flow events, the way the game makes a unit play its sounds and effects:
+-- "on_picked_up" on a research sample plays the pickup.
+function Prop:flow(event)
+	if type(event) ~= "string" or not self:alive() then return false end
+	return (pcall(game.global("Unit").flow_event, self.unit, event))
 end
 
 function Prop:remove()

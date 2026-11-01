@@ -33,14 +33,14 @@ The API is a library: it runs as a session mod only when a session mod requires 
 
 ## Releasing
 
-Set `version` in `obsidian.json`, commit, then push a tag with the same version:
+Set `version` in `obsidian.json`, add a section for it to `CHANGELOG.md` (new, changed or removed capabilities, one line each), commit, then push a tag with the same version:
 
 ```
 git tag v1.0.1
 git push origin v1.0.1
 ```
 
-The Release workflow packs the mod into a `.zip` and publishes it, and Obsidian offers it as an update.
+The Release workflow packs the mod into a `.zip` and publishes it with that changelog section as its notes, and Obsidian offers it as an update. It stops if the section is missing.
 
 ## License
 
