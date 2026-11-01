@@ -20,6 +20,10 @@ function M.hint(text, seconds)
 	local known = game.global("HintSettings")
 	if known and known[text] then
 		hints:add_hint(text, true, nil, nil, seconds, true)
+	elseif obsidian.capabilities.notify then
+		-- The loader's own box for a mod's words, where Obsidian's messages go first and a mod can only
+		-- have so many waiting.
+		return obsidian.notify(text, seconds)
 	else
 		hints:add_hint(CARRIER, true, { WHOLE_TEXT, (string.gsub(text, "%%", "%%%%")) }, nil, seconds, true)
 	end
