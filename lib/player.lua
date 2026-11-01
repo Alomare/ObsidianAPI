@@ -364,9 +364,12 @@ function M.set_health(hitpoints)
 	return true
 end
 
-function M.heal()
-	local unit, why = my_unit()
-	if not unit then return false, why end
+function M.heal(unit)
+	if not unit then
+		local why
+		unit, why = my_unit()
+		if not unit then return false, why end
+	end
 	game.command(unit, "health", "reset")
 	game.command(unit, "status", "remove_all")
 	return true

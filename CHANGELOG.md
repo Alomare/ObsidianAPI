@@ -2,6 +2,13 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.6.0
+
+- New: `api.gear.weapons_of(owner)` lists the weapons a player holds.
+- New: `api.gear.tune(unit, component, changes)` changes one weapon's stats and attributes without touching other weapons of its type.
+- Changed: `api.gear.refill`, `api.gear.refill_grenades` and `api.player.heal` take an optional unit, for another player on this machine.
+- Changed: `api.stratagems.give(name, unit)` gives to that one player, the main player by default, and no longer to every player on this machine.
+
 ## 1.5.1
 
 - New: `prop:flow(event)` runs one of a prop's own flow events, such as a research sample's `on_picked_up`.

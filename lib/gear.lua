@@ -59,9 +59,12 @@ effects.define({ id = "instant_reload",
 })
 
 -- Fills every weapon. For beam weapons the rounds value is heat, so full means zero.
-function M.refill()
-	local unit, why = my_unit()
-	if not unit then return false, why end
+function M.refill(unit)
+	if not unit then
+		local why
+		unit, why = my_unit()
+		if not unit then return false, why end
+	end
 	local inv = inventory(unit)
 	if not inv then return false, "no_avatar" end
 	for _, slot in ipairs(WEAPON_SLOTS) do
@@ -75,9 +78,12 @@ function M.refill()
 	return true
 end
 
-function M.refill_grenades()
-	local unit, why = my_unit()
-	if not unit then return false, why end
+function M.refill_grenades(unit)
+	if not unit then
+		local why
+		unit, why = my_unit()
+		if not unit then return false, why end
+	end
 	game.command(unit, "inventory", "set_grenades", 2)
 	return true
 end
@@ -228,6 +234,107 @@ function M.refresh()
 				for unit, ctx in pairs(game.slaves(name)) do c:reload_slave(unit, ctx) end
 			end
 		end
+	end
+	return true
+end
+
+-- One weapon's own stats. A weapon's settings are shared by every weapon of its type on a machine, but
+-- each weapon's state points at them and keeps copies of some, so a private copy changes this weapon
+-- alone: another player's, or a second one of the same type, stays as it is.
+local TUNED = { "firearm", "beamweapon", "arcweapon", "flameweapon", "launcher" }
+local ANGLES = { spread = true, spread_min = true, spread_max = true }
+local GUARDED = { magazine_capacity = true }
+
+-- The weapons a player's unit holds: { unit, component, slot, info }, where slot is primary_weapon,
+-- sidearm_weapon or support_weapon, and info the weapon's settings before any tuning. owner: nil for
+-- the main player.
+function M.weapons_of(owner)
+	owner = owner or game.my_unit()
+	local out = {}
+	local inv = owner and inventory(owner)
+	if not inv then return out end
+	for _, slot in ipairs(WEAPON_SLOTS) do
+		local weapon = inv[slot]
+		if alive(weapon) then
+			for _, component in ipairs(TUNED) do
+				local master = game.masters(component)[weapon]
+				if master then
+					out[#out + 1] = { unit = weapon, component = component, slot = slot, info = master.state.tuned_base or master.state.weapon_info }
+					break
+				end
+			end
+		end
+	end
+	return out
+end
+
+local function copy(t)
+	local out = {}
+	for k, v in pairs(t or {}) do out[k] = v end
+	return out
+end
+
+local function tune_state(c, state, changes, master)
+	if type(state.weapon_info) ~= "table" then return false end
+	-- The game can hand the weapon new settings, on an upgrade: those are the base from then on.
+	if state.weapon_info ~= state.tuned_own then state.tuned_base = state.weapon_info end
+	local base = state.tuned_base
+	local own = copy(base)
+	own.attributes = copy(base.attributes)
+	-- A field its settings leave out takes the game's default, which the state holds.
+	state.tuned_start = state.tuned_start or {}
+	for key, value in pairs(changes) do
+		if type(value) == "boolean" then
+			own.attributes[key] = value
+		else
+			if type(base[key]) ~= "number" and not ANGLES[key] and type(state[key]) == "number" and state.tuned_start[key] == nil then
+				state.tuned_start[key] = state[key]
+			end
+			local from = base[key]
+			if type(from) ~= "number" then from = state.tuned_start[key] end
+			if type(from) == "number" then own[key] = from * value end
+		end
+	end
+	state.weapon_info, state.tuned_own = own, own
+	local keys = copy(state.tuned_keys)
+	for key in pairs(changes) do keys[key] = true end
+	for key in pairs(keys) do
+		local n = own[key]
+		if type(n) ~= "number" then n = state.tuned_start[key] end
+		if type(n) == "number" then
+			if key == "firerate" then
+				if state.round_delay ~= nil then state.round_delay = 60 / n end
+			elseif ANGLES[key] then
+				if state[key] ~= nil then state[key] = math.rad(n) end
+			elseif GUARDED[key] then
+				if state[key] ~= nil then
+					n = math.ceil(n)
+					if master then c:set_protected(state, key, n) else state[key] = n end
+				end
+			elseif state[key] ~= nil then
+				state[key] = n
+			end
+		end
+	end
+	state.tuned_keys = copy(changes)
+	if master then state.dirty = true end
+	return true
+end
+
+-- changes: { field = factor } on a number of its settings, { attribute = true or false } on one of its
+-- attributes. It replaces the tuning before; {} takes it all off. It reaches only this machine's own
+-- weapons, and each player runs it for theirs.
+function M.tune(unit, component, changes)
+	if type(changes) ~= "table" then return false, "bad_type" end
+	local c = game.component(component)
+	local master = game.masters(component)[unit]
+	if not (c and master) then return false, "unknown" end
+	tune_state(c, master.state, changes, true)
+	local slave = game.slaves(component)[unit]
+	if slave then
+		tune_state(c, slave.state, changes, false)
+		-- The shot's hit test keeps the settings it was made with.
+		if c.remake_raycast then c:remake_raycast(unit, slave) end
 	end
 	return true
 end

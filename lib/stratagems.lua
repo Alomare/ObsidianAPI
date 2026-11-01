@@ -100,9 +100,12 @@ function M.refill_uses()
 end
 
 -- Adds a stratagem to the eight slots, or gives a use back when the player has it.
-function M.give(name)
-	local unit, why = my_unit()
-	if not unit then return false, why end
+function M.give(name, unit)
+	if not unit then
+		local why
+		unit, why = my_unit()
+		if not unit then return false, why end
+	end
 	local s = catalog.stratagem(name)
 	if not s then return false, "not_available" end
 	local has = false
@@ -112,10 +115,13 @@ function M.give(name)
 	if has then
 		game.command(unit, "inventory", "receive_stratagem", s.id)
 	else
-		local c = game.component("inventory")
-		local map = c and c.setup_console_plugin and c:setup_console_plugin()
-		if not (map and map.give_stratagem) then return false, "not_available" end
-		map.give_stratagem({ "give_stratagem", name }, "give_stratagem " .. name)
+		-- As the game builds a player's list. Its console's give reaches every player on this machine.
+		local inv = game.master(unit, "inventory")
+		local settings = game.global("LoadoutSettings")
+		if not (inv and inv.stratagems) then return false, "not_available" end
+		local upgrade = inv.item_upgrades and inv.item_upgrades[s.name] or 0
+		local info = settings and settings.get_upgraded_stratagem and settings.get_upgraded_stratagem(s.id, upgrade) or s
+		inv.stratagems[#inv.stratagems + 1] = { id = s.id, cooldown_timer = 0, uses_left = info and info.num_uses, upgrade_value = upgrade, loadout_info = info }
 	end
 	return true
 end
