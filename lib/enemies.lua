@@ -336,12 +336,43 @@ effects.define({ id = "host_owns_enemies",
 	end,
 })
 
+-- A paused component keeps its commands until it runs again, and the game builds some of their data
+-- in tables it takes back at the end of the frame (TempTableFactory): an enemy's damage report and a
+-- new enemy's patrol, for two. Read after a freeze, they're empty, and the game stops on a nil. While
+-- frozen, what's queued for the frozen components is copied, so it keeps its values.
+local FROZEN = { navmesh_mover = true, enemy = true }
+local frozen, copying, copying_real = false, nil, nil
+
+local function copy_commands(on)
+	local entity_aux = game.global("EntityAux")
+	if type(entity_aux) ~= "table" then return end
+	if on and not copying then
+		local real = entity_aux.queue_command_master
+		copying = function(unit, component, command, data, ...)
+			if frozen and FROZEN[component] and type(data) == "table" then
+				local own = {}
+				for k, v in pairs(data) do own[k] = v end
+				data = own
+			end
+			return real(unit, component, command, data, ...)
+		end
+		copying_real = real
+		entity_aux.queue_command_master = copying
+	elseif not on and copying and entity_aux.queue_command_master == copying then
+		-- Put back unless someone wrapped it since; then it stays, and does nothing unfrozen.
+		entity_aux.queue_command_master = copying_real
+		copying, copying_real = nil, nil
+	end
+end
+
 -- Stops the enemy and movement components on this peer, as the game's tutorial does. Resuming a
 -- component that's running would run it twice per frame, so the list is read first.
 local function set_frozen(on)
 	local _, _, st = managers()
 	local cm = st and st.component_manager
 	if not cm then return end
+	frozen = on
+	copy_commands(on)
 	for _, name in ipairs({ "navmesh_mover", "enemy" }) do
 		local index, running = cm.component_name_to_index[name], false
 		for _, i in ipairs(cm.active_components) do
