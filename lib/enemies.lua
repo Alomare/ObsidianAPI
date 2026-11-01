@@ -70,8 +70,10 @@ end
 local function spawn_position(where)
 	if where == nil then return world.ahead(8) end
 	if where == "cursor" then return world.cursor() end
-	if (type(where) == "table" or type(where) == "userdata") and type(where.x) == "number" and type(where.y) == "number" then
-		return game.global("Vector3")(where.x, where.y, where.z or 0)
+	-- The engine's type() calls a vector "vector3", so it's known by its fields.
+	local ok, x, y, z = pcall(function() return where.x, where.y, where.z end)
+	if ok and type(where) ~= "string" and type(x) == "number" and type(y) == "number" then
+		return game.global("Vector3")(x, y, z or 0)
 	end
 	return nil, "bad_type"
 end
