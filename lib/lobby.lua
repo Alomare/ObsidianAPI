@@ -44,4 +44,44 @@ function M.players()
 	return out
 end
 
+-- A value a mod shares with every machine in the lobby, through the lobby's member data, so it reaches
+-- the others without a message of its own. One key per mod and name. Text up to 200 characters; Steam
+-- sends a change within about a second. Without a lobby nothing is shared, and share answers not_available.
+local MAX_SHARED = 200
+local sent = {}
+
+local function shared_key(name)
+	return "mod:" .. tostring(obsidian.caller and obsidian.caller() or "?") .. ":" .. tostring(name)
+end
+
+function M.share(name, value)
+	if type(name) ~= "string" or name == "" then return false, "bad_type" end
+	if value ~= nil and type(value) ~= "string" then return false, "bad_type" end
+	if value and #value > MAX_SHARED then return false, "out_of_range" end
+	local lobby = game.lobby()
+	if not lobby then return false, "not_available" end
+	local key = shared_key(name)
+	if sent[key] == value and sent[key .. "|lobby"] == lobby.lobby then return true end
+	local ok, err = pcall(lobby.set_member_data, lobby, key, value or "")
+	if not ok then return false, tostring(err) end
+	sent[key], sent[key .. "|lobby"] = value, lobby.lobby
+	return true
+end
+
+-- What each other machine shares under `name`, by peer. A machine that shares nothing is left out.
+function M.shared(name)
+	local out = {}
+	local lobby = game.lobby()
+	if not lobby or type(name) ~= "string" then return out end
+	local key = shared_key(name)
+	local me = game.global("Network").peer_id()
+	for _, peer in ipairs(ask(lobby, "members") or {}) do
+		if peer ~= me then
+			local ok, value = pcall(lobby.member_data, lobby, peer, key)
+			if ok and type(value) == "string" and value ~= "" then out[peer] = value end
+		end
+	end
+	return out
+end
+
 return M

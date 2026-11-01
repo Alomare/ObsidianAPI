@@ -66,21 +66,26 @@ function M.room()
 	return math.max(0, M.MAX_SAFE - M.carried())
 end
 
+-- where: nil for in front of the player, "cursor", or a position: a vector or { x, y, z }.
 local function spawn_position(where)
+	if where == nil then return world.ahead(8) end
 	if where == "cursor" then return world.cursor() end
-	return world.ahead(8)
+	if (type(where) == "table" or type(where) == "userdata") and type(where.x) == "number" and type(where.y) == "number" then
+		return game.global("Vector3")(where.x, where.y, where.z or 0)
+	end
+	return nil, "bad_type"
 end
 
--- key: a catalog key or unit path. where: "cursor", or nil for in front of the player. A client's
--- single spawn goes to the host as a request; groups are the host's to make.
+-- key: a catalog key or unit path. where: "cursor", a position, or nil for in front of the player. A
+-- client's single spawn goes to the host as a request; groups are the host's to make.
 function M.spawn(key, count, where)
 	local em = managers()
 	if not em then return false, "not_in_mission" end
 	local enemy = catalog.enemy(key)
 	if not enemy then return false, "unknown_enemy" end
 	if not M.available(enemy) then return false, "not_loaded" end
-	local pos = spawn_position(where)
-	if not pos then return false, "no_position" end
+	local pos, why = spawn_position(where)
+	if not pos then return false, why or "no_position" end
 	count = count or 1
 	if count == 1 then
 		em:spawn_enemy(enemy.unit, pos, nil, nil, { spawn_event = "patrol" }, true)
@@ -108,8 +113,8 @@ function M.spawn_group(key, where)
 		local enemy = catalog.enemy(u.unit_path)
 		if not enemy or not M.available(enemy) then return false, "not_loaded" end
 	end
-	local pos = spawn_position(where)
-	if not pos then return false, "no_position" end
+	local pos, why = spawn_position(where)
+	if not pos then return false, why or "no_position" end
 	em:spawn_group(pos, group)
 	return true
 end

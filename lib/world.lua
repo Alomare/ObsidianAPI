@@ -335,6 +335,17 @@ function M.cursor()
 	return nil
 end
 
+-- Where a point of the level is on the screen: pixels from the bottom left, as kits draw without a
+-- frame, and whether it's in view. pos: a vector or { x, y, z }.
+function M.to_screen(pos)
+	local cam, app, v3 = game.global("CameraManager"), game.global("Application"), game.global("Vector3")
+	if not (cam and app and pos) then return nil end
+	local ok, s = pcall(cam.world_to_screen, cam, v3(pos.x, pos.y, pos.z or 0))
+	if not ok or not s then return nil end
+	local w, h = app.resolution()
+	return s.x, s.y, s.z > 0 and s.x >= 0 and s.x <= w and s.y >= 0 and s.y <= h
+end
+
 -- A position some metres in front of the avatar.
 function M.ahead(metres)
 	local unit = game.my_unit()
