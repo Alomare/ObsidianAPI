@@ -1,5 +1,6 @@
 -- Messages and map marks, through the game's own HUD.
 local game = obsidian.module("lib/game")
+local map = obsidian.module("lib/map")
 
 local M = {}
 
@@ -68,18 +69,7 @@ function M.menus()
 	return out
 end
 
--- The map's own units, as the HUD works them out: centred, turned 45 degrees, and scaled to fit 350
--- at zoom 1. This value, the field's default, means no ping.
-local NO_PING = -1000
-
-local function map_position(level, pos)
-	local size = game.global("Vector2Aux").unbox(level.map_size)
-	local v3, q = game.global("Vector3"), game.global("Quaternion")
-	local turn = q(v3(0, 0, -1), math.rad(-45))
-	local p = q.rotate(turn, v3(pos.x - level.width * 12, pos.y - level.height * 12, pos.z))
-	local scale = math.min(350 / (size.x * 48), 350 / (size.y * 48)) * 2
-	return p.x * scale, p.y * scale
-end
+local NO_PING = map.NO_PING
 
 local function clamp(n)
 	return math.max(NO_PING + 1, math.min(n, -NO_PING - 1))
@@ -95,7 +85,7 @@ function M.ping(pos)
 		record.player_go:set("map_ping", { NO_PING, NO_PING })
 		return true
 	end
-	local x, y = map_position(level, pos)
+	local x, y = map.to_map(pos, level)
 	record.player_go:set("map_ping", { clamp(x), clamp(y) })
 	return true
 end

@@ -19,8 +19,11 @@ local vehicles = obsidian.module("lib/vehicles")
 local lobby = obsidian.module("lib/lobby")
 local audio = obsidian.module("lib/audio")
 local ui = obsidian.module("lib/ui")
+local map = obsidian.module("lib/map")
+local bots = obsidian.module("lib/bots")
 
-local gear_failed = false
+local gear_failed, bots_failed = false, false
+local last_state = nil
 
 obsidian.on_frame(function()
 	local dt = rawget(_G, "ENGINE_DT") or 0.016
@@ -28,18 +31,32 @@ obsidian.on_frame(function()
 	effects.tick(dt)
 	events.tick()
 	enemies.tick()
+	local st = game.state()
+	if st ~= last_state then
+		last_state = st
+		map.reset()
+	end
 	if game.session_mode then
 		local ok, err = pcall(gear.tick)
 		if not ok and not gear_failed then
 			gear_failed = true
 			obsidian.log("drones: " .. tostring(err))
 		end
+		ok, err = pcall(bots.tick)
+		if not ok and not bots_failed then
+			bots_failed = true
+			obsidian.log("bots: " .. tostring(err))
+		end
 	end
 end)
+
+-- The map's hooks belong to this library, not to the first mod that asks for the map.
+map.install()
 
 -- Everything that can change the shared game is set up only when a session mod needs this library.
 if game.session_mode then
 	obsidian.on_require("foundation/lua/debug/debug", console.install)
+	bots.install()
 	obsidian.on_frame(console.install)
 
 	-- Effects and edits come off when the session stops being cleared, and go back when it clears.
@@ -103,5 +120,7 @@ return {
 	vehicles = vehicles,
 	lobby = lobby,
 	ui = guard(ui, { "hint", "open", "close", "menus" }),
+	map = map,
+	bots = guard(bots, { "all" }),
 	audio = audio,
 }

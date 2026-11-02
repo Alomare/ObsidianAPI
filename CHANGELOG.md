@@ -2,6 +2,12 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.8.0
+
+- New: `api.map` reads and steers the mission map: open or closed, opening and closing it, zoom, the view, every player's ping, and conversions to and from the map's units.
+- New: `api.map.marker(pos, opts)` puts a mod's own marker on the map, at a position or following a unit.
+- New: `api.bots.add(opts)` makes Helldivers this machine plays: local players on free pads with a HUD slot, then bare Helldivers past the player records, with their name over their head. They move, aim, shoot, reload, throw, follow and fight, and go before a mission's results.
+
 ## 1.7.1
 
 - Changed: Steam achievements are no longer held back while Obsidian API is on.

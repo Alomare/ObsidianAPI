@@ -1,7 +1,7 @@
 {
   "obsidian": 1,
   "id": "obsidian.api",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "name": {
     "en": "Obsidian API",
     "pt-BR": "Obsidian API",
@@ -40,7 +40,9 @@
     "lib/combat.lua",
     "lib/vehicles.lua",
     "lib/lobby.lua",
+    "lib/map.lua",
     "lib/ui.lua",
+    "lib/bots.lua",
     "lib/audio.lua"
   ]
 }
