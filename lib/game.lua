@@ -187,14 +187,14 @@ function M.slaves(name)
 	return entities(name, "get_slave_entities")
 end
 
--- The mission under way adds nothing to the save. For anything that changes how a mission plays out.
--- A loader from before this exists runs an update of this mod too, so it's asked for by name.
+-- What a player earns in their own save is theirs: Obsidian no longer holds any of it back, and asks
+-- of these two do nothing there. They stay so the mods calling them keep working, and pass the ask on
+-- to an older loader that still holds.
 function M.forfeit_progress()
 	local forfeit = obsidian.session.forfeit_progress
 	if forfeit then forfeit() end
 end
 
--- Every mission adds nothing to the save while the calling mod is on, and the loading screen says so.
 function M.hold_progress()
 	local hold = obsidian.session.hold_progress
 	if hold then hold() end

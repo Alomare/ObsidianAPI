@@ -6,13 +6,14 @@ local game = obsidian.module("lib/game")
 
 local M = { plugins = {}, installed = false }
 
--- Commands that reach the shared backend, destroy saves, spend paid content, or have no use outside
--- a developer's desk. run() refuses them, whatever a mod or a typed line asks for.
+-- Commands that reach the shared backend, wipe a save or achievements for good, unlock paid content
+-- (unlock_all opens the DLC too), or have no use outside a developer's desk. run() refuses them,
+-- whatever a mod or a typed line asks for.
 local DENIED = {}
 for word in string.gmatch([[
 	push_planet push_defend_event push_attack_event push_bogus_statistics debug_get_usernames
 	season_end set_race_status send_message_test
-	clear_save_and_tus clear_achievemenets unlock_dlc unlock_all upgrade_all
+	clear_save_and_tus clear_achievemenets unlock_dlc unlock_all
 	console console_command toggle_debug toggle_title_safe show_spawn_validity picker
 	set_color_blindness_none set_color_blindness_protanopia set_color_blindness_protanomaly
 	set_color_blindness_deuteranopia set_color_blindness_deuteranomaly

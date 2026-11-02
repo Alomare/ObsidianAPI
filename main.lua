@@ -53,11 +53,6 @@ if game.session_mode then
 		end
 	end)
 
-	-- Stat-changed play earns no Steam achievements. The hook is the mod's, so it's off when the mod is.
-	obsidian.hook("UserManager", "unlock_trophy", function()
-		obsidian.log("achievement held back while Obsidian API is on")
-	end)
-
 	obsidian.hook("CameraManager", "add_shake", function(original, ...)
 		if effects.is_on("no_camera_shake") then return end
 		return original(...)
