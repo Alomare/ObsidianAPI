@@ -390,7 +390,8 @@ end
 
 -- A bare bot has no player record, so the HUD draws no name over it. This draws one the way the HUD
 -- draws a player's: projected through the game's viewport, centred, a little above, in the body font.
--- The projection is x, depth, y: the height on the screen is its z, as the HUD reads it.
+-- The projection is x, depth, y: the height on the screen is its z, as the HUD reads it. Like the HUD's
+-- names, these go when its plugins are off: the hide_hud effect, a mod's full-screen menu, cutscenes.
 local NAME_COLOR = { 255, 200, 200, 200 }
 local NAME_LAYER = 5
 
@@ -398,7 +399,7 @@ function M.draw_names(hud)
 	local gui = hud and hud.hd_gui
 	local cm = game.global("CameraManager")
 	local viewport = cm and cm:get_viewport()
-	if not (gui and viewport and hud.gui_metrics_cacher) then return end
+	if not (gui and viewport and hud.gui_metrics_cacher and hud.plugins_enabled) then return end
 	local units, v3, color = game.global("Unit"), game.global("Vector3"), game.global("Color")
 	local res = gui.screen_resolution or {}
 	for _, b in ipairs(M.list) do

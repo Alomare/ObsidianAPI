@@ -2,6 +2,10 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.9.2
+
+- Changed: the names `api.bots` draws over bare bots go when the HUD's do: under `hide_hud` and a mod's full-screen menu, they no longer show through.
+
 ## 1.9.1
 
 - Changed: `api.stratagems.call` takes a plain `{ x, y, z }` position too. Before, it counted down and nothing landed.
