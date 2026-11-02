@@ -159,6 +159,64 @@ function M.remove_perk()
 	return change_perk(unit, 0, nil)
 end
 
+-- Perks on top of the main one. A perk's setup runs for this unit with a context of its own. The game
+-- runs per-frame perk code for the main perk alone, so a perk that has any isn't offered.
+local extras = setmetatable({}, { __mode = "k" })
+
+local function plain_perk(name)
+	local perk = game.global("PerkSettings")[name]
+	if not perk or not catalog.usable(name) then return nil end
+	if perk.update_master or perk.update_slave or perk.remove_slave then return nil end
+	return perk
+end
+
+-- unit: nil for the local player. A new body after a death starts with none.
+function M.add_perk(name, unit)
+	if not unit then
+		local why
+		unit, why = my_unit()
+		if not unit then return false, why end
+	end
+	local c, master = game.component("inventory"), inventory(unit)
+	if not (c and master) then return false, "no_avatar" end
+	local perk = plain_perk(name)
+	if not perk then return false, "not_available" end
+	local list = game.global("LoadoutSettings").perks
+	local main = master.perk and master.perk > 0 and list[master.perk]
+	local mine = extras[unit] or {}
+	if (main and main.name == name) or mine[name] then return true end
+	local context = {}
+	if perk.setup_master then perk.setup_master(unit, c, context) end
+	if perk.setup_slave then perk.setup_slave(unit, c, context) end
+	mine[name] = context
+	extras[unit] = mine
+	return true
+end
+
+function M.remove_extra_perk(name, unit)
+	if not unit then
+		local why
+		unit, why = my_unit()
+		if not unit then return false, why end
+	end
+	local mine = extras[unit]
+	local context = mine and mine[name]
+	if not context then return true end
+	local perk = game.global("PerkSettings")[name]
+	if perk and perk.remove_master then perk.remove_master(unit, game.component("inventory"), context) end
+	mine[name] = nil
+	return true
+end
+
+-- The names of the perks added on top, sorted.
+function M.extra_perks(unit)
+	local out = {}
+	unit = unit or game.my_unit()
+	for name in pairs(unit and extras[unit] or {}) do out[#out + 1] = name end
+	table.sort(out)
+	return out
+end
+
 -- path: a backpack_path from catalog.backpacks. The game reads settings no other path has, outside
 -- any pcall, so a path from elsewhere is refused. upgrade as in give_weapon. The old pack drops.
 function M.give_backpack(path, upgrade)
