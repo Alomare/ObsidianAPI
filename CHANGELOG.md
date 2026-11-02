@@ -2,6 +2,10 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.9.1
+
+- Changed: `api.stratagems.call` takes a plain `{ x, y, z }` position too. Before, it counted down and nothing landed.
+
 ## 1.9.0
 
 - New: `api.gear.add_perk(name, unit)`, `remove_extra_perk(name, unit)` and `extra_perks(unit)` put perks on a player on top of the main one.
