@@ -20,12 +20,21 @@ local lobby = obsidian.module("lib/lobby")
 local audio = obsidian.module("lib/audio")
 local ui = obsidian.module("lib/ui")
 
+local gear_failed = false
+
 obsidian.on_frame(function()
 	local dt = rawget(_G, "ENGINE_DT") or 0.016
 	game.tick()
 	effects.tick(dt)
 	events.tick()
 	enemies.tick()
+	if game.session_mode then
+		local ok, err = pcall(gear.tick)
+		if not ok and not gear_failed then
+			gear_failed = true
+			obsidian.log("drones: " .. tostring(err))
+		end
+	end
 end)
 
 -- Everything that can change the shared game is set up only when a session mod needs this library.

@@ -35,6 +35,8 @@ local COMMANDS = {
 	objective_defend_object = set("interact"),
 	research_sample_pickup = set("interact"),
 	show_on_map = set("show"),
+	equipment = set("wielder wield"),
+	drone_station = set("set_force_dock"),
 }
 
 -- The state object and its name, in every game state once the game has booted.

@@ -174,6 +174,108 @@ function M.give_backpack(path, upgrade)
 	return true
 end
 
+-- Drones with no backpack to carry: a drone pack's station rides on a player outside the backpack slot,
+-- as the game's set_backpack spawns it, with its drones. The drones need the station: they dock on it,
+-- reload from it and fly around it. Every machine running this hides a station that isn't its player's
+-- backpack (M.tick), so only the drones show. The station goes when its player dies, as a worn pack
+-- drops, and its drones go with it.
+-- path: a backpack_path from catalog.backpacks that has drones. unit: a player on this machine, the
+-- main one by default. upgrade as in give_weapon. Answers a drone with :alive() and :remove(), or nil
+-- and a reason.
+local Drone = {}
+Drone.__index = Drone
+local drones = {}
+local hidden = setmetatable({}, { __mode = "k" })
+
+function M.add_drone(path, unit, upgrade)
+	if type(path) ~= "string" then return nil, "bad_type" end
+	if not unit then
+		local why
+		unit, why = my_unit()
+		if not unit then return nil, why end
+	end
+	local health = alive(unit) and game.master(unit, "health")
+	if not (health and inventory(unit)) or health.is_dead then return nil, "no_avatar" end
+	local item = catalog.backpack(path)
+	if not item then return nil, "not_available" end
+	local value, problem = upgrade_value(unit, item.stratagem, upgrade)
+	if not value then return nil, problem end
+	local settings = game.global("LuaSettingsManager"):get_modified_settings(path, value)
+	local children = settings and settings.pickup_info and settings.pickup_info.child_unit_paths
+	if not (settings and settings.drone_station_info and children) then return nil, "not_available" end
+	local st = game.state()
+	if not (game.in_mission() and st.entity_spawner) then return nil, "not_in_mission" end
+	local spawner = st.entity_spawner
+	local station = spawner:spawn_entity(path, nil, nil, nil, { upgrade_value = value, wielder_unit = unit })
+	if not alive(station) then return nil, "unknown" end
+	for _, child in pairs(children) do
+		spawner:spawn_entity(child, nil, nil, nil, { station_unit = station, upgrade_value = value })
+	end
+	local info = settings.backpack_info
+	aux().queue_command_interface(station, "backpack", "set_uses", info and info.num_uses or 1)
+	game.command(station, "equipment", "wielder", unit)
+	game.command(station, "equipment", "wield")
+	local d = setmetatable({ station = station, owner = unit, docked = false }, Drone)
+	drones[#drones + 1] = d
+	return d
+end
+
+function Drone:alive()
+	return alive(self.station) == true
+end
+
+-- Only the station goes, as when the game drops a pack: a drone without its station takes itself away.
+function Drone:remove()
+	local st = game.state()
+	if self:alive() and type(st) == "table" and st.entity_spawner then pcall(st.entity_spawner.despawn_entity, st.entity_spawner, self.station) end
+	self.station = nil
+end
+
+local function seated(unit)
+	local seat = game.global("CharacterStateSeated")
+	local ok, character = pcall(aux().state, unit, "character")
+	return seat ~= nil and ok and type(character) == "table" and character.current_state == seat
+end
+
+-- In a vehicle the game docks a worn pack's drones, and so for these.
+local function keep_drone(d)
+	local health = alive(d.owner) and game.master(d.owner, "health")
+	if not health or health.is_dead then
+		d:remove()
+		return false
+	end
+	local station = game.master(d.station, "drone_station")
+	local sit = seated(d.owner)
+	if station and alive(station.drone_unit) and sit ~= d.docked then
+		d.docked = sit
+		game.command(d.station, "drone_station", "set_force_dock", sit)
+	end
+	return true
+end
+
+function M.tick()
+	if #drones > 0 then
+		local kept = {}
+		for _, d in ipairs(drones) do
+			if d:alive() and keep_drone(d) then kept[#kept + 1] = d end
+		end
+		drones = kept
+	end
+	-- Anyone's station on anyone's player: seen only while it's that player's backpack.
+	local units = game.global("Unit")
+	for station, ctx in pairs(game.slaves("equipment")) do
+		if aux().has_component(station, "drone_station") then
+			local wielder = ctx.state and ctx.state.wielder
+			local inv = alive(wielder) and aux().state(wielder, "inventory")
+			local loose = type(inv) == "table" and inv.backpack ~= station
+			if loose or hidden[station] then
+				pcall(units.set_unit_visibility, station, not loose)
+				hidden[station] = loose or nil
+			end
+		end
+	end
+end
+
 function M.refill_backpack()
 	local unit, why = my_unit()
 	if not unit then return false, why end
@@ -274,17 +376,21 @@ local function copy(t)
 	return out
 end
 
-local function tune_state(c, state, changes, master)
-	if type(state.weapon_info) ~= "table" then return false end
+-- Where a component keeps the settings it reads: a weapon's weapon_info, a weapon's melee its melee_info.
+local SETTINGS = { melee = "melee_info" }
+
+local function tune_state(c, state, changes, master, field)
+	if type(state[field]) ~= "table" then return false end
 	-- The game can hand the weapon new settings, on an upgrade: those are the base from then on.
-	if state.weapon_info ~= state.tuned_own then state.tuned_base = state.weapon_info end
+	if state[field] ~= state.tuned_own then state.tuned_base = state[field] end
 	local base = state.tuned_base
 	local own = copy(base)
-	own.attributes = copy(base.attributes)
+	own.attributes = base.attributes and copy(base.attributes)
 	-- A field its settings leave out takes the game's default, which the state holds.
 	state.tuned_start = state.tuned_start or {}
 	for key, value in pairs(changes) do
 		if type(value) == "boolean" then
+			own.attributes = own.attributes or {}
 			own.attributes[key] = value
 		else
 			if type(base[key]) ~= "number" and not ANGLES[key] and type(state[key]) == "number" and state.tuned_start[key] == nil then
@@ -295,7 +401,7 @@ local function tune_state(c, state, changes, master)
 			if type(from) == "number" then own[key] = from * value end
 		end
 	end
-	state.weapon_info, state.tuned_own = own, own
+	state[field], state.tuned_own = own, own
 	local keys = copy(state.tuned_keys)
 	for key in pairs(changes) do keys[key] = true end
 	for key in pairs(keys) do
@@ -323,16 +429,18 @@ end
 
 -- changes: { field = factor } on a number of its settings, { attribute = true or false } on one of its
 -- attributes. It replaces the tuning before; {} takes it all off. It reaches only this machine's own
--- weapons, and each player runs it for theirs.
+-- weapons, and each player runs it for theirs. component "melee" tunes the weapon's melee attack:
+-- power, and duration and delay for how soon it hits and the next can start.
 function M.tune(unit, component, changes)
 	if type(changes) ~= "table" then return false, "bad_type" end
 	local c = game.component(component)
 	local master = game.masters(component)[unit]
 	if not (c and master) then return false, "unknown" end
-	tune_state(c, master.state, changes, true)
+	local field = SETTINGS[component] or "weapon_info"
+	tune_state(c, master.state, changes, true, field)
 	local slave = game.slaves(component)[unit]
 	if slave then
-		tune_state(c, slave.state, changes, false)
+		tune_state(c, slave.state, changes, false, field)
 		-- The shot's hit test keeps the settings it was made with.
 		if c.remake_raycast then c:remake_raycast(unit, slave) end
 	end

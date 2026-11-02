@@ -158,10 +158,13 @@ local function spawn_flare(s, pos, delay, owner, upgrade)
 end
 
 -- A real call-in at a position, delay seconds on top of its own, at the level the player owns. No
--- cooldown or use is spent.
-function M.call(name, pos, delay)
-	local unit, why = my_unit()
-	if not unit then return false, why end
+-- cooldown or use is spent. unit: whose call-in it is, a player on this machine, the main one by default.
+function M.call(name, pos, delay, unit)
+	if not unit then
+		local why
+		unit, why = my_unit()
+		if not unit then return false, why end
+	end
 	if not pos then return false, "no_position" end
 	local s = catalog.stratagem(name)
 	if not s then return false, "not_available" end
