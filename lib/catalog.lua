@@ -76,6 +76,8 @@ end
 -- True for an item the Loadout screen would offer this player (menu_screen_loadout.lua:142): earned,
 -- or in a paid pack they own. The lists here don't use it.
 function M.unlocked(name)
+	-- A custom stratagem is unlocked with its base. lib/custom.lua sets base_of, as it needs this file.
+	name = M.base_of and M.base_of(name) or name
 	if not M.usable(name) then return false end
 	local dlc = game.global("DlcSettings")
 	if dlc and dlc.is_item_dlc then

@@ -15,6 +15,10 @@
 -- right before the input component reads it, from a hook on its update: vectors made in the frame
 -- callback are a frame old by then, and read as NaN.
 local game = obsidian.module("lib/game")
+local gear = obsidian.module("lib/gear")
+local stratagems = obsidian.module("lib/stratagems")
+local player = obsidian.module("lib/player")
+local enemies = obsidian.module("lib/enemies")
 
 local M = { list = {} }
 
@@ -300,32 +304,33 @@ end
 
 -- Gear and help, as api.gear, api.stratagems and api.player give them to the main player. Each answers
 -- true, or false and a reason: "no_avatar" while the bot has no body.
--- Each of those takes the player last: n is how many arguments come before it.
+-- Each of those takes the player last: n is how many arguments come before it. The modules are loaded
+-- with this file: obsidian.module looks in the mod that's running, which is the caller's during a call.
 local function with_unit(self, module, fn, n, ...)
 	local unit = self:unit()
 	if not unit then return false, "no_avatar" end
 	local args = { ... }
 	args[n + 1] = unit
-	return obsidian.module(module)[fn](unpack(args, 1, n + 1))
+	return module[fn](unpack(args, 1, n + 1))
 end
 
-function Bot:give_weapon(slot, path, upgrade) return with_unit(self, "lib/gear", "give_weapon", 3, slot, path, upgrade) end
-function Bot:give_backpack(path, upgrade) return with_unit(self, "lib/gear", "give_backpack", 2, path, upgrade) end
-function Bot:give_perk(name) return with_unit(self, "lib/gear", "give_perk", 1, name) end
-function Bot:remove_perk() return with_unit(self, "lib/gear", "remove_perk", 0) end
-function Bot:refill() return with_unit(self, "lib/gear", "refill", 0) end
-function Bot:give_stratagem(name) return with_unit(self, "lib/stratagems", "give", 1, name) end
+function Bot:give_weapon(slot, path, upgrade) return with_unit(self, gear, "give_weapon", 3, slot, path, upgrade) end
+function Bot:give_backpack(path, upgrade) return with_unit(self, gear, "give_backpack", 2, path, upgrade) end
+function Bot:give_perk(name) return with_unit(self, gear, "give_perk", 1, name) end
+function Bot:remove_perk() return with_unit(self, gear, "remove_perk", 0) end
+function Bot:refill() return with_unit(self, gear, "refill", 0) end
+function Bot:give_stratagem(name) return with_unit(self, stratagems, "give", 1, name) end
 -- A real call-in of the bot's, at its upgrade level, as api.stratagems.call.
-function Bot:call(name, pos, delay) return with_unit(self, "lib/stratagems", "call", 3, name, pos, delay) end
+function Bot:call(name, pos, delay) return with_unit(self, stratagems, "call", 3, name, pos, delay) end
 -- Up from downed and at full health, as api.player.heal.
-function Bot:heal() return with_unit(self, "lib/player", "heal", 0) end
-function Bot:teleport(pos) return with_unit(self, "lib/player", "teleport", 1, pos) end
+function Bot:heal() return with_unit(self, player, "heal", 0) end
+function Bot:teleport(pos) return with_unit(self, player, "teleport", 1, pos) end
 
 -- The weapons it holds, as api.gear.weapons_of.
 function Bot:weapons()
 	local unit = self:unit()
 	if not unit then return {} end
-	return obsidian.module("lib/gear").weapons_of(unit)
+	return gear.weapons_of(unit)
 end
 
 function Bot:remove()
@@ -404,7 +409,6 @@ local function think(b, unit)
 	end
 	local fight = b.goals.fight
 	if fight then
-		local enemies = obsidian.module("lib/enemies")
 		local found = enemies.near(fight.radius, here)
 		local target = found[1]
 		if target then

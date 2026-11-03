@@ -2,6 +2,11 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.10.1
+
+- Changed: a bot's gear and help (`give_weapon`, `heal`, `teleport`, `call` and the rest) work when another mod calls them. In 1.10.0 they answered an error, looking for the API's own files in that mod.
+- Changed: `api.catalog.unlocked(name)` answers for a custom stratagem as for its base.
+
 ## 1.10.0
 
 - New: `api.music` picks the soundtrack: the tracks a screen has, playing one in place of the game's music and holding it across screens, silence, pause and resume, volume, and giving the music back.

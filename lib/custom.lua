@@ -26,6 +26,13 @@ local texts = {}     -- game text key -> words, a string or { en = ..., fr = ...
 local order = {}
 local installed = {}
 
+-- The catalog answers unlocked() for a custom stratagem as for its base. It can't load this file, which
+-- needs it, so the answer is handed to it here.
+function catalog.base_of(name)
+	local r = defs[name]
+	return r and r.base or name
+end
+
 local ARROWS = { up = true, down = true, left = true, right = true }
 local TYPES = { supply = true, offensive = true, defensive = true, special = true }
 -- What a def sets through its own fields, so stats can't.
