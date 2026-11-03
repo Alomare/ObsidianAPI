@@ -356,6 +356,7 @@ Most of these have a friendlier call in their own section, such as `api.combat.s
 | `skip_waits` | `true` | Objective countdowns finish at once |
 | `fast_mission_start` | `true` | No minimum load time before a drop |
 | `infinite_respawns` | `true` | Lives never run out |
+| `auto_respawn` | `true`, or seconds | A dead player drops back in after 3 seconds (or the seconds given), with no reinforcements left and in a lobby too |
 | `no_game_over` | `true` | A wipe doesn't end the mission |
 | `time_scale` | multiplier | Game speed. On the host it's everyone's game |
 | `pause` | `true` | Stops the game |
@@ -1959,6 +1960,7 @@ Every effect id, for `api.effects.set(id, value)`, with the module that defines 
 - `acceleration` (player)
 - `any_arrow` (stratagems): Any first arrow calls the chosen stratagem. The hook in main.lua reads selected.
 - `armor` (player)
+- `auto_respawn` (player): A few seconds after this player dies, the game's own respawn countdown runs out and drops them at the respawn point, with or without reinforcements left, alone or with others. It waits for the first drop, leaves a respawn the game has already started alone, and stops once the player extracts. value: true for 3 seconds, or the seconds before the drop.
 - `blind` (enemies)
 - `camera_angle` (world)
 - `camera_distance` (world): Camera. change_settings has to be used: follow_distance alone is rewritten every frame.

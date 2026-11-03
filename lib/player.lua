@@ -408,6 +408,28 @@ function M.respawn()
 	return true
 end
 
+local respawn_seen, respawn_started = setmetatable({}, { __mode = "k" }), setmetatable({}, { __mode = "k" })
+-- A few seconds after this player dies, the game's own respawn countdown runs out and drops them at
+-- the respawn point, with or without reinforcements left, alone or with others. It waits for the
+-- first drop, leaves a respawn the game has already started alone, and stops once the player
+-- extracts. value: true for 3 seconds, or the seconds before the drop.
+effects.define({ id = "auto_respawn",
+	frame = function(ctx, value)
+		local record = ctx.record
+		if ctx.name ~= "game" or type(record) ~= "table" then return end
+		local health = ctx.unit and aux().state(ctx.unit, "health")
+		if health and not health.is_dead then
+			respawn_seen[record], respawn_started[record] = true, nil
+			return
+		end
+		if not respawn_seen[record] or respawn_started[record] then return end
+		local go = record.player_go
+		if go and go:get("has_extracted") then return end
+		respawn_started[record] = true
+		if (record.spawn_timer or 0) <= 0 then record.spawn_timer = type(value) == "number" and value or 3 end
+	end,
+})
+
 -- Helping teammates goes through the owner, with the game's own requests.
 function M.heal_everyone()
 	local st = game.state()
