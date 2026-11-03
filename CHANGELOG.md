@@ -2,6 +2,14 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.18.0
+
+- New: the `auto_respawn` effect drops a dead player back in after 3 seconds, or the seconds given, with no reinforcements left and with other players in the lobby.
+- New: `api.mission.seed(choice)` makes a mission seed from chosen parts, for a mod that starts missions its own way.
+- New: `api.mission.practice` takes a `look` (one of the three terrain sets, or the bug, cyborg or illuminate world on its own planet type) and a `layout` from 1 to 215. `api.mission.LOOKS` and `api.mission.LAYOUTS` list them.
+- Changed: a practice mission picks its layout from all 215 a seed holds. It always drew the same one before.
+- Changed: `api.mission.params()` also gives the mission's `layout`.
+
 ## 1.17.0
 
 - Changed: an expansion's pages in the F6 window show before its content starts, as a client mod's do, since they are its way in. Its guarded calls still wait for the content (Obsidian 1.2.0).

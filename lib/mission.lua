@@ -381,13 +381,15 @@ function M.reveal_map()
 	return true
 end
 
--- What the current mission's seed says, or nil.
+-- What the current mission's seed says, or nil: the game's names for its parts, with layout (1 to
+-- LAYOUTS) added, and the seed.
 function M.params()
 	local st = mission_state()
 	local settings = game.global("DifficultySettings")
 	if not (st and settings) then return nil end
 	local ok, params = pcall(settings.get_lookup_mission_params, st.mission_seed)
-	if not ok then return nil end
+	if not ok or type(params) ~= "table" then return nil end
+	if type(st.mission_seed) == "number" then params.layout = math.floor(st.mission_seed / 10000000) + 1 end
 	return params, st.mission_seed
 end
 
@@ -396,18 +398,61 @@ M.ENVIRONMENTS = { "desert", "forest", "snow", "lava", "city" }
 M.FACTIONS = { "bugs", "cyborgs", "illuminates" }
 M.TYPES = { "mission", "boss", "genocide" }
 
+-- How a planet looks: one of its three terrain sets, or the look of a faction's world, which the game
+-- gives only event planets, each on one planet type. Pairs the game never draws may have no art.
+M.LOOKS = { "terrain_1", "terrain_2", "terrain_3", "bug_world", "cyborg_world", "illuminate_world" }
+-- Each faction look: the planet type it exists on (an index in ENVIRONMENTS) and its light and
+-- terrain digits, as the game's attack events have them.
+local FACTION_LOOKS = { [4] = { environment = 1, digit = 3 }, [5] = { environment = 3, digit = 4 }, [6] = { environment = 2, digit = 5 } }
+-- City planets come only from defend events, with the first two terrain sets.
+local CITY = 5
+-- How many layouts each set of parts has: the seed holds the layout above its seven digits of parts,
+-- and the game sends it as a 31-bit number.
+M.LAYOUTS = 215
+
+-- A mission seed from chosen parts, or false and a reason.
+-- choice: { time, environment, enemy, kind, difficulty, look, layout }: 1-based indexes in TIMES,
+-- ENVIRONMENTS, FACTIONS, TYPES and LOOKS, a difficulty from 1 to 15, and a layout from 1 to LAYOUTS.
+-- look and layout are random when left out. Reasons: bad_choice, look_not_here.
+function M.seed(choice)
+	local settings = game.global("DifficultySettings")
+	if not settings then return false, "not_available" end
+	local function index(v, list)
+		return type(v) == "number" and v == math.floor(v) and v >= 1 and v <= #list
+	end
+	if not (index(choice.time, M.TIMES) and index(choice.environment, M.ENVIRONMENTS) and index(choice.enemy, M.FACTIONS)
+		and index(choice.kind, M.TYPES) and type(choice.difficulty) == "number" and choice.difficulty >= 1 and choice.difficulty <= 15) then
+		return false, "bad_choice"
+	end
+	if choice.look ~= nil and not index(choice.look, M.LOOKS) then return false, "bad_choice" end
+	if choice.layout ~= nil and not (type(choice.layout) == "number" and choice.layout == math.floor(choice.layout) and choice.layout >= 1 and choice.layout <= M.LAYOUTS) then
+		return false, "bad_choice"
+	end
+	local shading, variant
+	local faction = choice.look and FACTION_LOOKS[choice.look]
+	if faction then
+		if faction.environment ~= choice.environment then return false, "look_not_here" end
+		shading, variant = faction.digit, faction.digit
+	else
+		local sets = choice.environment == CITY and 2 or 3
+		if choice.look and choice.look > sets then return false, "look_not_here" end
+		shading, variant = math.random(0, 2), choice.look and choice.look - 1 or math.random(0, sets - 1)
+	end
+	local layout = choice.layout and choice.layout - 1 or math.random(0, M.LAYOUTS - 1)
+	return settings.modulate_seed(choice.time - 1, shading, choice.environment - 1, variant, choice.enemy - 1, choice.kind - 1,
+		math.floor(choice.difficulty), layout * 10000000)
+end
+
 -- Starts a solo practice mission from the ship with chosen parts. As in the game's own training
 -- menu, it pays no XP or samples and touches no campaign. Proving ground types need a second seed,
 -- so they aren't offered.
--- choice: { time, environment, enemy, kind, difficulty } as 1-based indexes in the lists above.
+-- choice: as for seed: { time, environment, enemy, kind, difficulty, look, layout }.
 function M.practice(choice)
 	if not game.on_ship() then return false, "not_on_ship" end
-	local settings = game.global("DifficultySettings")
 	local save, menu = game.global("SaveManager"), game.state()
 	if #menu:get_active_players() > 1 then return false, "solo_only" end
-	local shading = math.random(0, 2)
-	local variant = math.random(0, 2)
-	local seed = settings.modulate_seed(choice.time - 1, shading, choice.environment - 1, variant, choice.enemy - 1, choice.kind - 1, choice.difficulty, math.random(1, 9))
+	local seed, why = M.seed(choice)
+	if not seed then return false, why end
 	save:set("dropzone_position", nil)
 	menu.state_machine:change_state("transition", {
 		wanted_state = "mission_start", is_training = true, mission_seed = seed, planet_name = tostring(seed),
