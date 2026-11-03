@@ -2,6 +2,10 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.17.0
+
+- Changed: an expansion's pages in the F6 window show before its content starts, as a client mod's do, since they are its way in. Its guarded calls still wait for the content (Obsidian 1.2.0).
+
 ## 1.16.0
 
 - New: a Mods page row made with `option = true` is the mod's `obsidian.json` option with the same id. It starts from the value set in Obsidian, and a change in game goes back to Obsidian's mod details once the game closes. `api.mod_settings.BINDS` is `true` from this version on.

@@ -131,11 +131,12 @@ end
 
 local function check_scope()
 	local scope = obsidian.scope and obsidian.scope() or "session"
-	return scope == "client" or obsidian.session.cleared() == true
+	return scope == "client" or scope == "expansion" or obsidian.session.cleared() == true
 end
 
--- Whether the loader would run a mod's code now: a client mod's always, a session mod's in a cleared
--- lobby. Worked out once a frame.
+-- Whether a mod's pages show now: a client mod's always, an expansion's always (its pages are entry
+-- points, and its guarded calls wait for its content on their own), a session mod's in a cleared lobby.
+-- Worked out once a frame.
 local function allowed(owner)
 	if owner == nil or owner == SELF then return true end
 	local known = M.status[owner]
