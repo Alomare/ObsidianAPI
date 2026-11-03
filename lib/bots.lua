@@ -326,6 +326,206 @@ function Bot:call(name, pos, delay) return with_unit(self, stratagems, "call", 3
 function Bot:heal() return with_unit(self, player, "heal", 0) end
 function Bot:teleport(pos) return with_unit(self, player, "teleport", 1, pos) end
 
+-- The stratagems in the bot's slots: { name, id, uses_left, cooldown, ready } each. uses_left is nil
+-- for one with no limit, and cooldown the seconds left before it can be called again.
+function Bot:stratagems()
+	local unit = self:unit()
+	local inv = unit and game.master(unit, "inventory")
+	local settings = game.global("LoadoutSettings")
+	local out = {}
+	for _, entry in ipairs(inv and inv.stratagems or {}) do
+		local s = settings and settings.stratagems and settings.stratagems[entry.id]
+		if s then
+			local cooldown = entry.cooldown_timer or 0
+			local spent = entry.uses_left ~= nil and entry.uses_left <= 0
+			out[#out + 1] = { name = s.name, id = s.id, uses_left = entry.uses_left, cooldown = cooldown,
+				ready = cooldown <= 0 and not spent and not entry.blocked }
+		end
+	end
+	return out
+end
+
+-- Calling a stratagem as a player does: the stratagem button held, the code's arrows pressed one at
+-- a time, then the beacon thrown. Each step waits for the character's own state, so an arrow the game
+-- missed or counted twice starts the code again instead of calling something else.
+local STRATAGEM_TIME = 10   -- seconds before the whole call gives up
+local OPEN_TIME = 1         -- for the menu to open: a bot in a vehicle seat never opens it
+local ARROW_GAP = 0.06      -- between arrows; each one is pressed for a single frame
+local ARROW_WAIT = 0.4      -- for the game to count an arrow, or to act on the last one
+local TURN_TIME = 0.75      -- to face the throw before throwing anyway
+local TRIES = 3             -- times the code is entered before "wrong_code"
+local ARROWS = { "up", "down", "left", "right" }
+
+local function in_state(cs, ...)
+	for i = 1, select("#", ...) do
+		local s = game.global(select(i, ...))
+		if s ~= nil and cs.current_state == s then return true end
+	end
+	return false
+end
+
+-- The charge a mouse player gets aiming at a point this far away, as CharacterStateStratagemsThrow
+-- works it out from the cursor.
+local function charge_for(distance)
+	return math.max(0, math.min(1, distance * distance * 0.015))
+end
+
+-- Enters the code of a stratagem the bot holds and throws the beacon toward pos. Answers true once
+-- started, or false and a reason: "no_avatar", "no_position", "not_available" (no such stratagem),
+-- "not_held" (not in its slots), "cooling_down", "no_uses", "busy" (already calling one). on_done(ok,
+-- reason) hears how it ended: true once the beacon is thrown, or false and "jammed" (a no-stratagem
+-- zone), "refused" (the game wouldn't call it), "wrong_code", "interrupted" (downed, knocked down, or
+-- a vehicle seat), "cancelled", "no_avatar" or "timeout". While it runs the bot stands, faces pos and
+-- holds fire, and its other orders wait.
+function Bot:use_stratagem(name, pos, on_done)
+	if self.job then return false, "busy" end
+	local unit = self:unit()
+	if not unit then return false, "no_avatar" end
+	pos = point(pos)
+	if not pos then return false, "no_position" end
+	local settings = game.global("LoadoutSettings")
+	local held
+	for _, h in ipairs(self:stratagems()) do
+		if h.name == name then held = h end
+	end
+	if not held then
+		for _, s in ipairs(settings and settings.stratagems or {}) do
+			if s.name == name then return false, "not_held" end
+		end
+		return false, "not_available"
+	end
+	local s = settings.stratagems[held.id]
+	if not (type(s.combo) == "table" and #s.combo > 0) then return false, "not_available" end
+	if held.uses_left ~= nil and held.uses_left <= 0 then return false, "no_uses" end
+	if not held.ready then return false, "cooling_down" end
+	self.job = { name = s.name, id = s.id, combo = s.combo, pos = pos, on_done = on_done, phase = "open", time = 0, total = 0, step = 0, tries = 0, wait = 0 }
+	return true
+end
+
+-- The stratagem the bot is calling and the step it's at ("open", "code", "throw"), or false.
+function Bot:using_stratagem()
+	if not self.job then return false end
+	return self.job.name, self.job.phase
+end
+
+-- Stops a call. A beacon already in hand goes back, as a melee press does for a player.
+function Bot:cancel_stratagem()
+	if not self.job then return false end
+	self.job.cancel = true
+	return true
+end
+
+local function finish(b, ok, why)
+	local job = b.job
+	b.job = nil
+	if job and type(job.on_done) == "function" then
+		local fine, err = pcall(job.on_done, ok, why)
+		if not fine then obsidian.log("bots: on_done: " .. tostring(err)) end
+	end
+end
+
+-- One frame of a call, after think: it writes over the input table, and leaves the orders as they are.
+local function stratagem_step(b, unit, t)
+	local job = b.job
+	local dt = rawget(_G, "ENGINE_DT") or 0.016
+	job.time, job.total = job.time + dt, job.total + dt
+	local cs = game.master(unit, "character") or {}
+	if cs.stratagems_queue then stratagems.bot_queues[cs.stratagems_queue] = true end
+	local menu = in_state(cs, "CharacterStateStratagems", "CharacterStateDownedStratagems")
+	local throwing = in_state(cs, "CharacterStateStratagemsThrow", "CharacterStateDownedStratagemsThrow")
+
+	t.fire_button, t.throw, t.stratagems_button, t.stratagems_pressed = 0, 0, 0, false
+	for _, d in ipairs(ARROWS) do t["stratagem_" .. d] = false end
+	t.melee = false
+	b.axes.move[1], b.axes.move[2] = 0, 0
+	local units = game.global("Unit")
+	local here = units.world_position(unit, 0)
+	local dx, dy = job.pos.x - here.x, job.pos.y - here.y
+	b.axes.aim[1], b.axes.aim[2] = direction({ x = dx, y = dy })
+	local function hold_menu() t.stratagems_button, t.stratagems_pressed = 1, true end
+
+	if job.cancel then
+		if throwing and not cs.has_thrown then t.melee = true end
+		return finish(b, false, "cancelled")
+	end
+	if job.total > STRATAGEM_TIME then return finish(b, false, "timeout") end
+
+	if job.phase == "open" then
+		hold_menu()
+		if menu then
+			job.phase, job.time, job.step, job.wait = "code", 0, 0, ARROW_GAP
+		elseif job.time > OPEN_TIME then
+			return finish(b, false, "interrupted")
+		end
+	elseif job.phase == "code" then
+		if throwing then
+			job.phase, job.time = "throw", 0
+			job.charge = charge_for(math.sqrt(dx * dx + dy * dy))
+		elseif not menu then
+			return finish(b, false, "interrupted")
+		elseif cs.stratagems_disabled then
+			return finish(b, false, "jammed")
+		else
+			hold_menu()
+			local queue = cs.stratagems_queue or {}
+			local wrong = #queue > job.step
+			for i = 1, math.min(#queue, job.step) do
+				if queue[i] ~= job.combo[i] then wrong = true end
+			end
+			if wrong then
+				t.stratagems_button, t.stratagems_pressed = 0, false
+				job.phase, job.time = "release", 0
+			elseif #queue < job.step or job.step == #job.combo then
+				-- Waiting for the game to count the arrow, or to call the stratagem the code makes.
+				if job.time > ARROW_WAIT then
+					if job.step == #job.combo then return finish(b, false, "refused") end
+					t.stratagems_button, t.stratagems_pressed = 0, false
+					job.phase, job.time = "release", 0
+				end
+			else
+				job.wait = job.wait - dt
+				if job.wait <= 0 then
+					job.step = job.step + 1
+					t["stratagem_" .. job.combo[job.step]] = true
+					job.wait, job.time = ARROW_GAP, 0
+				end
+			end
+		end
+	elseif job.phase == "release" then
+		-- The menu closes with the button let go, and opens with an empty code.
+		if not menu then
+			job.tries = job.tries + 1
+			if job.tries >= TRIES then return finish(b, false, "wrong_code") end
+			job.phase, job.time = "open", 0
+		elseif job.time > OPEN_TIME then
+			return finish(b, false, "interrupted")
+		end
+	elseif job.phase == "throw" then
+		if not throwing then
+			if job.thrown then return finish(b, true) end
+			return finish(b, false, "interrupted")
+		end
+		if cs.has_thrown then
+			job.thrown = true
+		elseif not job.held then
+			-- The throw goes where the body faces, so the bot turns first.
+			local faced = true
+			local quat = game.global("Quaternion")
+			if units.world_rotation and quat and quat.forward then
+				local f = quat.forward(units.world_rotation(unit, 0))
+				local len = math.sqrt(dx * dx + dy * dy)
+				faced = len < 0.5 or (f.x * dx + f.y * dy) / len > 0.97
+			end
+			if faced or job.time > TURN_TIME then
+				job.held = true
+				t.throw = 1
+			end
+		elseif (cs.grenade_charge or 0) < job.charge then
+			t.throw = 1
+		end
+	end
+end
+
 -- The weapons it holds, as api.gear.weapons_of.
 function Bot:weapons()
 	local unit = self:unit()
@@ -347,6 +547,7 @@ function Bot:remove()
 		if unit and type(st) == "table" and st.entity_spawner then pcall(st.entity_spawner.despawn_entity, st.entity_spawner, unit) end
 	end
 	self.removed = true
+	if self.job then finish(self, false, "cancelled") end
 	for i, b in ipairs(M.list) do
 		if b == self then
 			table.remove(M.list, i)
@@ -431,6 +632,8 @@ local function drive(b, unit)
 		input.pad_number = b.pad
 	end
 	think(b, unit)
+	-- A stratagem call holds the sticks for its frames, so the orders' own come back after it.
+	local move, aim = { b.axes.move[1], b.axes.move[2] }, { b.axes.aim[1], b.axes.aim[2] }
 	local t = b.input
 	for field, left in pairs(b.presses) do
 		t[field] = left > 0
@@ -440,11 +643,17 @@ local function drive(b, unit)
 		t.throw = b.throw_frames > 1 and 1 or 0
 		b.throw_frames = b.throw_frames > 1 and b.throw_frames - 1 or nil
 	end
+	local calling = b.job ~= nil
+	if calling then stratagem_step(b, unit, t) end
 	for field in pairs(b.vectors) do t[field] = v3(0, 0, 0) end
 	local mx, my = to_stick(b.axes.move[1], b.axes.move[2])
 	t.move = v3(mx, my, 0)
 	local ax, ay = to_stick(b.axes.aim[1], b.axes.aim[2])
 	t.aim = v3(ax, ay, 0)
+	if calling then
+		b.axes.move[1], b.axes.move[2] = move[1], move[2]
+		b.axes.aim[1], b.axes.aim[2] = aim[1], aim[2]
+	end
 	input.input_data = t
 	input.has_focus = true
 end
@@ -470,7 +679,11 @@ end
 function M.drive_all()
 	for _, b in ipairs(M.all()) do
 		local unit = b:unit()
-		if unit then drive(b, unit) end
+		if unit then
+			drive(b, unit)
+		elseif b.job then
+			finish(b, false, "no_avatar")
+		end
 	end
 end
 

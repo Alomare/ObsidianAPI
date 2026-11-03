@@ -2,6 +2,12 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.21.0
+
+- New: `bot:use_stratagem(name, pos, on_done)` calls a stratagem from the bot's slots the way a player does: the stratagem button held, the code entered one arrow at a time, and the flare thrown at `pos`. Cooldowns and uses count.
+- New: `bot:stratagems()` lists the stratagems a bot carries, with cooldowns and uses left. `bot:using_stratagem()` and `bot:cancel_stratagem()` read and stop a call.
+- Changed: the `any_arrow` effect leaves a bot's code alone.
+
 ## 1.20.0
 
 - Changed: `api.stratagems.define` called before the game has its stratagem list, as in a mod's main chunk, answers `{ name, pending = true }` and makes the stratagem before the save's loadout is read. It answered `not_ready` before, and a mod that stopped trying never got its stratagem.

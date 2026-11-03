@@ -5,7 +5,8 @@ local edits = obsidian.module("lib/edits")
 local catalog = obsidian.module("lib/catalog")
 local custom = obsidian.module("lib/custom")
 
-local M = { selected = nil }
+-- bot_queues: the arrow queues of bots' characters, which lib/bots.lua fills in as they enter codes.
+local M = { selected = nil, bot_queues = setmetatable({}, { __mode = "k" }) }
 
 -- Custom stratagems, made from the game's own: lib/custom.lua.
 M.define, M.custom = custom.define, custom.list
@@ -69,11 +70,12 @@ effects.define({ id = "fast_pods",
 -- gate turns the hook off, so there's nothing to undo here.
 effects.define({ id = "ignore_jammers", remove = function() end })
 
--- Any first arrow calls the chosen stratagem. The hook in main.lua reads selected.
+-- Any first arrow calls the chosen stratagem. The hook in main.lua reads selected. A bot's code is
+-- left alone: the choice is the player's.
 effects.define({ id = "any_arrow" })
 
 function M.find(original, queue)
-	if effects.is_on("any_arrow") and M.selected and #queue > 0 then return M.selected end
+	if effects.is_on("any_arrow") and M.selected and #queue > 0 and not M.bot_queues[queue] then return M.selected end
 	return original(queue)
 end
 
