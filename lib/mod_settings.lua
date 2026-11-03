@@ -27,9 +27,10 @@ local dirty = {}
 
 local function key(owner, id) return owner .. "/" .. id end
 
+-- The game writes its menus in capitals, in the texts themselves, so ours are too. Help lines aren't.
 local function words()
 	local lm = game.global("LocalizationManager")
-	return WORDS[type(lm) == "table" and lm.current_language or "en"] or WORDS.en
+	return (WORDS[type(lm) == "table" and lm.current_language or "en"] or WORDS.en):upper()
 end
 
 local Page = {}
@@ -192,7 +193,7 @@ end
 
 local function game_row(row, n, texts)
 	local name = "obsidian_ms_row_" .. n
-	texts[name] = row.label
+	texts[name] = tostring(row.label):upper()
 	local out = { name = name }
 	if row.info then
 		out.info = name .. "_info"
@@ -203,7 +204,7 @@ local function game_row(row, n, texts)
 	elseif row.kind == "choice" then
 		out.options, out.ignore_loc_option_names = { selected_index = 1 }, true
 		for i, c in ipairs(row.choices) do
-			out.options[i] = { name = c.label, value = c.id }
+			out.options[i] = { name = c.label:upper(), value = c.id }
 			if c.id == row.value then out.options.selected_index = i end
 		end
 	elseif row.kind == "number" then
@@ -211,7 +212,7 @@ local function game_row(row, n, texts)
 		local count = math.floor((row.max - row.min) / row.step + 0.5)
 		for i = 0, count do
 			local v = math.min(row.min + i * row.step, row.max)
-			out.options[i + 1] = { name = format(row, v), value = v }
+			out.options[i + 1] = { name = format(row, v):upper(), value = v }
 			if math.abs(v - row.value) < row.step / 2 then out.options.selected_index = i + 1 end
 		end
 	end
@@ -220,7 +221,7 @@ end
 
 local function open_screen(screen, rows, title)
 	screen.user_pad_number = screen.parent.user_pad_number
-	screen.options, screen.texts = {}, { [TITLE_KEY] = title }
+	screen.options, screen.texts = {}, { [TITLE_KEY] = tostring(title):upper() }
 	for n, row in ipairs(rows) do screen.options[n] = game_row(row, n, screen.texts) end
 	screen.rows = rows
 	screen.selected_option = 1
