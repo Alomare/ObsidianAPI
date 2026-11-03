@@ -1,0 +1,385 @@
+-- Custom stratagems: new entries in the game's stratagem list, each made from one of the game's own,
+-- its base. A custom stratagem has its own name, words, code, icon, type, numbers and upgrades, and
+-- can run a mod's function when it's called down, beside or instead of what the base would drop.
+--
+-- No other game has it, so on the wire it is always the base, as the LAS-288 Pitchfork and Gyro's
+-- Steel Balls do it: the stratagem ids in the game's messages and in the fields it copies to other
+-- machines are swapped for the base's as they're written. Other players see and hear the base; the
+-- thrower's game does the rest, and what lands is a unit every game has. Those swaps protect the
+-- other players, so they hold in any lobby, and they replace the game's functions directly: two of
+-- them run for every field read and every message, too often for the protected hook path, and a hook
+-- the loader switched off would stop them. In a lobby that isn't cleared, a custom stratagem is its
+-- base: its numbers, its call-in, and no mod function.
+--
+-- The Loadout screen offers it to whoever has its base, by rank, reward or DLC. The save keeps its
+-- upgrades under its name, like any stratagem's, and a saved loadout naming a stratagem the game no
+-- longer has gets the default in its place (Boot.ensure_loadout), so taking a mod off leaves a save
+-- that works.
+local game = obsidian.module("lib/game")
+local catalog = obsidian.module("lib/catalog")
+
+local M = {}
+
+local defs = {}      -- by name, in the order they were made
+local by_id = {}     -- the entry's index in LoadoutSettings.stratagems -> def
+local texts = {}     -- game text key -> words, a string or { en = ..., fr = ... }
+local order = {}
+local installed = {}
+
+local ARROWS = { up = true, down = true, left = true, right = true }
+local TYPES = { supply = true, offensive = true, defensive = true, special = true }
+-- What a def sets through its own fields, so stats can't.
+local OWN = { name = true, id = true, description = true, combo = true, icon = true, unit = true, stratagem_type = true,
+	stratagem_subtypes = true, attributes = true, upgrades = true, group = true }
+-- Messages that carry a stratagem id, and its place among their arguments (lua/generated/network_messages.lua).
+local MESSAGES = { rpc_activate_stratagem = 2, rpc_stratagem_info = 3, rpc_give_stratagem = 2 }
+-- Game object fields that hold one: the loadout's slots (menu_screen_loadout.lua:617) and a flare's.
+local FIELDS = { stratagem_id = true }
+for i = 1, 16 do FIELDS["stratagem" .. i .. "_index"] = true end
+
+local LANGUAGES = { en = "en", fr = "fr", es = "es", bp = "pt-BR" }
+
+local function settings()
+	local s = game.global("LoadoutSettings")
+	if type(s) == "table" and type(s.stratagems) == "table" then return s end
+	return nil
+end
+
+local function clone(t)
+	if type(t) ~= "table" then return t end
+	local out = {}
+	for k, v in pairs(t) do out[k] = clone(v) end
+	return setmetatable(out, getmetatable(t))
+end
+
+local function cleared()
+	local session = obsidian.session
+	return not (session and session.cleared) or session.cleared()
+end
+
+-- The id other games know: the base's for a custom stratagem.
+local function wire(id)
+	local def = by_id[id]
+	return def and def.base_id or id
+end
+
+local function words(value)
+	if type(value) == "string" then return value end
+	local lm = game.global("LocalizationManager")
+	local lang = LANGUAGES[type(lm) == "table" and lm.current_language or "en"] or "en"
+	return value[lang] or value.en
+end
+
+-- A level's name from the stratagem's: "Pitchfork" becomes "Pitchfork Mk2", in each language given.
+local function level_title(title, n)
+	if type(title) == "string" then return title .. " Mk" .. n end
+	local out = {}
+	for lang, s in pairs(title) do out[lang] = s .. " Mk" .. n end
+	return out
+end
+
+-- Words: a string, or a table of them by language with English in it.
+local function is_words(v)
+	if type(v) == "string" then return v ~= "" and #v <= 200 end
+	if type(v) ~= "table" or type(v.en) ~= "string" then return false end
+	for _, s in pairs(v) do
+		if type(s) ~= "string" or #s > 200 then return false end
+	end
+	return true
+end
+
+local function is_list_of_strings(v, max)
+	if type(v) ~= "table" or #v > max then return false end
+	for _, s in ipairs(v) do
+		if type(s) ~= "string" then return false end
+	end
+	return true
+end
+
+-- Plain values only, of the type the base has where it has the field.
+local function check_stats(stats, base)
+	if stats == nil then return true end
+	if type(stats) ~= "table" then return false end
+	for k, v in pairs(stats) do
+		local kind = type(v)
+		if type(k) ~= "string" or OWN[k] or not (kind == "number" or kind == "boolean" or kind == "string") then return false end
+		if kind == "number" and (v ~= v or v < 0 or v > 100000) then return false end
+		if base[k] ~= nil and type(base[k]) ~= kind then return false end
+	end
+	return true
+end
+
+local function check(def, s)
+	if type(def) ~= "table" then return "bad_type" end
+	if type(def.name) ~= "string" or not def.name:match("^[%w_]+$") or #def.name > 64 then return "bad_name" end
+	for _, e in ipairs(s.stratagems) do
+		if e.name == def.name then return "taken" end
+	end
+	-- A base has to be a stratagem every game has.
+	if defs[def.base] then return "not_available" end
+	if not is_words(def.title) or (def.description ~= nil and not is_words(def.description)) then return "bad_type" end
+	if def.code ~= nil then
+		if type(def.code) ~= "table" or #def.code < 1 or #def.code > 10 then return "bad_code" end
+		for _, arrow in ipairs(def.code) do
+			if not ARROWS[arrow] then return "bad_code" end
+		end
+	end
+	if def.type ~= nil and not TYPES[def.type] then return "bad_type" end
+	if def.subtypes ~= nil and not is_list_of_strings(def.subtypes, 8) then return "bad_type" end
+	if def.icon ~= nil and type(def.icon) ~= "string" then return "bad_type" end
+	if def.unit ~= nil and type(def.unit) ~= "string" then return "bad_type" end
+	if def.attributes ~= nil and type(def.attributes) ~= "table" then return "bad_type" end
+	if def.on_activate ~= nil and type(def.on_activate) ~= "function" then return "bad_type" end
+	if def.upgrades ~= nil then
+		if type(def.upgrades) ~= "table" or #def.upgrades > 6 then return "bad_type" end
+		for _, u in ipairs(def.upgrades) do
+			if type(u) ~= "table" then return "bad_type" end
+			if u.title ~= nil and not is_words(u.title) then return "bad_type" end
+			if u.description ~= nil and not is_words(u.description) then return "bad_type" end
+			if u.cost ~= nil and not (type(u.cost) == "number" and u.cost >= 0 and u.cost <= 100) then return "out_of_range" end
+		end
+	end
+	return nil
+end
+
+-- The game's functions, replaced once, when the first custom stratagem is made. Each does nothing for
+-- the game's own stratagems.
+local function install_direct()
+	local go = game.global("GameObject")
+	if not installed.game_object and type(go) == "table" and type(go.set) == "function" and type(go.get) == "function" then
+		installed.game_object = true
+		-- What this machine set, by object and field: { real id, base id }. Its own reads get the real one.
+		local real = setmetatable({}, { __mode = "k" })
+		local set, get = go.set, go.get
+		go.set = function(self, field, value, ...)
+			if FIELDS[field] then
+				local mine = real[self]
+				local base = by_id[value] and wire(value)
+				if base then
+					if not mine then
+						mine = {}
+						real[self] = mine
+					end
+					mine[field] = { value, base }
+					return set(self, field, base, ...)
+				elseif mine then
+					mine[field] = nil
+				end
+			end
+			return set(self, field, value, ...)
+		end
+		go.get = function(self, field, ...)
+			local v = get(self, field, ...)
+			local mine = real[self]
+			local m = mine and mine[field]
+			if m and v == m[2] then return m[1] end
+			return v
+		end
+	end
+
+	local router = game.global("NetworkRouter")
+	if not installed.router and type(router) == "table" and type(router.write_message_params) == "function" and type(router.transmit_to) == "function" then
+		installed.router = true
+		local write, transmit, to_all, to_others = router.write_message_params, router.transmit_to, router.transmit_to_all, router.transmit_to_all_others
+		-- A message to this machine itself keeps the real id.
+		local to_self = false
+		router.write_message_params = function(self, name, ...)
+			local at = MESSAGES[name]
+			if not at or to_self then return write(self, name, ...) end
+			local n = select("#", ...)
+			local args = { ... }
+			if by_id[args[at]] then
+				args[at] = wire(args[at])
+				return write(self, name, unpack(args, 1, n))
+			end
+			return write(self, name, ...)
+		end
+		router.transmit_to = function(self, peer, name, ...)
+			if MESSAGES[name] and peer == game.global("Network").peer_id() then
+				to_self = true
+				local ok, err = pcall(transmit, self, peer, name, ...)
+				to_self = false
+				if not ok then error(err, 0) end
+				return
+			end
+			return transmit(self, peer, name, ...)
+		end
+		-- Everyone else gets the base and this machine the real one, so one message goes as two.
+		if type(to_all) == "function" and type(to_others) == "function" then
+			router.transmit_to_all = function(self, name, ...)
+				if not MESSAGES[name] then return to_all(self, name, ...) end
+				to_others(self, name, ...)
+				return self:transmit_to(game.global("Network").peer_id(), name, ...)
+			end
+		end
+	end
+
+	local lm = game.global("LocalizationManager")
+	if not installed.texts and type(lm) == "table" and type(lm.string) == "function" then
+		installed.texts = true
+		local string_of = lm.string
+		lm.string = function(self, key, ...)
+			local own = texts[key]
+			if own ~= nil then return words(own) end
+			return string_of(self, key, ...)
+		end
+	end
+
+	local s = settings()
+	if not installed.upgraded and s and type(s.get_upgraded_stratagem) == "function" then
+		installed.upgraded = true
+		local upgraded = s.get_upgraded_stratagem
+		s.get_upgraded_stratagem = function(id, upgrade, ...)
+			if by_id[id] and not cleared() then return upgraded(wire(id), upgrade, ...) end
+			return upgraded(id, upgrade, ...)
+		end
+	end
+	return installed.game_object and installed.router and installed.texts and installed.upgraded
+end
+
+-- The hooks that can go through the loader: paid packs, ranks, the call-in, and a flare's id as it's
+-- first copied out. From main.lua, so they're the library's and not the first mod's that makes one.
+function M.install()
+	if installed.hooks then return end
+	installed.hooks = true
+	local wrap = obsidian.wrap or obsidian.hook
+	-- Each new replicator gets its fields' write functions; a stratagem_id one goes out as the base's.
+	wrap("GameObjectFieldsReplicator", "init", function(original, self, ...)
+		local r = { original(self, ...) }
+		for _, field in ipairs(type(self.fields) == "table" and self.fields or {}) do
+			local write = field.write
+			if field.name == "stratagem_id" and type(write) == "function" then
+				field.write = function(value, ...) return write(wire(value), ...) end
+			end
+		end
+		return unpack(r)
+	end)
+	-- A paid pack's stratagem stays paid when it's a base.
+	wrap("DlcSettings", "is_item_dlc", function(original, name, ...)
+		local def = defs[name]
+		return original(def and def.base or name, ...)
+	end)
+	wrap("DlcSettings", "can_use", function(original, name, ...)
+		local def = defs[name]
+		return original(def and def.base or name, ...)
+	end)
+	-- Only in a cleared lobby does the Loadout screen offer one, to a player who has its base.
+	obsidian.hook("ProgressionSettings", "can_use", function(original, name, ...)
+		local def = defs[name]
+		if not def then return original(name, ...) end
+		return original(def.base, ...) or catalog.unlocked(def.base)
+	end)
+	obsidian.hook("StratagemComponent", "spawn_stratagem_hellpod", function(original, self, peer, pos, dir, id, upgrade, owner, ...)
+		local def = by_id[id]
+		if def and def.entry then
+			local result = def.entry.run({ name = def.name, position = pos, owner = owner, upgrade = upgrade or 0 })
+			if result == false then return end
+		end
+		return original(self, peer, pos, dir, id, upgrade, owner, ...)
+	end)
+	-- The game's functions go in once a custom stratagem is made and they all exist. true stops the calls.
+	obsidian.on_frame(function()
+		if #order == 0 then return false end
+		return install_direct()
+	end)
+end
+
+-- Makes a custom stratagem. def:
+--   name         its key, letters, digits and _ ("mymod_pitchfork"); must be new
+--   base         a stratagem of the game's: copied, and what other players see
+--   title        its name: a string, or { en = ..., fr = ..., es = ..., ["pt-BR"] = ... }
+--   description  words under it; the base's if nil
+--   code         the arrows, { "down", "left", "up", ... }, 1 to 10; the base's if nil
+--   icon         an icon the HUD has, as a stratagem's icon field; the base's if nil
+--   type         "supply", "offensive", "defensive" or "special"; subtypes, a list as the game's
+--   unit         what it calls down: a unit every game has; the base's if nil
+--   stats        fields of the entry: num_uses, cooldown_time, activation_time, despawn_time, ...
+--   attributes   the bars the Loadout screen shows, as the game's attr_ fields
+--   upgrades     its levels, Mk2 and on: { title, description, cost, stats, attributes, upgrade_attributes,
+--                icon }; the base's, renamed, if nil
+--   on_activate  function(ctx) on the thrower's machine when it's called down. ctx: name, position (the
+--                game's vector, good for this frame: copy it to keep it), owner (the thrower's unit),
+--                upgrade. Answer false to drop nothing.
+-- Answers { name, id }, or nil and a reason.
+function M.define(def)
+	local s = settings()
+	if not s then return nil, "not_ready" end
+	local why = check(def, s)
+	if why then return nil, why end
+	local base, base_id
+	for i, e in ipairs(s.stratagems) do
+		if e.name == def.base then base, base_id = e, i end
+	end
+	if not base then return nil, "not_available" end
+	if not check_stats(def.stats, base) then return nil, "bad_type" end
+	for _, u in ipairs(def.upgrades or {}) do
+		if not check_stats(u.stats, base) then return nil, "bad_type" end
+	end
+
+	local e = clone(base)
+	local name = def.name
+	e.name = name
+	e.group = nil
+	texts[name] = def.title
+	if def.description then
+		e.description = name .. "_d"
+		texts[e.description] = def.description
+	end
+	if def.code then e.combo = clone(def.code) end
+	e.icon = def.icon or base.icon
+	e.unit = def.unit or base.unit
+	e.stratagem_type = def.type or base.stratagem_type
+	if def.subtypes then e.stratagem_subtypes = clone(def.subtypes) end
+	if def.attributes then e.attributes = clone(def.attributes) end
+	for k, v in pairs(def.stats or {}) do e[k] = v end
+	if def.upgrades then
+		e.upgrades = {}
+		for i, u in ipairs(def.upgrades) do
+			local key = name .. "_mk" .. (i + 1)
+			local from = base.upgrades and base.upgrades[i] or {}
+			local level = { cost = u.cost or from.cost or 2, upgrade_name = key, upgrade_description = name .. "_d_mk" .. (i + 1),
+				upgrade_icon = u.icon or from.upgrade_icon, attributes = clone(u.attributes), upgrade_attributes = clone(u.upgrade_attributes) }
+			for k, v in pairs(u.stats or {}) do level[k] = v end
+			e.upgrades[i] = level
+			texts[key] = u.title or level_title(def.title, i + 1)
+			texts[level.upgrade_description] = u.description or def.description or ""
+		end
+	else
+		-- The base's levels with the stratagem's name. Their order of purchase is their own.
+		for i, level in ipairs(e.upgrades or {}) do
+			level.upgrade_name = name .. "_mk" .. (i + 1)
+			level.dependencies = nil
+			texts[level.upgrade_name] = level_title(def.title, i + 1)
+		end
+	end
+	local id = #s.stratagems + 1
+	e.id = id
+	s.stratagems[id] = e
+
+	local record = { name = name, base = def.base, base_id = base_id, id = id }
+	if def.on_activate then
+		-- Run as the mod that made it, and not at all once that mod is off, as events are.
+		local fn = def.on_activate
+		record.entry = { run = function() end }
+		obsidian.hook(record.entry, "run", function(_, ctx) return fn(ctx) end)
+	end
+	defs[name], by_id[id] = record, record
+	order[#order + 1] = record
+	install_direct()
+	return { name = name, id = id }
+end
+
+-- The custom stratagems made so far: { name, base, id }.
+function M.list()
+	local out = {}
+	for i, r in ipairs(order) do out[i] = { name = r.name, base = r.base, id = r.id } end
+	return out
+end
+
+-- The custom stratagem by its name, or nil.
+function M.get(name)
+	local r = defs[name]
+	return r and { name = r.name, base = r.base, id = r.id } or nil
+end
+
+return M

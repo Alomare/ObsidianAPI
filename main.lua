@@ -69,6 +69,7 @@ end)
 if game.session_mode then
 	obsidian.on_require("foundation/lua/debug/debug", console.install)
 	bots.install()
+	obsidian.module("lib/custom").install()
 	obsidian.on_frame(console.install)
 
 	-- Effects and edits come off when the session stops being cleared, and go back when it clears.

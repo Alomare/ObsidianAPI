@@ -3,8 +3,12 @@ local game = obsidian.module("lib/game")
 local effects = obsidian.module("lib/effects")
 local edits = obsidian.module("lib/edits")
 local catalog = obsidian.module("lib/catalog")
+local custom = obsidian.module("lib/custom")
 
 local M = { selected = nil }
+
+-- Custom stratagems, made from the game's own: lib/custom.lua.
+M.define, M.custom = custom.define, custom.list
 
 local function my_unit()
 	local unit = game.my_unit()
