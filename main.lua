@@ -18,11 +18,12 @@ local combat = obsidian.module("lib/combat")
 local vehicles = obsidian.module("lib/vehicles")
 local lobby = obsidian.module("lib/lobby")
 local audio = obsidian.module("lib/audio")
+local music = obsidian.module("lib/music")
 local ui = obsidian.module("lib/ui")
 local map = obsidian.module("lib/map")
 local bots = obsidian.module("lib/bots")
 
-local gear_failed, bots_failed = false, false
+local gear_failed, bots_failed, music_failed = false, false, false
 local last_state = nil
 
 obsidian.on_frame(function()
@@ -35,6 +36,11 @@ obsidian.on_frame(function()
 	if st ~= last_state then
 		last_state = st
 		map.reset()
+	end
+	local ok, err = pcall(music.tick)
+	if not ok and not music_failed then
+		music_failed = true
+		obsidian.log("music: " .. tostring(err))
 	end
 	if game.session_mode then
 		local ok, err = pcall(gear.tick)
@@ -52,6 +58,12 @@ end)
 
 -- The map's hooks belong to this library, not to the first mod that asks for the map.
 map.install()
+
+obsidian.hook("AudioStateMachine", "on_enter_state", function(original, ...)
+	local a, b = original(...)
+	music.after_machine_enter()
+	return a, b
+end)
 
 -- Everything that can change the shared game is set up only when a session mod needs this library.
 if game.session_mode then
@@ -123,4 +135,5 @@ return {
 	map = map,
 	bots = guard(bots, { "all" }),
 	audio = audio,
+	music = music,
 }

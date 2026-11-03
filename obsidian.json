@@ -43,6 +43,7 @@
     "lib/map.lua",
     "lib/ui.lua",
     "lib/bots.lua",
-    "lib/audio.lua"
+    "lib/audio.lua",
+    "lib/music.lua"
   ]
 }
