@@ -2,6 +2,10 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## Next
+
+- New: `api.mod_settings.page(title)` gives a mod a page of settings in the pause menu's new **Mod Settings**: toggles, choices, numbers and buttons, drawn by the game's own Settings screen and kept for the next launch.
+
 ## 1.10.3
 
 - Changed: the `heavy_armor_look` effect waits for a mission. Its model isn't loaded on the ship, and turning it on there crashed the game.

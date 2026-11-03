@@ -45,6 +45,7 @@
     "lib/ui.lua",
     "lib/bots.lua",
     "lib/audio.lua",
-    "lib/music.lua"
+    "lib/music.lua",
+    "lib/mod_settings.lua"
   ]
 }

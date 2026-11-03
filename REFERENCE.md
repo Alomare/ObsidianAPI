@@ -1034,6 +1034,32 @@ obsidian.hook("SomeMenuScreen", "draw", function(original, self, ...)
 end)
 ```
 
+### Your settings in the pause menu: api.mod_settings
+
+The game's pause menu gets a **Mod Settings** row under its own Settings. It opens a list of mods, and each mod's page is the game's own Settings screen with your rows: a name on the left, a value you change with the arrows or the mouse, and a line of help under them while one is selected. The row shows up once any page has a row.
+
+`api.mod_settings.page(title)` gives your mod its page, titled in the list of mods. Asking again gives the same page. Its rows:
+
+| Call | What it does |
+|---|---|
+| `page:toggle(id, opts)` | Yes or No. `opts.default` is `false` when left out |
+| `page:choice(id, opts)` | One of `opts.choices`, a list of `{ id, label }`. `opts.default` is an id, the first when left out |
+| `page:number(id, opts)` | From `opts.min` to `opts.max` in steps of `opts.step`, 100 steps at most. `opts.format(value)` gives the words shown |
+| `page:button(label, fn, opts)` | A row that calls `fn` when pressed |
+| `page:get(id)` | The value now |
+| `page:set(id, value)` | Changes it as the page would. `false` when the value doesn't fit the row |
+
+Every row but a button takes `opts.label`, `opts.info` (the line of help) and `opts.on_change(value)`, called when the value changes, from the menu or from `set`. The row calls answer the value the row starts with: the one kept from the last time, or the default.
+
+Values are kept for the next launch, in Obsidian API's storage. These are your mod's in-game settings. The options in your `obsidian.json` are the app's: players change them in Obsidian, and you read them with `obsidian.settings.get`. The page opens in any lobby, cleared or not, so a client mod's settings are always at hand.
+
+```lua
+local page = api.mod_settings.page("Better HUD")
+local show_ammo = page:toggle("ammo", { label = "Ammo counter", default = true,
+  info = "Rounds left by the magazine picture.", on_change = function(on) show_ammo = on end })
+page:number("size", { label = "Bar height", min = 2, max = 8, default = 4, format = function(v) return v .. " px" end })
+```
+
 ### The save: api.progress
 
 Obsidian leaves the player's own progression alone, with two lines it won't cross: there's no way to change XP or rank, and no way to get paid content.
@@ -1390,7 +1416,7 @@ A session mod's hooks, frame functions, effects and edits stop while the lobby i
 
 ## Every call (Obsidian API 1.10.3)
 
-Each table of `api`, its calls in the order of the source, and the comment above each one. `bot:`, `drone:`, `prop:` and `marker:` are methods of what `api.bots.add`, `api.gear.add_drone`, `api.world.prop` and `api.map.marker` answer. Where this list and the guide above disagree, this list is right.
+Each table of `api`, its calls in the order of the source, and the comment above each one. `bot:`, `drone:`, `prop:`, `marker:` and `page:` are methods of what `api.bots.add`, `api.gear.add_drone`, `api.world.prop`, `api.map.marker` and `api.mod_settings.page` answer. Where this list and the guide above disagree, this list is right.
 
 ### api.audio
 
@@ -1663,6 +1689,18 @@ The mission: objectives, extraction, waits, samples, and choosing what to play. 
 - `api.mission.FACTIONS`
 - `api.mission.TYPES`
 - `api.mission.practice(choice)`: Starts a solo practice mission from the ship with chosen parts. As in the game's own training menu, it pays no XP or samples and touches no campaign. Proving ground types need a second seed, so they aren't offered. choice: { time, environment, enemy, kind, difficulty } as 1-based indexes in the lists above.
+
+### api.mod_settings
+
+Mod Settings: a row of the game's pause menu that opens a list of mods, and a page of settings for each, drawn and driven by the game's own Settings screen (MenuScreenOptions), so they look and handle like the game's. A mod asks for its page and adds rows to it; the values are kept for the next launch. These are a mod's in-game settings. The options in a mod's obsidian.json are the app's, read with obsidian.settings.get, and stay there. Values live in this library's storage. obsidian.storage writes to the mod whose code is running: a change from the menu (this library's code) is written at once, one from a mod's own code waits in `dirty` for this library's frame callback. The menu's hooks are wraps, never gated, so a client mod's page opens in any lobby.
+
+- `page:toggle(id, opts)`: opts: label, info (a line under the rows while it's selected), default, on_change(value).
+- `page:choice(id, opts)`: opts.choices: { { id = "...", label = "..." }, ... }; default: one of the ids, else the first.
+- `page:number(id, opts)`: opts: min, max, step (each step is a stop on the row's arrows, 100 at most), default, format(value) for the words shown.
+- `page:button(label, fn, opts)`: A row that does something when pressed. Nothing is kept.
+- `page:get(id)`
+- `page:set(id, value)`: Sets a value as the page would; false when there's no such row or the value doesn't fit it.
+- `api.mod_settings.page(title)`: The calling mod's page, titled for the list of mods. Asking again gives the same page.
 
 ### api.music
 

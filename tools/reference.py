@@ -26,15 +26,16 @@ INTERNAL = {
     "game": {"tick", "plugin", "session_mode"},
     "gear": {"tick"},
     "map": {"install", "draw", "reset"},
+    "mod_settings": {"install", "tick"},
     "mission": {"on_mission_start_update"},
     "music": {"tick", "after_machine_enter"},
     "stratagems": {"find", "call_unowned", "define", "custom"},
 }
 # Calls one module makes public under another table's name.
 RENAMED = {"custom": ("stratagems", {"define": "define", "list": "custom"})}
-OBJECTS = {"Bot": "bot", "Drone": "drone", "Prop": "prop", "Marker": "marker"}
+OBJECTS = {"Bot": "bot", "Drone": "drone", "Prop": "prop", "Marker": "marker", "Page": "page"}
 
-FUNC = re.compile(r"^function (M|Bot|Drone|Prop|Marker)[.:]([A-Za-z_]\w*)\s*\(([^)]*)\)")
+FUNC = re.compile(r"^function (M|Bot|Drone|Prop|Marker|Page)[.:]([A-Za-z_]\w*)\s*\(([^)]*)\)")
 CONST = re.compile(r"^M\.([A-Z][A-Z_]*)\s*=")
 ALIAS = re.compile(r"^M\.([a-z_]\w*)\s*=\s*([A-Za-z_][\w.]*)\s*$")
 EFFECT = re.compile(r'(?:effects\.define\(\{\s*id\s*=\s*|field_effect\(|switch_effect\()"([a-z_]+)"')
@@ -105,8 +106,8 @@ def render():
 
     out = [MARKER, "", f"## Every call (Obsidian API {version})", ""]
     out.append("Each table of `api`, its calls in the order of the source, and the comment above each one. "
-               "`bot:`, `drone:`, `prop:` and `marker:` are methods of what `api.bots.add`, `api.gear.add_drone`, "
-               "`api.world.prop` and `api.map.marker` answer. Where this list and the guide above disagree, this list is right.")
+               "`bot:`, `drone:`, `prop:`, `marker:` and `page:` are methods of what `api.bots.add`, `api.gear.add_drone`, "
+               "`api.world.prop`, `api.map.marker` and `api.mod_settings.page` answer. Where this list and the guide above disagree, this list is right.")
     for name in sorted(calls):
         out += ["", f"### api.{name}", ""]
         if heads.get(name):
