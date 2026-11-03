@@ -249,8 +249,9 @@ function M.near(radius, pos)
 end
 
 -- A hit from the player, as apply_status sends it, so it reaches the owner and armor counts. statuses:
--- a list of status templates that go with it, or nil.
-function M.damage(unit, power, statuses)
+-- a list of status templates that go with it, or nil. opts.through_armor: true for a hit no armor stops,
+-- as burns and poison are.
+function M.damage(unit, power, statuses, opts)
 	if not game.in_mission() then return false, "not_in_mission" end
 	if not (type(power) == "number" and power >= 0 and power < 1000000) then return false, "out_of_range" end
 	if not alive_enemy(unit) then return false, "no_enemy" end
@@ -259,8 +260,9 @@ function M.damage(unit, power, statuses)
 		if not (templates and templates[template]) then return false, "unknown_status" end
 	end
 	local me = game.my_unit()
+	local through = type(opts) == "table" and opts.through_armor == true or nil
 	aux().queue_command_interface(unit, "damageable", "do_damage",
-		{ power = power, angle_hit = 0, angle_incidence = 0, owner_unit = me, attacker_unit = me, hit_status_effects = statuses })
+		{ power = power, angle_hit = 0, angle_incidence = 0, owner_unit = me, attacker_unit = me, hit_status_effects = statuses, armorignore = through })
 	return true
 end
 
