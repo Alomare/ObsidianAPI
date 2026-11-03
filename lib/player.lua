@@ -244,11 +244,22 @@ effects.define({ id = "hide_model",
 	end,
 })
 
--- The look only: armor values are the armor effect's. A player with the perk keeps it on the way out.
+-- The armor's model is in mission_common alone (the ship loads menu), and every machine spawns it for
+-- every player, which takes the game down where it isn't loaded. Off a mission the effect waits for the
+-- next body, the mission's.
+local function armor_loaded()
+	local boot = game.global("Boot")
+	local packages = type(boot) == "table" and boot.package_manager
+	if not packages then return false end
+	local ok, online = pcall(packages.is_package_online, packages, "resource_packages/mission_common")
+	return ok and online == true
+end
+
+-- The look only, in missions: armor values are the armor effect's. A player with the perk keeps it on the way out.
 effects.define({ id = "heavy_armor_look",
 	apply = function(ctx)
 		local state = game.master(ctx.unit, "customization")
-		if not state then return end
+		if not state or not armor_loaded() then return end
 		remember(ctx.unit, "heavy_armor", state.heavy_armor or 1)
 		game.command(ctx.unit, "customization", "enable_heavy_armor")
 	end,

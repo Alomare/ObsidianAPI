@@ -2,6 +2,10 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.10.3
+
+- Changed: the `heavy_armor_look` effect waits for a mission. Its model isn't loaded on the ship, and turning it on there crashed the game.
+
 ## 1.10.2
 
 - New: `REFERENCE.md`, inside the API's folder: a guide to every part of the API, recipes, the rules that keep the game running, and every call and effect, generated from the source at each release.
