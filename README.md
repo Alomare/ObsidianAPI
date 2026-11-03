@@ -29,18 +29,20 @@ end)
 
 Actions answer `true`, or `false` and a short reason such as `"host_only"` or `"not_in_mission"`.
 
-The API is a library: it runs as a session mod only when a session mod requires it. A client mod can require it too and stay a client mod. It can then read the game's data and use `api.ui`, `api.audio` and `api.events`, and anything that changes the shared game answers `false, "needs_session"`. The Obsidian API page in the app's Wiki covers the rest.
+The API is a library: it runs as a session mod only when a session mod requires it. A client mod can require it too and stay a client mod. It can then read the game's data and use `api.ui`, `api.audio` and `api.events`, and anything that changes the shared game answers `false, "needs_session"`.
+
+[REFERENCE.md](REFERENCE.md) has everything else: a guide to each part of the API, recipes, the rules that keep the game running, and every call and effect. It also comes inside the API's folder in the Obsidian Kit, so an AI tool working on a mod can read it there.
 
 ## Releasing
 
-Set `version` in `obsidian.json`, add a section for it to `CHANGELOG.md` (new, changed or removed capabilities, one line each), commit, then push a tag with the same version:
+Set `version` in `obsidian.json`, add a section for it to `CHANGELOG.md` (new, changed or removed capabilities, one line each), run `python tools/reference.py` to bring `REFERENCE.md` up to date, commit, then push a tag with the same version:
 
 ```
 git tag v1.0.1
 git push origin v1.0.1
 ```
 
-The Release workflow packs the mod into a `.zip` and publishes it with that changelog section as its notes, and Obsidian offers it as an update. It stops if the section is missing.
+The Release workflow packs the mod into a `.zip` and publishes it with that changelog section as its notes, and Obsidian offers it as an update. It stops if the section is missing, or if `REFERENCE.md` doesn't match the source.
 
 ## License
 

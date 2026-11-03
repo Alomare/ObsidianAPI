@@ -31,6 +31,9 @@ jobs:
           awk -v h="## $version" '$0 == h { on = 1; next } /^## / { on = 0 } on' CHANGELOG.md | sed '/./,$!d' > notes.md
           [ -s notes.md ] || { echo "CHANGELOG.md has no section for $version"; exit 1; }
 
+      - name: REFERENCE.md matches the source
+        run: python3 tools/reference.py --check
+
       - name: Pack and publish
         run: |
           id=$(jq -r .id obsidian.json)

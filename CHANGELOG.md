@@ -2,6 +2,10 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.10.2
+
+- New: `REFERENCE.md`, inside the API's folder: a guide to every part of the API, recipes, the rules that keep the game running, and every call and effect, generated from the source at each release.
+
 ## 1.10.1
 
 - Changed: a bot's gear and help (`give_weapon`, `heal`, `teleport`, `call` and the rest) work when another mod calls them. In 1.10.0 they answered an error, looking for the API's own files in that mod.
