@@ -2,7 +2,7 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
-## Next
+## 1.11.0
 
 - New: `api.mod_settings.page(title)` gives a mod a page of settings in the pause menu's new **Mod Settings**: toggles, choices, numbers and buttons, drawn by the game's own Settings screen and kept for the next launch.
 
