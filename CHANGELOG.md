@@ -5,6 +5,10 @@ New, changed or removed capabilities, one line each, brief and direct. A release
 ## Next
 
 - New: `api.music` picks the soundtrack: the tracks a screen has, playing one in place of the game's music and holding it across screens, silence, pause and resume, volume, and giving the music back.
+- New: bot orders `go_to(pos)`, `hold()` and `aim_at(pos)`, and `fighting()` and `firing()` to read them back.
+- New: a bot's gear and help: `give_weapon`, `give_backpack`, `give_perk`, `remove_perk`, `refill`, `give_stratagem`, `call`, `heal`, `teleport` and `weapons`.
+- Changed: `api.gear.give_weapon`, `give_backpack`, `give_perk` and `remove_perk`, and `api.player.teleport`, take an optional unit, for another player on this machine.
+- Changed: `api.bots.add` answers `nil, "not_in_mission"` where the game can't spawn a bare Helldiver, instead of an error.
 
 ## 1.9.2
 

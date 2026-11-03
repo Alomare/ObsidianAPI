@@ -10,8 +10,9 @@ local function aux()
 	return game.global("EntityAux")
 end
 
-local function my_unit()
-	local unit = game.my_unit()
+-- unit: a player on this machine, the main one when nil.
+local function my_unit(unit)
+	unit = unit or game.my_unit()
 	if not unit then return nil, "no_avatar" end
 	return unit
 end
@@ -437,8 +438,8 @@ function M.set_lives(n)
 	return true
 end
 
-local function teleport(pos)
-	local unit, why = my_unit()
+local function teleport(pos, unit)
+	local unit, why = my_unit(unit)
 	if not unit then return false, why end
 	if not pos then return false, "no_position" end
 	local units = game.global("Unit")

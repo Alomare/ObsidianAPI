@@ -133,6 +133,7 @@ local function add_bare(st, name, pos)
 		end
 		pos = v3(p.x + 3 + others * 3, p.y + 3, p.z)
 	end
+	if not st.spawn_manager then return nil, "not_in_mission" end
 	local pad = free_pad(st)
 	local b = new_bot("bare", name)
 	b.pad = pad
@@ -198,8 +199,34 @@ end
 
 -- Where to walk, as a world direction; its length is the speed, up to 1. nil stops.
 function Bot:move(dir)
-	self.goals.follow = nil
+	self.goals.follow, self.goals.go_to = nil, nil
 	self.axes.move[1], self.axes.move[2] = direction(dir)
+	return self
+end
+
+-- A position kept as plain numbers: an engine vector lasts one frame.
+local function point(pos)
+	if pos == nil then return nil end
+	return { x = pos.x or pos[1] or 0, y = pos.y or pos[2] or 0 }
+end
+
+-- Walk to a position and stop within distance (1.5 metres) of it. nil stops.
+function Bot:go_to(pos, distance)
+	self.goals.follow = nil
+	self.goals.go_to = point(pos)
+	if self.goals.go_to then self.goals.go_to.distance = distance or 1.5 end
+	if not pos then self.axes.move[1], self.axes.move[2] = 0, 0 end
+	return self
+end
+
+-- Stay where it stands: no following and no walking.
+function Bot:hold()
+	return self:move(nil)
+end
+
+-- Face a position, each frame, while fight has no target. nil stops.
+function Bot:aim_at(pos)
+	self.goals.aim_at = point(pos)
 	return self
 end
 
@@ -213,6 +240,10 @@ end
 function Bot:fire(on)
 	self.input.fire_button = on and 1 or 0
 	return self
+end
+
+function Bot:firing()
+	return self.input.fire_button == 1
 end
 
 function Bot:sprint(on)
@@ -246,8 +277,14 @@ end
 
 -- Keep near a unit, a player's by default: walk to it when further than distance (6 metres).
 function Bot:follow(unit, distance)
+	self.goals.go_to = nil
 	self.goals.follow = { unit = unit, distance = distance or 6 }
 	return self
+end
+
+-- The radius it fights in, or false.
+function Bot:fighting()
+	return self.goals.fight and self.goals.fight.radius or false
 end
 
 -- Aim at and shoot the nearest enemy within radius (25 metres), each frame. false stops.
@@ -259,6 +296,36 @@ function Bot:fight(radius)
 		self.goals.fight = { radius = radius or 25 }
 	end
 	return self
+end
+
+-- Gear and help, as api.gear, api.stratagems and api.player give them to the main player. Each answers
+-- true, or false and a reason: "no_avatar" while the bot has no body.
+-- Each of those takes the player last: n is how many arguments come before it.
+local function with_unit(self, module, fn, n, ...)
+	local unit = self:unit()
+	if not unit then return false, "no_avatar" end
+	local args = { ... }
+	args[n + 1] = unit
+	return obsidian.module(module)[fn](unpack(args, 1, n + 1))
+end
+
+function Bot:give_weapon(slot, path, upgrade) return with_unit(self, "lib/gear", "give_weapon", 3, slot, path, upgrade) end
+function Bot:give_backpack(path, upgrade) return with_unit(self, "lib/gear", "give_backpack", 2, path, upgrade) end
+function Bot:give_perk(name) return with_unit(self, "lib/gear", "give_perk", 1, name) end
+function Bot:remove_perk() return with_unit(self, "lib/gear", "remove_perk", 0) end
+function Bot:refill() return with_unit(self, "lib/gear", "refill", 0) end
+function Bot:give_stratagem(name) return with_unit(self, "lib/stratagems", "give", 1, name) end
+-- A real call-in of the bot's, at its upgrade level, as api.stratagems.call.
+function Bot:call(name, pos, delay) return with_unit(self, "lib/stratagems", "call", 3, name, pos, delay) end
+-- Up from downed and at full health, as api.player.heal.
+function Bot:heal() return with_unit(self, "lib/player", "heal", 0) end
+function Bot:teleport(pos) return with_unit(self, "lib/player", "teleport", 1, pos) end
+
+-- The weapons it holds, as api.gear.weapons_of.
+function Bot:weapons()
+	local unit = self:unit()
+	if not unit then return {} end
+	return obsidian.module("lib/gear").weapons_of(unit)
 end
 
 function Bot:remove()
@@ -306,6 +373,21 @@ end
 local function think(b, unit)
 	local units = game.global("Unit")
 	local here = units.world_position(unit, 0)
+	local go_to = b.goals.go_to
+	if go_to then
+		local dx, dy = go_to.x - here.x, go_to.y - here.y
+		local d = math.sqrt(dx * dx + dy * dy)
+		if d > go_to.distance then
+			b.axes.move[1], b.axes.move[2] = dx / d, dy / d
+		else
+			b.axes.move[1], b.axes.move[2] = 0, 0
+			b.goals.go_to = nil
+		end
+	end
+	local aim_at = b.goals.aim_at
+	if aim_at then
+		b.axes.aim[1], b.axes.aim[2] = direction({ x = aim_at.x - here.x, y = aim_at.y - here.y })
+	end
 	local follow = b.goals.follow
 	if follow then
 		local target = follow.unit or game.my_unit()

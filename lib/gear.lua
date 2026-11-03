@@ -13,8 +13,9 @@ local function aux()
 	return game.global("EntityAux")
 end
 
-local function my_unit()
-	local unit = game.my_unit()
+-- unit: a player on this machine, the main one when nil.
+local function my_unit(unit)
+	unit = unit or game.my_unit()
 	if not unit then return nil, "no_avatar" end
 	return unit
 end
@@ -110,9 +111,9 @@ end
 
 -- slot: primary_weapon, sidearm_weapon or support_weapon. The old weapon drops as a pickup.
 -- upgrade: a value from 0 to 15, or nil for what the player owns for that weapon. A paid weapon the
--- player doesn't own is refused.
-function M.give_weapon(slot, path, upgrade)
-	local unit, why = my_unit()
+-- player doesn't own is refused. unit: a player on this machine, the main one by default.
+function M.give_weapon(slot, path, upgrade, unit)
+	local unit, why = my_unit(unit)
 	if not unit then return false, why end
 	if catalog.unowned_path(path) then return false, "not_available" end
 	local value, problem = upgrade_value(unit, catalog.item_name(path), upgrade)
@@ -142,8 +143,8 @@ end
 
 -- Every other peer picks the new perk up with no setup, and laser sight's per-frame code needs its
 -- setup, so that one would fail inside their update. It's kept to solo play.
-function M.give_perk(name)
-	local unit, why = my_unit()
+function M.give_perk(name, unit)
+	local unit, why = my_unit(unit)
 	if not unit then return false, why end
 	if not catalog.usable(name) then return false, "not_available" end
 	if name == "perk_lasersight" and not game.alone() then return false, "alone_only" end
@@ -153,8 +154,8 @@ function M.give_perk(name)
 	return false, "not_available"
 end
 
-function M.remove_perk()
-	local unit, why = my_unit()
+function M.remove_perk(unit)
+	local unit, why = my_unit(unit)
 	if not unit then return false, why end
 	return change_perk(unit, 0, nil)
 end
@@ -218,9 +219,9 @@ function M.extra_perks(unit)
 end
 
 -- path: a backpack_path from catalog.backpacks. The game reads settings no other path has, outside
--- any pcall, so a path from elsewhere is refused. upgrade as in give_weapon. The old pack drops.
-function M.give_backpack(path, upgrade)
-	local unit, why = my_unit()
+-- any pcall, so a path from elsewhere is refused. upgrade and unit as in give_weapon. The old pack drops.
+function M.give_backpack(path, upgrade, unit)
+	local unit, why = my_unit(unit)
 	if not unit then return false, why end
 	local item = catalog.backpack(path)
 	if not item then return false, "not_available" end
