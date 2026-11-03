@@ -370,6 +370,25 @@ local function vector(pos)
 	return game.global("Vector3")(x, y, type(z) == "number" and z or 0)
 end
 
+-- The first thing on the straight line from one point to another: true, where and how far along, or
+-- false. filter: the game's collision filter, "default" when left out; "mover_blocker" is what stops a
+-- body walking, the one to ask before moving a player. from, to: vectors or { x, y, z }.
+function M.raycast(from, to, filter)
+	local a, b = vector(from), vector(to)
+	if not (a and b) then return false, "bad_type" end
+	local st = game.state()
+	if type(st) ~= "table" or not st.world_proxy then return false, "not_in_mission" end
+	local v3 = game.global("Vector3")
+	local length = v3.length(b - a)
+	if length <= 0.0001 then return false end
+	local ok, hit, pos, distance = pcall(game.global("PhysicsWorld").immediate_raycast, st.world_proxy:get_physics_world(), a,
+		v3.normalize(b - a), length, "closest", "collision_filter", type(filter) == "string" and filter or "default")
+	-- A filter the game doesn't know.
+	if not ok then return false, "bad_type" end
+	if hit then return true, pos, distance end
+	return false
+end
+
 function M.prop(unit_name, pos, opts)
 	if type(unit_name) ~= "string" or unit_name == "" then return nil, "bad_type" end
 	local at = vector(pos)

@@ -98,6 +98,9 @@ if game.session_mode then
 
 	obsidian.hook("HealthComponent", "calculate_damage", combat.health)
 	obsidian.hook("ShieldComponent", "calculate_damage", combat.shield)
+	-- Where a hit by this machine's players is worked out, for api.combat.on_hit and on_fatal.
+	obsidian.hook("HealthComponent", "command_master", combat.command_master)
+	obsidian.hook("HealthComponent", "filter_slave_command", combat.filter_slave_command)
 
 	obsidian.hook("StratagemsDisabledAreaComponent", "is_unit_inside_any_area", function(original, ...)
 		if effects.is_on("ignore_jammers") then return false end
@@ -125,7 +128,7 @@ return {
 	console = guard(console, { "denied", "commands" }),
 	data = data,
 	catalog = catalog,
-	world = guard(world, { "shading", "flash", "cursor", "ahead", "clear_decals" }),
+	world = guard(world, { "shading", "flash", "cursor", "ahead", "raycast", "clear_decals" }),
 	player = guard(player, { "lives" }),
 	gear = guard(gear),
 	stratagems = guard(stratagems),

@@ -793,6 +793,25 @@ api.combat.scale({ enemies = false })              -- enemies back to normal
 
 A multiplier from 0 to 100, applied after armor, so armor that stops a shot still stops it. `1` or `false` turns a side off. The game works out a hit without knowing who fired it, so the scale goes by who's hit. Each player's game works out its own hits, so everyone in a lobby should use the same numbers.
 
+Two kinds of hit can be heard as they're worked out:
+
+| Call | Your function gets | When |
+|---|---|---|
+| `on_hit(fn)` | `victim`, `hit` | A player of this machine landed a hit that cost health, on an enemy any machine runs. `hit` has `damage`, `owner_unit` (the player), `attacker_unit` (the weapon, grenade or projectile) and `slot`: `"primary_weapon"`, `"sidearm_weapon"` or `"support_weapon"` when the attacker is a weapon the player holds, else `nil`. Teammates and the player's own body count as victims too |
+| `on_fatal(fn)` | `unit`, `damage` | A hit would kill a player of this machine. Answer `true` to spare them: the hit leaves them 1 hitpoint, or a downed player as they were |
+
+`off_hit(fn)` and `off_fatal(fn)` stop them. `on_damage_taken` in [Events](#the-events) only reaches the machine that runs the victim, so in a lobby it misses most of your hits on enemies; `on_hit` doesn't. A rocket's or a grenade's hit has no `slot`.
+
+```lua
+-- Every third rifle hit on an enemy sets it alight.
+local count = {}
+api.combat.on_hit(function(victim, hit)
+  if hit.slot ~= "primary_weapon" or not api.game.global("EntityAux").has_component(victim, "enemy") then return end
+  count[victim] = (count[victim] or 0) + 1
+  if count[victim] % 3 == 0 then api.enemies.apply_status(victim, "regular_burn") end
+end)
+```
+
 ## World, camera and map
 
 ### Positions
@@ -804,6 +823,7 @@ Most calls that need a place take a position: the game's vector, or a plain `{ x
 | `api.world.cursor()` | The point of the level under the mouse. When the ray from the camera hits nothing, where it meets the ground |
 | `api.world.ahead(metres)` | A point some metres in front of the player |
 | `api.world.to_screen(pos)` | Where a point of the level is on the screen, in pixels from the bottom left, and whether it's in view |
+| `api.world.raycast(from, to, filter)` | The first thing on the line between two points: `true`, where and how far along, or `false`. `filter` is one of the game's collision filters, `"default"` when left out. `"mover_blocker"` is what stops a body walking, so ask it before moving a player |
 
 The game's vectors last only the frame they were made in. Keep a position for later as numbers, or with `api.game.box`.
 
@@ -1500,6 +1520,10 @@ Game content by name. Lists come from the game's own tables where it has them, a
 
 Damage by who takes it. Every hit asks HealthComponent or ShieldComponent what it costs, so a hook there reaches them all, and the game still makes the guarded write with the answer. No attacker is passed in, so a scale goes by victim. Each player's game works out its own hits, so everyone in a lobby should use the same numbers.
 
+- `api.combat.on_hit(fn)`: fn(victim, hit) for every hit a player of this machine lands that costs health, whichever machine runs the victim. hit: damage, owner_unit (the player), attacker_unit (a weapon, a grenade, a projectile...) and slot (primary_weapon, sidearm_weapon or support_weapon when attacker_unit is a weapon in the player's inventory, else nil). Teammates and the player's own body count as victims too.
+- `api.combat.off_hit(fn)`
+- `api.combat.on_fatal(fn)`: fn(unit, damage) for a hit that would kill a player of this machine. Answering true spares them: the hit leaves them 1 hitpoint, or a downed player where they were. The first true wins.
+- `api.combat.off_fatal(fn)`
 - `api.combat.scale(t)`: t: players, enemies. A multiplier from 0 to 100; 1 or false leaves that side alone, and a side left out stays as it is.
 
 ### api.console
@@ -1806,6 +1830,7 @@ Time, camera, HUD, the look of the world, and finding a place in it. The camera 
 - `api.world.cursor()`: The point of the level under the mouse: the ray from the camera through the cursor, or where that ray meets the ground plane when it hits nothing.
 - `api.world.to_screen(pos)`: Where a point of the level is on the screen: pixels from the bottom left, as kits draw without a frame, and whether it's in view. pos: a vector or { x, y, z }.
 - `api.world.ahead(metres)`: A position some metres in front of the avatar.
+- `api.world.raycast(from, to, filter)`: The first thing on the straight line from one point to another: true, where and how far along, or false. filter: the game's collision filter, "default" when left out; "mover_blocker" is what stops a body walking, the one to ask before moving a player. from, to: vectors or { x, y, z }.
 - `api.world.prop(unit_name, pos, opts)`
 - `prop:alive()`: false once its level is gone, or it was removed.
 - `prop:move(pos)`

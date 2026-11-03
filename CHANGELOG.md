@@ -2,6 +2,12 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## Next
+
+- New: `api.combat.on_hit(fn)` hears every hit this machine's players land, on any machine's enemies, with the damage and the weapon slot that fired.
+- New: `api.combat.on_fatal(fn)` can spare a player of this machine from a hit that would kill them.
+- New: `api.world.raycast(from, to, filter)` finds the first thing between two points.
+
 ## 1.11.0
 
 - New: `api.mod_settings.page(title)` gives a mod a page of settings in the pause menu's new **Mod Settings**: toggles, choices, numbers and buttons, drawn by the game's own Settings screen and kept for the next launch.
