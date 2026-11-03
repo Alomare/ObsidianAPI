@@ -2,7 +2,7 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
-## Next
+## 1.12.0
 
 - New: `api.combat.on_hit(fn)` hears every hit this machine's players land, on any machine's enemies, with the damage and the weapon slot that fired.
 - New: `api.combat.on_fatal(fn)` can spare a player of this machine from a hit that would kill them.
