@@ -2,7 +2,7 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
-## Next
+## 1.10.0
 
 - New: `api.music` picks the soundtrack: the tracks a screen has, playing one in place of the game's music and holding it across screens, silence, pause and resume, volume, and giving the music back.
 - New: `api.stratagems.define(def)` makes a custom stratagem from one of the game's: its own name, words, code, icon, type, numbers and upgrades, and a function that runs when it's called down. Other players see the base, and the ids on the wire are always the base's. `api.stratagems.custom()` lists them.
