@@ -2,6 +2,12 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.16.0
+
+- New: a Mods page row made with `option = true` is the mod's `obsidian.json` option with the same id. It starts from the value set in Obsidian, and a change in game goes back to Obsidian's mod details once the game closes. `api.mod_settings.BINDS` is `true` from this version on.
+- New: page titles, labels, help lines and choice labels can be tables by language, shown in the game's language.
+- Fixed: accented letters on Mods pages show as capitals, as the rest of the label.
+
 ## 1.15.0
 
 - New: `api.menu`, the in-game window, moved here from Obsidian's loader so it changes with the API's releases. It takes the same calls and pages as `obsidian.menu`, which hands every call here on the next Obsidian.

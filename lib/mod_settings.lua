@@ -2,17 +2,25 @@
 -- each, drawn and driven by the game's own Settings screen (MenuScreenOptions), so they look and handle
 -- like the game's. A mod asks for its page and adds rows to it; the values are kept for the next launch.
 --
--- These are a mod's in-game settings. The options in a mod's obsidian.json are the app's, read with
--- obsidian.settings.get, and stay there.
+-- These are a mod's in-game settings. A row made with `option = true` is instead one of the options in
+-- the mod's obsidian.json, under the same id: it starts from the value set in Obsidian, and a change in
+-- game is kept as `option/<mod id>/<option id>` until Obsidian takes it into the profile (it does that
+-- while the game is closed, and removes the key: core/src/game_options.rs in Obsidian). The pending value wins over the app's at the next
+-- launch, so a change made in game isn't lost when Obsidian wasn't open.
 --
 -- Values live in this library's storage. obsidian.storage writes to the mod whose code is running: a
 -- change from the menu (this library's code) is written at once, one from a mod's own code waits in
 -- `dirty` for this library's frame callback. The menu's hooks are wraps, never gated, so a client
 -- mod's page opens in any lobby.
+--
+-- Words (a title, label, info or choice label) are a string or a table by language,
+-- { en = ..., fr = ..., es = ..., ["pt-BR"] = ... }, read when drawn, since pages are made at boot
+-- before the game knows its language.
 local game = obsidian.module("lib/game")
 local ui = obsidian.module("lib/ui")
 
-local M = { pages = {}, order = {} }
+-- BINDS: rows can be bound to the mod's options (`option = true`), and words can be tables by language.
+local M = { pages = {}, order = {}, BINDS = true }
 
 local ENTRY = "obsidian_mod_settings"
 local TITLE_KEY = "menu_options_title"
@@ -25,12 +33,48 @@ local SELF = obsidian.caller()
 local saved = {}
 local dirty = {}
 
-local function key(owner, id) return owner .. "/" .. id end
+-- The storage key of a row: its own, or the pending value of the mod's option.
+local function key(page, row) return (row.option and "option/" or "mod_settings/") .. page.owner .. "/" .. row.id end
+
+-- The game's language codes; Brazilian Portuguese is "bp" there and "pt-BR" in Obsidian.
+local function language()
+	local lm = game.global("LocalizationManager")
+	local code = type(lm) == "table" and lm.current_language or "en"
+	return code == "bp" and "pt-BR" or code
+end
+
+-- Words as shown: a string, or the table's entry for the game's language, else English.
+local function say(w)
+	if type(w) ~= "table" then return tostring(w) end
+	local s = w[language()] or w.en
+	if s == nil then
+		for _, v in pairs(w) do return tostring(v) end
+	end
+	return tostring(s or "")
+end
 
 -- The game writes its menus in capitals, in the texts themselves, so ours are too. Help lines aren't.
+-- string.upper leaves letters outside ASCII alone: the accented ones of the game's languages are two
+-- bytes in UTF-8, the capital 32 below the small one (à to þ, but ÷), and œ.
+local function caps(s)
+	s = s:upper():gsub("\195([\160-\190])", function(c)
+		return c == "\183" and "\195\183" or "\195" .. string.char(c:byte() - 32)
+	end)
+	return (s:gsub("\197\147", "\197\146"))
+end
+
 local function words()
 	local lm = game.global("LocalizationManager")
-	return (WORDS[type(lm) == "table" and lm.current_language or "en"] or WORDS.en):upper()
+	return caps(WORDS[type(lm) == "table" and lm.current_language or "en"] or WORDS.en)
+end
+
+local function check_words(w, what)
+	if type(w) == "table" then
+		for k, v in pairs(w) do
+			if type(k) ~= "string" or type(v) ~= "string" then error("mod_settings: " .. what .. " by language maps codes to strings", 4) end
+		end
+	end
+	return w
 end
 
 local Page = {}
@@ -63,30 +107,46 @@ local function fits(row, v)
 	return false
 end
 
+-- The pending value from a change in game, else for an option row the value set in Obsidian (read
+-- while the mod's own code runs, as obsidian.settings.get answers for the running mod).
 local function start_value(page, row)
-	local v = saved[key(page.owner, row.id)]
+	local v = saved[key(page, row)]
+	if v == nil and row.option then
+		local ok, s = pcall(obsidian.settings.get, row.id)
+		if ok then v = s end
+		if v == nil then obsidian.log("mod_settings: " .. page.owner .. "." .. row.id .. " is bound to an option, but obsidian.json has no such option") end
+	end
 	if v ~= nil and fits(row, v) then row.value = v else row.value = row.default end
 end
 
--- opts: label, info (a line under the rows while it's selected), default, on_change(value).
-function Page:toggle(id, opts)
+-- The parts every row with a value has.
+local function new_row(kind, id, opts)
 	check_id(id)
+	return { kind = kind, id = id, option = opts.option == true, label = check_words(opts.label or id, "a label"),
+		info = check_words(opts.info, "info"), on_change = opts.on_change }
+end
+
+-- opts: label, info (a line under the rows while it's selected), default, on_change(value), option
+-- (true: the row is the mod's obsidian.json option with this id).
+function Page:toggle(id, opts)
 	opts = opts or {}
-	local row = add(self, { kind = "toggle", id = id, label = opts.label or id, info = opts.info, default = opts.default == true, on_change = opts.on_change })
+	local row = new_row("toggle", id, opts)
+	row.default = opts.default == true
+	add(self, row)
 	start_value(self, row)
 	return row.value
 end
 
 -- opts.choices: { { id = "...", label = "..." }, ... }; default: one of the ids, else the first.
 function Page:choice(id, opts)
-	check_id(id)
 	opts = opts or {}
-	local choices = {}
+	local row = new_row("choice", id, opts)
+	row.choices = {}
 	for _, c in ipairs(opts.choices or {}) do
-		if type(c) == "table" and c.id ~= nil then choices[#choices + 1] = { id = c.id, label = tostring(c.label or c.id) } end
+		if type(c) == "table" and c.id ~= nil then row.choices[#row.choices + 1] = { id = c.id, label = check_words(c.label or tostring(c.id), "a choice label") } end
 	end
-	if #choices == 0 then error("mod_settings: a choice needs choices", 2) end
-	local row = { kind = "choice", id = id, label = opts.label or id, info = opts.info, choices = choices, default = choices[1].id, on_change = opts.on_change }
+	if #row.choices == 0 then error("mod_settings: a choice needs choices", 2) end
+	row.default = row.choices[1].id
 	if fits(row, opts.default) then row.default = opts.default end
 	add(self, row)
 	start_value(self, row)
@@ -96,11 +156,11 @@ end
 -- opts: min, max, step (each step is a stop on the row's arrows, 100 at most), default, format(value)
 -- for the words shown.
 function Page:number(id, opts)
-	check_id(id)
 	opts = opts or {}
 	local min, max, step = tonumber(opts.min) or 0, tonumber(opts.max) or 10, tonumber(opts.step) or 1
 	if max < min or step <= 0 or (max - min) / step > 100 then error("mod_settings: a number needs min <= max and at most 100 steps", 2) end
-	local row = { kind = "number", id = id, label = opts.label or id, info = opts.info, min = min, max = max, step = step, format = opts.format, on_change = opts.on_change }
+	local row = new_row("number", id, opts)
+	row.min, row.max, row.step, row.format = min, max, step, opts.format
 	row.default = math.min(math.max(tonumber(opts.default) or min, min), max)
 	add(self, row)
 	start_value(self, row)
@@ -110,7 +170,7 @@ end
 -- A row that does something when pressed. Nothing is kept.
 function Page:button(label, fn, opts)
 	if type(fn) ~= "function" then error("mod_settings: a button needs a function", 2) end
-	add(self, { kind = "button", label = tostring(label), info = opts and opts.info, fn = fn })
+	add(self, { kind = "button", label = check_words(label, "a label"), info = check_words(opts and opts.info, "info"), fn = fn })
 end
 
 function Page:get(id)
@@ -123,10 +183,10 @@ end
 local function changed(page, row, value)
 	if row.value == value then return end
 	row.value = value
-	local k = key(page.owner, row.id)
+	local k = key(page, row)
 	if obsidian.caller() == SELF then
 		saved[k] = value
-		obsidian.storage.set("mod_settings/" .. k, value)
+		obsidian.storage.set(k, value)
 	else
 		dirty[k] = value
 	end
@@ -157,7 +217,7 @@ function M.page(title)
 		M.pages[owner] = page
 		M.order[#M.order + 1] = owner
 	end
-	page.title = tostring(title or page.title or owner)
+	page.title = check_words(title, "a title") or page.title or owner
 	return page
 end
 
@@ -175,7 +235,7 @@ function M.tick()
 	if next(dirty) == nil then return end
 	for k, v in pairs(dirty) do
 		saved[k] = v
-		obsidian.storage.set("mod_settings/" .. k, v)
+		obsidian.storage.set(k, v)
 	end
 	dirty = {}
 end
@@ -193,18 +253,18 @@ end
 
 local function game_row(row, n, texts)
 	local name = "obsidian_ms_row_" .. n
-	texts[name] = tostring(row.label):upper()
+	texts[name] = caps(say(row.label))
 	local out = { name = name }
 	if row.info then
 		out.info = name .. "_info"
-		texts[out.info] = row.info
+		texts[out.info] = say(row.info)
 	end
 	if row.kind == "toggle" then
 		out.options = { { name = "options_no", value = false }, { name = "options_yes", value = true }, selected_index = row.value and 2 or 1 }
 	elseif row.kind == "choice" then
 		out.options, out.ignore_loc_option_names = { selected_index = 1 }, true
 		for i, c in ipairs(row.choices) do
-			out.options[i] = { name = c.label:upper(), value = c.id }
+			out.options[i] = { name = caps(say(c.label)), value = c.id }
 			if c.id == row.value then out.options.selected_index = i end
 		end
 	elseif row.kind == "number" then
@@ -212,7 +272,7 @@ local function game_row(row, n, texts)
 		local count = math.floor((row.max - row.min) / row.step + 0.5)
 		for i = 0, count do
 			local v = math.min(row.min + i * row.step, row.max)
-			out.options[i + 1] = { name = format(row, v):upper(), value = v }
+			out.options[i + 1] = { name = caps(format(row, v)), value = v }
 			if math.abs(v - row.value) < row.step / 2 then out.options.selected_index = i + 1 end
 		end
 	end
@@ -221,7 +281,7 @@ end
 
 local function open_screen(screen, rows, title)
 	screen.user_pad_number = screen.parent.user_pad_number
-	screen.options, screen.texts = {}, { [TITLE_KEY] = tostring(title):upper() }
+	screen.options, screen.texts = {}, { [TITLE_KEY] = caps(say(title)) }
 	for n, row in ipairs(rows) do screen.options[n] = game_row(row, n, screen.texts) end
 	screen.rows = rows
 	screen.selected_option = 1
@@ -298,8 +358,7 @@ end
 function M.install()
 	saved = {}
 	for k, v in pairs(obsidian.storage.all()) do
-		local rest = type(k) == "string" and k:match("^mod_settings/(.+)$")
-		if rest then saved[rest] = v end
+		if type(k) == "string" and (k:match("^mod_settings/.") or k:match("^option/.")) then saved[k] = v end
 	end
 	obsidian.wrap("MenuScreenMain", "on_enter", function(original, self, ...)
 		local r = { original(self, ...) }
