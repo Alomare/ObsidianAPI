@@ -46,13 +46,19 @@ local function add_all(names, list)
 	for _, name in ipairs(list or {}) do names[name] = true end
 end
 
--- What this player has by rank, by reward and from the start. Looked at again when the XP or the list
--- of rewards changes. nil before there's a save to read.
-local function earned_names()
+-- The player's XP and earned rewards from the save, or nil before there's one to read.
+function M.xp_and_rewards()
 	local save, users = game.global("SaveManager"), game.global("UserManager")
 	if not (save and users) then return nil end
 	local id = users:get_user_id()
-	local xp, rewards = save:user_get("player_xp", id) or 0, save:user_get("item_unlocks", id) or {}
+	return save:user_get("player_xp", id) or 0, save:user_get("item_unlocks", id) or {}
+end
+
+-- What this player has by rank, by reward and from the start. Looked at again when the XP or the list
+-- of rewards changes. nil before there's a save to read.
+local function earned_names()
+	local xp, rewards = M.xp_and_rewards()
+	if not xp then return nil end
 	if earned.names and earned.xp == xp and earned.count == #rewards then return earned.names end
 	local names = {}
 	add_all(names, rewards)
@@ -76,7 +82,10 @@ end
 -- True for an item the Loadout screen would offer this player (menu_screen_loadout.lua:142): earned,
 -- or in a paid pack they own. The lists here don't use it.
 function M.unlocked(name)
-	-- A custom stratagem is unlocked with its base. lib/custom.lua sets base_of, as it needs this file.
+	-- A custom stratagem goes by its own unlock, or else by its base. lib/custom.lua sets both, as it
+	-- needs this file.
+	local own = M.own_unlock and M.own_unlock(name)
+	if own ~= nil then return own end
 	name = M.base_of and M.base_of(name) or name
 	if not M.usable(name) then return false end
 	local dlc = game.global("DlcSettings")

@@ -18,7 +18,7 @@ INTERNAL = {
     "bots": {"tick", "drive_all", "draw_names", "install"},
     "combat": {"health", "shield", "command_master", "filter_slave_command"},
     "console": {"install"},
-    "custom": {"install", "get"},
+    "custom": {"install", "get", "tick"},
     "effects": {"tick", "pause", "resume"},
     "edits": {"pause", "resume"},
     "enemies": {"tick"},
@@ -32,7 +32,8 @@ INTERNAL = {
     "stratagems": {"find", "call_unowned", "define", "custom"},
 }
 # Calls one module makes public under another table's name.
-RENAMED = {"custom": ("stratagems", {"define": "define", "list": "custom"})}
+RENAMED = {"custom": ("stratagems", {"define": "define", "list": "custom", "unlock": "unlock", "lock": "lock",
+                                      "is_unlocked": "is_unlocked"})}
 OBJECTS = {"Bot": "bot", "Drone": "drone", "Prop": "prop", "Marker": "marker", "Page": "page"}
 
 FUNC = re.compile(r"^function (M|Bot|Drone|Prop|Marker|Page)[.:]([A-Za-z_]\w*)\s*\(([^)]*)\)")

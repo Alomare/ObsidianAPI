@@ -23,6 +23,7 @@ local ui = obsidian.module("lib/ui")
 local map = obsidian.module("lib/map")
 local bots = obsidian.module("lib/bots")
 local mod_settings = obsidian.module("lib/mod_settings")
+local custom = obsidian.module("lib/custom")
 
 local gear_failed, bots_failed, music_failed = false, false, false
 local last_state = nil
@@ -39,6 +40,7 @@ obsidian.on_frame(function()
 		map.reset()
 	end
 	pcall(mod_settings.tick)
+	pcall(custom.tick)
 	local ok, err = pcall(music.tick)
 	if not ok and not music_failed then
 		music_failed = true
@@ -73,7 +75,7 @@ end)
 if game.session_mode then
 	obsidian.on_require("foundation/lua/debug/debug", console.install)
 	bots.install()
-	obsidian.module("lib/custom").install()
+	custom.install()
 	obsidian.on_frame(console.install)
 
 	-- Effects and edits come off when the session stops being cleared, and go back when it clears.

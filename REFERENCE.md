@@ -667,8 +667,30 @@ This holds in any lobby, cleared or not. In a lobby that isn't cleared, the stra
 
 #### Unlocks and the save
 
-- The Loadout screen offers it to a player who has its base, by rank, reward or a DLC they own, while session mods are on. A base from a paid pack stays paid.
-- `api.catalog.unlocked(name)` and `usable(name)` answer for it as for its base.
+`unlock` in the def says when the Loadout screen offers it, while session mods are on:
+
+| `unlock` | Offered |
+|---|---|
+| `"base"`, or left out | To a player who has the base, by rank, reward or a DLC they own |
+| `"free"` | To everyone, from the start |
+| `{ rank = n }` | From rank `n` on, as the game's own rank unlocks |
+| `"manual"` | Once your mod calls `api.stratagems.unlock(name)` |
+
+`unlock(name)` opens any custom stratagem, whatever its `unlock` says, and `lock(name)` takes that back. Use them for a progression of your own: a mission done, a goal reached. What they open is kept by Obsidian API for the next launch, never in the game's save. `is_unlocked(name)` answers whether the Loadout screen offers it now.
+
+```lua
+api.stratagems.define({ name = "mymod_tower", base = "stratagem_tesla_tower", title = "Repair Tower", unlock = "manual" })
+
+-- Ten objectives done open it for good.
+local done = 0
+api.events.on("on_objective_completed", function()
+  done = done + 1
+  if done == 10 then api.stratagems.unlock("mymod_tower") end
+end)
+```
+
+- A base from a paid pack stays paid.
+- `api.catalog.unlocked(name)` and `usable(name)` answer by its `unlock`, or as for its base.
 - The save keeps its upgrades under its own name, like any stratagem's.
 - When your mod is off, a saved loadout that has it gets the default stratagem in that slot. The save keeps working.
 
@@ -1491,6 +1513,7 @@ Game content by name. Lists come from the game's own tables where it has them, a
 
 - `api.catalog.text(key)`: A display name in the game's language. The menu's font covers Latin-1, so anything beyond that falls back to a readable form of the key rather than a row of boxes.
 - `api.catalog.usable(name)`: False for an item of a paid pack this player doesn't own.
+- `api.catalog.xp_and_rewards()`: The player's XP and earned rewards from the save, or nil before there's one to read.
 - `api.catalog.unlocked(name)`: True for an item the Loadout screen would offer this player (menu_screen_loadout.lua:142): earned, or in a paid pack they own. The lists here don't use it.
 - `api.catalog.primaries()`
 - `api.catalog.sidearms()`
@@ -1796,8 +1819,11 @@ Stratagems: cooldowns, uses, call-in time and getting one without the arrows.
 - `api.stratagems.edit(name, field, value)`: A field of a stratagem, at every upgrade level. Levels can set the field for themselves, and the game applies them over the base, so an edit of the base alone would stop at the first of those.
 - `api.stratagems.call(name, pos, delay, unit)`: A real call-in at a position, delay seconds on top of its own, at the level the player owns. No cooldown or use is spent. unit: whose call-in it is, a player on this machine, the main one by default.
 - `api.stratagems.drop(name, pos)`: Sends a stratagem to a position with no flare and no call-in.
-- `api.stratagems.define(def)`: Makes a custom stratagem. def: name         its key, letters, digits and _ ("mymod_pitchfork"); must be new base         a stratagem of the game's: copied, and what other players see title        its name: a string, or { en = ..., fr = ..., es = ..., ["pt-BR"] = ... } description  words under it; the base's if nil code         the arrows, { "down", "left", "up", ... }, 1 to 10; the base's if nil icon         an icon the HUD has, as a stratagem's icon field; the base's if nil type         "supply", "offensive", "defensive" or "special"; subtypes, a list as the game's unit         what it calls down: a unit every game has; the base's if nil stats        fields of the entry: num_uses, cooldown_time, activation_time, despawn_time, ... attributes   the bars the Loadout screen shows, as the game's attr_ fields upgrades     its levels, Mk2 and on: { title, description, cost, stats, attributes, upgrade_attributes, icon }; the base's, renamed, if nil on_activate  function(ctx) on the thrower's machine when it's called down. ctx: name, position (the game's vector, good for this frame: copy it to keep it), owner (the thrower's unit), upgrade. Answer false to drop nothing. Answers { name, id }, or nil and a reason.
+- `api.stratagems.define(def)`: Makes a custom stratagem. def: name         its key, letters, digits and _ ("mymod_pitchfork"); must be new base         a stratagem of the game's: copied, and what other players see title        its name: a string, or { en = ..., fr = ..., es = ..., ["pt-BR"] = ... } description  words under it; the base's if nil code         the arrows, { "down", "left", "up", ... }, 1 to 10; the base's if nil icon         an icon the HUD has, as a stratagem's icon field; the base's if nil type         "supply", "offensive", "defensive" or "special"; subtypes, a list as the game's unit         what it calls down: a unit every game has; the base's if nil stats        fields of the entry: num_uses, cooldown_time, activation_time, despawn_time, ... attributes   the bars the Loadout screen shows, as the game's attr_ fields upgrades     its levels, Mk2 and on: { title, description, cost, stats, attributes, upgrade_attributes, icon }; the base's, renamed, if nil on_activate  function(ctx) on the thrower's machine when it's called down. ctx: name, position (the game's vector, good for this frame: copy it to keep it), owner (the thrower's unit), upgrade. Answer false to drop nothing. unlock       "base" (with its base, as when nil), "free" (from the start), { rank = n } (from rank n) or "manual" (once api.stratagems.unlock(name) is called) Answers { name, id }, or nil and a reason.
 - `api.stratagems.custom()`: The custom stratagems made so far: { name, base, id }.
+- `api.stratagems.unlock(name)`: Opens a custom stratagem, kept for the next launch: the Loadout screen offers it from now on, whatever its unlock says. For a mod's own progression, such as a mission done or a goal reached.
+- `api.stratagems.lock(name)`: Takes back what unlock(name) gave. A "free" stratagem or one opened by rank stays open.
+- `api.stratagems.is_unlocked(name)`: Whether the Loadout screen offers a custom stratagem to this player now: by its unlock, or its base.
 
 ### api.ui
 

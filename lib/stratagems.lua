@@ -9,6 +9,7 @@ local M = { selected = nil }
 
 -- Custom stratagems, made from the game's own: lib/custom.lua.
 M.define, M.custom = custom.define, custom.list
+M.unlock, M.lock, M.is_unlocked = custom.unlock, custom.lock, custom.is_unlocked
 
 local function my_unit()
 	local unit = game.my_unit()

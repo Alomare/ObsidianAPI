@@ -7,6 +7,7 @@ New, changed or removed capabilities, one line each, brief and direct. A release
 - New: `api.combat.on_hit(fn)` hears every hit this machine's players land, on any machine's enemies, with the damage and the weapon slot that fired.
 - New: `api.combat.on_fatal(fn)` can spare a player of this machine from a hit that would kill them.
 - New: `api.world.raycast(from, to, filter)` finds the first thing between two points.
+- New: a custom stratagem's `unlock` can make it free from the start, open from a rank, or open when a mod calls `api.stratagems.unlock(name)`, kept outside the game's save. `lock(name)` and `is_unlocked(name)` go with it.
 
 ## 1.11.0
 

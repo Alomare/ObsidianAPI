@@ -33,6 +33,53 @@ function catalog.base_of(name)
 	return r and r.base or name
 end
 
+-- How a custom stratagem is unlocked, apart from its base (def.unlock): "base" or nil goes by the base,
+-- "free" is open from the start, { rank = n } from that rank on, and "manual" once a mod calls
+-- unlock(name). What mods unlock is kept in this library's storage as one list of names, never in the
+-- game's save. Storage is the running mod's, so an unlock from a mod's own code waits for this library's
+-- frame callback, as Mod Settings' changes do.
+local UNLOCKS = { base = true, free = true, manual = true }
+local SELF = obsidian.caller and obsidian.caller()
+local KEY = "stratagem_unlocks"
+local opened = {}
+local unsaved = false
+
+for name in tostring(obsidian.storage.get(KEY) or ""):gmatch("[%w_]+") do opened[name] = true end
+
+local function save()
+	local names = {}
+	for name in pairs(opened) do names[#names + 1] = name end
+	table.sort(names)
+	obsidian.storage.set(KEY, table.concat(names, ","))
+	unsaved = false
+end
+
+local function changed()
+	if obsidian.caller and obsidian.caller() == SELF then save() else unsaved = true end
+end
+
+-- True or false by the stratagem's own unlock, or nil where it goes by the base. xp: the player's, or
+-- read from the save when nil.
+local function own_unlock(name, xp)
+	local r = defs[name]
+	local rule = r and r.unlock
+	if rule == nil or rule == "base" then return nil end
+	if rule == "free" or opened[name] then return true end
+	if type(rule) == "table" then
+		local ranks = game.global("ProgressionSettings")
+		local rank = type(ranks) == "table" and ranks.ranks and ranks.ranks[rule.rank]
+		if xp == nil then xp = catalog.xp_and_rewards() end
+		return rank ~= nil and type(xp) == "number" and xp >= rank.required_xp
+	end
+	return false
+end
+catalog.own_unlock = own_unlock
+
+-- From this library's frame callback, where obsidian.storage is this library's.
+function M.tick()
+	if unsaved then save() end
+end
+
 local ARROWS = { up = true, down = true, left = true, right = true }
 local TYPES = { supply = true, offensive = true, defensive = true, special = true }
 -- What a def sets through its own fields, so stats can't.
@@ -137,6 +184,10 @@ local function check(def, s)
 	if def.unit ~= nil and type(def.unit) ~= "string" then return "bad_type" end
 	if def.attributes ~= nil and type(def.attributes) ~= "table" then return "bad_type" end
 	if def.on_activate ~= nil and type(def.on_activate) ~= "function" then return "bad_type" end
+	if def.unlock ~= nil and not UNLOCKS[def.unlock] then
+		local rank = type(def.unlock) == "table" and def.unlock.rank
+		if not (type(rank) == "number" and rank == math.floor(rank) and rank >= 1 and rank <= 100) then return "bad_type" end
+	end
 	if def.upgrades ~= nil then
 		if type(def.upgrades) ~= "table" or #def.upgrades > 6 then return "bad_type" end
 		for _, u in ipairs(def.upgrades) do
@@ -270,11 +321,14 @@ function M.install()
 		local def = defs[name]
 		return original(def and def.base or name, ...)
 	end)
-	-- Only in a cleared lobby does the Loadout screen offer one, to a player who has its base.
-	obsidian.hook("ProgressionSettings", "can_use", function(original, name, ...)
+	-- Only in a cleared lobby does the Loadout screen offer one: by its own unlock, or to a player who
+	-- has its base.
+	obsidian.hook("ProgressionSettings", "can_use", function(original, name, kind, xp, ...)
 		local def = defs[name]
-		if not def then return original(name, ...) end
-		return original(def.base, ...) or catalog.unlocked(def.base)
+		if not def then return original(name, kind, xp, ...) end
+		local own = own_unlock(name, xp)
+		if own ~= nil then return own end
+		return original(def.base, kind, xp, ...) or catalog.unlocked(def.base)
 	end)
 	obsidian.hook("StratagemComponent", "spawn_stratagem_hellpod", function(original, self, peer, pos, dir, id, upgrade, owner, ...)
 		local def = by_id[id]
@@ -307,6 +361,8 @@ end
 --   on_activate  function(ctx) on the thrower's machine when it's called down. ctx: name, position (the
 --                game's vector, good for this frame: copy it to keep it), owner (the thrower's unit),
 --                upgrade. Answer false to drop nothing.
+--   unlock       "base" (with its base, as when nil), "free" (from the start), { rank = n } (from rank n)
+--                or "manual" (once api.stratagems.unlock(name) is called)
 -- Answers { name, id }, or nil and a reason.
 function M.define(def)
 	local s = settings()
@@ -363,7 +419,7 @@ function M.define(def)
 	e.id = id
 	s.stratagems[id] = e
 
-	local record = { name = name, base = def.base, base_id = base_id, id = id }
+	local record = { name = name, base = def.base, base_id = base_id, id = id, unlock = def.unlock }
 	if def.on_activate then
 		-- Run as the mod that made it, and not at all once that mod is off, as events are.
 		local fn = def.on_activate
@@ -387,6 +443,33 @@ end
 function M.get(name)
 	local r = defs[name]
 	return r and { name = r.name, base = r.base, id = r.id } or nil
+end
+
+-- Opens a custom stratagem, kept for the next launch: the Loadout screen offers it from now on, whatever
+-- its unlock says. For a mod's own progression, such as a mission done or a goal reached.
+function M.unlock(name)
+	if not defs[name] then return false, "not_available" end
+	if not opened[name] then
+		opened[name] = true
+		changed()
+	end
+	return true
+end
+
+-- Takes back what unlock(name) gave. A "free" stratagem or one opened by rank stays open.
+function M.lock(name)
+	if not defs[name] then return false, "not_available" end
+	if opened[name] then
+		opened[name] = nil
+		changed()
+	end
+	return true
+end
+
+-- Whether the Loadout screen offers a custom stratagem to this player now: by its unlock, or its base.
+function M.is_unlocked(name)
+	if not defs[name] then return false, "not_available" end
+	return catalog.unlocked(name)
 end
 
 return M
