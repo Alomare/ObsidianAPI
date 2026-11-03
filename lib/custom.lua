@@ -25,6 +25,8 @@ local by_id = {}     -- the entry's index in LoadoutSettings.stratagems -> def
 local texts = {}     -- game text key -> words, a string or { en = ..., fr = ... }
 local order = {}
 local installed = {}
+-- Defs made before the game has its stratagem list, in the order they came: { def, entry }.
+local pending = {}
 
 -- The catalog answers unlocked() for a custom stratagem as for its base. It can't load this file, which
 -- needs it, so the answer is handed to it here.
@@ -163,11 +165,15 @@ local function check_stats(stats, base)
 	return true
 end
 
+-- s: the game's settings, or nil before it has them, when only the def itself is checked.
 local function check(def, s)
 	if type(def) ~= "table" then return "bad_type" end
 	if type(def.name) ~= "string" or not def.name:match("^[%w_]+$") or #def.name > 64 then return "bad_name" end
-	for _, e in ipairs(s.stratagems) do
+	for _, e in ipairs(s and s.stratagems or {}) do
 		if e.name == def.name then return "taken" end
+	end
+	for _, p in ipairs(pending) do
+		if p.def.name == def.name then return "taken" end
 	end
 	-- A base has to be a stratagem every game has.
 	if defs[def.base] then return "not_available" end
@@ -295,6 +301,33 @@ local function install_direct()
 	return installed.game_object and installed.router and installed.texts and installed.upgraded
 end
 
+local make
+
+-- The def's on_activate as a hook of the mod calling define: made now, so it's that mod's even when
+-- the stratagem is made later.
+local function entry_of(def)
+	if not def.on_activate then return nil end
+	local fn = def.on_activate
+	local entry = { run = function() end }
+	obsidian.hook(entry, "run", function(_, ctx) return fn(ctx) end)
+	return entry
+end
+
+-- Makes the pending defs, once the game has its stratagem list.
+local function drain()
+	if #pending == 0 then return end
+	local s = settings()
+	if not s then return end
+	local list = pending
+	pending = {}
+	for _, p in ipairs(list) do
+		local why = check(p.def, s)
+		local made
+		if not why then made, why = make(p.def, p.entry, s) end
+		if not made then obsidian.log("custom stratagem " .. p.def.name .. " not made: " .. tostring(why)) end
+	end
+end
+
 -- The hooks that can go through the loader: paid packs, ranks, the call-in, and a flare's id as it's
 -- first copied out. From main.lua, so they're the library's and not the first mod's that makes one.
 function M.install()
@@ -338,10 +371,18 @@ function M.install()
 		end
 		return original(self, peer, pos, dir, id, upgrade, owner, ...)
 	end)
-	-- The game's functions go in once a custom stratagem is made and they all exist. true stops the calls.
+	-- A stratagem defined before the game had its list is made before the save's loadout is read, so a
+	-- saved loadout naming it keeps it. A wrap, so it runs in any lobby.
+	wrap("Boot", "ensure_loadout", function(original, ...)
+		drain()
+		return original(...)
+	end)
+	-- The game's functions go in once a custom stratagem is made and they all exist, and the pending ones
+	-- are made once the list is there. true stops the calls.
 	obsidian.on_frame(function()
+		drain()
 		if #order == 0 then return false end
-		return install_direct()
+		return install_direct() and #pending == 0
 	end)
 end
 
@@ -363,12 +404,21 @@ end
 --                upgrade. Answer false to drop nothing.
 --   unlock       "base" (with its base, as when nil), "free" (from the start), { rank = n } (from rank n)
 --                or "manual" (once api.stratagems.unlock(name) is called)
--- Answers { name, id }, or nil and a reason.
+-- Answers { name, id }, or nil and a reason. Before the game has its stratagem list, as in a mod's
+-- main chunk, it answers { name, pending = true } and makes the stratagem once the list is there,
+-- before the save's loadout is read. A pending one that can't be made then is logged.
 function M.define(def)
 	local s = settings()
-	if not s then return nil, "not_ready" end
 	local why = check(def, s)
 	if why then return nil, why end
+	if not s then
+		pending[#pending + 1] = { def = clone(def), entry = entry_of(def) }
+		return { name = def.name, pending = true }
+	end
+	return make(def, entry_of(def), s)
+end
+
+make = function(def, entry, s)
 	local base, base_id
 	for i, e in ipairs(s.stratagems) do
 		if e.name == def.base then base, base_id = e, i end
@@ -419,13 +469,8 @@ function M.define(def)
 	e.id = id
 	s.stratagems[id] = e
 
-	local record = { name = name, base = def.base, base_id = base_id, id = id, unlock = def.unlock }
-	if def.on_activate then
-		-- Run as the mod that made it, and not at all once that mod is off, as events are.
-		local fn = def.on_activate
-		record.entry = { run = function() end }
-		obsidian.hook(record.entry, "run", function(_, ctx) return fn(ctx) end)
-	end
+	-- entry runs as the mod that made it, and not at all once that mod is off, as events are.
+	local record = { name = name, base = def.base, base_id = base_id, id = id, unlock = def.unlock, entry = entry }
 	defs[name], by_id[id] = record, record
 	order[#order + 1] = record
 	install_direct()

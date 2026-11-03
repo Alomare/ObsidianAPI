@@ -2,6 +2,10 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.20.0
+
+- Changed: `api.stratagems.define` called before the game has its stratagem list, as in a mod's main chunk, answers `{ name, pending = true }` and makes the stratagem before the save's loadout is read. It answered `not_ready` before, and a mod that stopped trying never got its stratagem.
+
 ## 1.19.0
 
 - New: the mod's image, shown beside it in Obsidian's mod list.
