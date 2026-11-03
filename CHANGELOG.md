@@ -2,6 +2,11 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.14.0
+
+- Changed: `api.combat.on_hit` works for client mods and in any lobby, and each hit carries the `position` where it landed.
+- Changed: the pause menu row is **Mods**, in every language.
+
 ## 1.13.0
 
 - New: `api.enemies.damage(unit, power, statuses, { through_armor = true })` deals a hit that no armor stops.

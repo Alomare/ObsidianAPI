@@ -18,7 +18,7 @@ local ENTRY = "obsidian_mod_settings"
 local TITLE_KEY = "menu_options_title"
 local LIST, PAGE = "obsidian_mod_list", "obsidian_mod_page"
 local WORDS = {
-	en = "Mod Settings", fr = "Paramètres des mods", es = "Ajustes de mods", bp = "Configurações de mods",
+	en = "Mods", fr = "Mods", es = "Mods", bp = "Mods",
 }
 
 local SELF = obsidian.caller()

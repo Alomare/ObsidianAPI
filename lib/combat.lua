@@ -66,7 +66,8 @@ end
 -- The hit that kills is cut to what kills: hitpoints travel as a small integer, and nothing in the
 -- game expects a hit far past the end.
 function M.health(original, unit, ...)
-	local scale = scale_of(unit)
+	-- A wrap runs in any lobby: the scale is a session change, so only where session mods are cleared.
+	local scale = (not game.session_mode or obsidian.session.cleared()) and scale_of(unit)
 	local here = current
 	if here and (here.unit ~= unit or here.priced) then here = nil end
 	if not (scale or here) then return original(unit, ...) end
@@ -96,14 +97,26 @@ function M.health(original, unit, ...)
 	return damage, zone, kills
 end
 
+-- Where a hit landed, as a plain { x, y, z }: weapons and explosions box it in the hit. nil when it doesn't.
+local function position_of(data)
+	if data.position == nil then return nil end
+	local ok, v = pcall(game.unbox, data.position)
+	if not ok or v == nil then return nil end
+	local ok2, x, y, z = pcall(function() return v.x, v.y, v.z end)
+	if not ok2 or type(x) ~= "number" then return nil end
+	return { x = x, y = y, z = z }
+end
+
+-- Hearing hits changes nothing in the game, so it runs in any lobby, for client mods too. Sparing a
+-- player changes the game, so only where session mods are cleared.
 local function command(master)
 	return function(original, self, unit, ctx, name, data, ...)
-		if name ~= "do_damage" or type(data) ~= "table" or (#hit_list == 0 and #fatal_list == 0)
-			or (game.session_mode and not obsidian.session.cleared()) then
+		if name ~= "do_damage" or type(data) ~= "table" or (#hit_list == 0 and #fatal_list == 0) then
 			return original(self, unit, ctx, name, data, ...)
 		end
+		local cleared = not game.session_mode or obsidian.session.cleared()
 		local hitter = #hit_list > 0 and own_player(data.owner_unit)
-		local fatal = master and #fatal_list > 0 and own_player(unit)
+		local fatal = cleared and master and #fatal_list > 0 and own_player(unit)
 		if not (hitter or fatal) then return original(self, unit, ctx, name, data, ...) end
 		local outer = current
 		current = { unit = unit, fatal = fatal }
@@ -112,7 +125,7 @@ local function command(master)
 		current = outer
 		if hitter and done.damage and done.damage > 0 then
 			local hit = { damage = done.damage, owner_unit = data.owner_unit, attacker_unit = data.attacker_unit,
-				slot = slot_of(data.owner_unit, data.attacker_unit) }
+				slot = slot_of(data.owner_unit, data.attacker_unit), position = position_of(data) }
 			for _, entry in ipairs(hit_list) do
 				local ok, err = pcall(entry.run, unit, hit)
 				if not ok then obsidian.log("combat on_hit: " .. tostring(err)) end
@@ -125,9 +138,10 @@ M.command_master = command(true)
 M.filter_slave_command = command(false)
 
 -- fn(victim, hit) for every hit a player of this machine lands that costs health, whichever machine
--- runs the victim. hit: damage, owner_unit (the player), attacker_unit (a weapon, a grenade, a
--- projectile...) and slot (primary_weapon, sidearm_weapon or support_weapon when attacker_unit is a
--- weapon in the player's inventory, else nil). Teammates and the player's own body count as victims too.
+-- runs the victim, in any lobby: client mods can listen too. hit: damage, owner_unit (the player),
+-- attacker_unit (a weapon, a grenade, a projectile...), slot (primary_weapon, sidearm_weapon or
+-- support_weapon when attacker_unit is a weapon in the player's inventory, else nil) and position (where
+-- it landed, { x, y, z }, when the hit says). Teammates and the player's own body count as victims too.
 function M.on_hit(fn) return listen(hit_list, fn) end
 function M.off_hit(fn) return unlisten(hit_list, fn) end
 

@@ -65,6 +65,16 @@ map.install()
 -- The pause menu's Mod Settings: only this player's own settings, so it runs in every session.
 mod_settings.install()
 
+-- Where a hit is worked out: what it costs (scaled only while api.combat.scale's effects are on, which
+-- an uncleared lobby takes off), and which player of this machine landed it, for api.combat.on_hit in
+-- any lobby. on_fatal checks the session itself. Wraps, so the session gate never skips them.
+do
+	local wrap = obsidian.wrap or obsidian.hook
+	wrap("HealthComponent", "calculate_damage", combat.health)
+	wrap("HealthComponent", "command_master", combat.command_master)
+	wrap("HealthComponent", "filter_slave_command", combat.filter_slave_command)
+end
+
 obsidian.hook("AudioStateMachine", "on_enter_state", function(original, ...)
 	local a, b = original(...)
 	music.after_machine_enter()
@@ -98,11 +108,7 @@ if game.session_mode then
 		return stratagems.find(function(q) return original(q) end, queue, ...)
 	end)
 
-	obsidian.hook("HealthComponent", "calculate_damage", combat.health)
 	obsidian.hook("ShieldComponent", "calculate_damage", combat.shield)
-	-- Where a hit by this machine's players is worked out, for api.combat.on_hit and on_fatal.
-	obsidian.hook("HealthComponent", "command_master", combat.command_master)
-	obsidian.hook("HealthComponent", "filter_slave_command", combat.filter_slave_command)
 
 	obsidian.hook("StratagemsDisabledAreaComponent", "is_unit_inside_any_area", function(original, ...)
 		if effects.is_on("ignore_jammers") then return false end
@@ -138,7 +144,7 @@ return {
 	mission = guard(mission, { "objectives", "params" }),
 	progress = guard(progress, { "samples", "max_samples", "loadout", "upgrades", "upgrade_limit", "rank", "owned_cosmetics" }),
 	events = guard(events, { "on", "off" }),
-	combat = guard(combat),
+	combat = guard(combat, { "on_hit", "off_hit" }),
 	vehicles = vehicles,
 	lobby = lobby,
 	ui = guard(ui, { "hint", "open", "close", "menus" }),
