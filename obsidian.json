@@ -1,7 +1,7 @@
 {
   "obsidian": 1,
   "id": "obsidian.api",
-  "version": "1.18.0",
+  "version": "1.19.0",
   "name": {
     "en": "Obsidian API",
     "pt-BR": "Obsidian API",
@@ -19,6 +19,7 @@
   "authors": [
     "Obsidian"
   ],
+  "image": "image.jpg",
   "scope": "library",
   "entry": "main.lua",
   "source": "https://github.com/Alomare/ObsidianAPI",

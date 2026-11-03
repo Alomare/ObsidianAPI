@@ -2,6 +2,10 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.19.0
+
+- New: the mod's image, shown beside it in Obsidian's mod list.
+
 ## 1.18.0
 
 - New: the `auto_respawn` effect drops a dead player back in after 3 seconds, or the seconds given, with no reinforcements left and with other players in the lobby.
