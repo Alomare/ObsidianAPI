@@ -1,0 +1,15 @@
+{
+  "menu_title": "Obsidian",
+  "menu_empty": "No mod has added a page.",
+  "menu_failed": "This page failed to open. See the log.",
+  "menu_unavailable": "Not available right now.",
+  "menu_filter": "Filter",
+  "menu_key_select": "Select",
+  "menu_key_back": "Back",
+  "menu_key_move": "Move",
+  "menu_key_change": "Change",
+  "menu_key_filter": "Filter",
+  "menu_key_reset": "Reset",
+  "menu_key_confirm": "Confirm",
+  "menu_key_cancel": "Cancel"
+}

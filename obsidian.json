@@ -1,7 +1,7 @@
 {
   "obsidian": 1,
   "id": "obsidian.api",
-  "version": "1.14.0",
+  "version": "1.15.0",
   "name": {
     "en": "Obsidian API",
     "pt-BR": "Obsidian API",
@@ -46,6 +46,20 @@
     "lib/bots.lua",
     "lib/audio.lua",
     "lib/music.lua",
-    "lib/mod_settings.lua"
+    "lib/mod_settings.lua",
+    "lib/menu.lua"
+  ],
+  "keybinds": [
+    {
+      "id": "open",
+      "default": "f6",
+      "label": {
+        "en": "Open the menu",
+        "pt-BR": "Abrir o menu",
+        "zh-CN": "打开菜单",
+        "fr": "Ouvrir le menu",
+        "es": "Abrir el menú"
+      }
+    }
   ]
 }

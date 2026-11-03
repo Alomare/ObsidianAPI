@@ -24,6 +24,7 @@ local map = obsidian.module("lib/map")
 local bots = obsidian.module("lib/bots")
 local mod_settings = obsidian.module("lib/mod_settings")
 local custom = obsidian.module("lib/custom")
+local menu = obsidian.module("lib/menu")
 
 local gear_failed, bots_failed, music_failed = false, false, false
 local last_state = nil
@@ -64,6 +65,8 @@ end)
 map.install()
 -- The pause menu's Mod Settings: only this player's own settings, so it runs in every session.
 mod_settings.install()
+-- The in-game window, for any mod's pages, in any lobby. It runs from wraps, never gated.
+menu.install()
 
 -- Where a hit is worked out: what it costs (scaled only while api.combat.scale's effects are on, which
 -- an uncleared lobby takes off), and which player of this machine landed it, for api.combat.on_hit in
@@ -153,4 +156,5 @@ return {
 	audio = audio,
 	music = music,
 	mod_settings = mod_settings,
+	menu = guard(menu, { "add", "open", "close", "toggle", "is_open", "toast" }),
 }

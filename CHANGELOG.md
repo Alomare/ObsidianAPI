@@ -2,6 +2,13 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.15.0
+
+- New: `api.menu`, the in-game window, moved here from Obsidian's loader so it changes with the API's releases. It takes the same calls and pages as `obsidian.menu`, which hands every call here on the next Obsidian.
+- New: each mod's pages sit in a folder named after the mod, opened and closed with Enter or a click and kept that way for the next launch. The title bar names the mod whose page is open, and reads Obsidian on a folder.
+- New: the F6 key that opens the window, in the Keys tab of Obsidian API, moved from Obsidian Trainer. It opens the window once a page is listed. On the next Obsidian it also works in a lobby that isn't cleared, so a client mod's pages are always at hand.
+- New: `api.menu.toast(text, seconds)`, a short message beside the window.
+
 ## 1.14.0
 
 - Changed: `api.combat.on_hit` works for client mods and in any lobby, and each hit carries the `position` where it landed.

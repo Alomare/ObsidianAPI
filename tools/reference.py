@@ -26,6 +26,7 @@ INTERNAL = {
     "game": {"tick", "plugin", "session_mode"},
     "gear": {"tick"},
     "map": {"install", "draw", "reset"},
+    "menu": {"install", "frame"},
     "mod_settings": {"install", "tick"},
     "mission": {"on_mission_start_update"},
     "music": {"tick", "after_machine_enter"},
@@ -108,7 +109,8 @@ def render():
     out = [MARKER, "", f"## Every call (Obsidian API {version})", ""]
     out.append("Each table of `api`, its calls in the order of the source, and the comment above each one. "
                "`bot:`, `drone:`, `prop:`, `marker:` and `page:` are methods of what `api.bots.add`, `api.gear.add_drone`, "
-               "`api.world.prop`, `api.map.marker` and `api.mod_settings.page` answer. Where this list and the guide above disagree, this list is right.")
+               "`api.world.prop`, `api.map.marker` and `api.mod_settings.page` answer, and under `api.menu`, of the page a build gets. "
+               "Where this list and the guide above disagree, this list is right.")
     for name in sorted(calls):
         out += ["", f"### api.{name}", ""]
         if heads.get(name):
