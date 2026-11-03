@@ -27,6 +27,9 @@ local order = {}
 local installed = {}
 -- Defs made before the game has its stratagem list, in the order they came: { def, entry }.
 local pending = {}
+-- The materials a def's icon_material named and the loader accepted, in the order they came. Every gui
+-- that lists hud/hud lists them too, as a stratagem's icon is drawn wherever the game's are.
+local art, art_listed = {}, {}
 
 -- The catalog answers unlocked() for a custom stratagem as for its base. It can't load this file, which
 -- needs it, so the answer is handed to it here.
@@ -187,6 +190,7 @@ local function check(def, s)
 	if def.type ~= nil and not TYPES[def.type] then return "bad_type" end
 	if def.subtypes ~= nil and not is_list_of_strings(def.subtypes, 8) then return "bad_type" end
 	if def.icon ~= nil and type(def.icon) ~= "string" then return "bad_type" end
+	if def.icon_material ~= nil and (type(def.icon_material) ~= "string" or def.icon == nil) then return "bad_type" end
 	if def.unit ~= nil and type(def.unit) ~= "string" then return "bad_type" end
 	if def.attributes ~= nil and type(def.attributes) ~= "table" then return "bad_type" end
 	if def.on_activate ~= nil and type(def.on_activate) ~= "function" then return "bad_type" end
@@ -303,6 +307,98 @@ end
 
 local make
 
+-- The def to make: with an icon from a mod's own material when the loader has that material, else
+-- without one, so the base's is used. A gui that lists hud/hud and not the material can't draw the
+-- icon, and a name a gui doesn't have is assumed fatal: the material is taken before any gui is made
+-- for the icon, in the mod's main chunk, and kept for good.
+local function with_art(def)
+	if def.icon_material == nil then return def end
+	local ui = obsidian.ui
+	local ok = type(ui) == "table" and type(ui.art) == "function" and ui.art(def.icon, { path = def.icon_material }) == true
+	if ok then
+		if not art_listed[def.icon_material] then
+			art_listed[def.icon_material] = true
+			art[#art + 1] = def.icon_material
+		end
+		return def
+	end
+	obsidian.log("custom stratagem " .. def.name .. ": no material " .. def.icon_material .. ", so the base's icon")
+	local out = clone(def)
+	out.icon, out.icon_material = nil, nil
+	return out
+end
+
+-- A gui's arguments with the art materials after hud/hud, each once; nil when it doesn't list hud/hud.
+local function gui_args(n, args)
+	if #art == 0 then return nil end
+	local hud, have = false, {}
+	for i = 1, n - 1 do
+		if args[i] == "material" and type(args[i + 1]) == "string" then
+			have[args[i + 1]] = true
+			if args[i + 1] == "hud/hud" then hud = true end
+		end
+	end
+	if not hud then return nil end
+	local out, k = {}, 0
+	for i = 1, n do
+		k = k + 1
+		out[k] = args[i]
+		if args[i] == "hud/hud" and args[i - 1] == "material" then
+			for _, m in ipairs(art) do
+				if not have[m] then
+					have[m] = true
+					out[k + 1], out[k + 2] = "material", m
+					k = k + 2
+				end
+			end
+		end
+	end
+	return out, k
+end
+
+-- Puts each custom stratagem in list right after its base, in the order they were made. key(item): the
+-- name an item is listed under; holds(item, name): whether it is, or holds, that stratagem. Customs
+-- whose base isn't in the list stay where they are.
+local function beside_bases(list, key, holds)
+	if #order == 0 or type(list) ~= "table" then return end
+	local moved, after = {}, {}
+	for _, r in ipairs(order) do
+		local own, base
+		for _, item in ipairs(list) do
+			if key(item) == r.name then own = item end
+			if not base and holds(item, r.base) then base = item end
+		end
+		if own and base and own ~= base then
+			moved[own] = true
+			after[base] = after[base] or {}
+			after[base][#after[base] + 1] = own
+		end
+	end
+	if next(moved) == nil then return end
+	local out = {}
+	for _, item in ipairs(list) do
+		if not moved[item] then
+			out[#out + 1] = item
+			for _, own in ipairs(after[item] or {}) do out[#out + 1] = own end
+		end
+	end
+	for i = 1, #out do list[i] = out[i] end
+end
+
+local function named(item) return type(item) == "table" and item.name or nil end
+
+local function is_named(item, name) return named(item) == name end
+
+-- A Loadout group: { name, items }, one per stratagem unless the game groups some.
+local function group_holds(group, name)
+	if type(group) ~= "table" then return false end
+	if group.name == name then return true end
+	for _, item in ipairs(type(group.items) == "table" and group.items or {}) do
+		if named(item) == name then return true end
+	end
+	return false
+end
+
 -- The def's on_activate as a hook of the mod calling define: made now, so it's that mod's even when
 -- the stratagem is made later.
 local function entry_of(def)
@@ -377,6 +473,33 @@ function M.install()
 		drain()
 		return original(...)
 	end)
+	-- Every gui that lists hud/hud lists the icons' materials too: the game's, through WorldProxy.new_gui,
+	-- and the loader's for kit:icon. A wrap, as the icons are there in any lobby.
+	for _, make_gui in ipairs({ "create_screen_gui", "create_world_gui" }) do
+		wrap("World", make_gui, function(original, world, ...)
+			local out, n = gui_args(select("#", ...), { ... })
+			if out then return original(world, unpack(out, 1, n)) end
+			return original(world, ...)
+		end)
+	end
+	-- The Arsenal and the Loadout screen list a custom stratagem right after its base, where the game
+	-- would put it at the end. Both lists are made in one call and read later, by name.
+	obsidian.hook("MenuScreenArmoryUnlocks", "on_enter", function(original, self, ...)
+		local r = { original(self, ...) }
+		local items = type(self.available_items) == "table" and self.available_items.stratagems
+		for _, group in ipairs(type(items) == "table" and type(items.groups) == "table" and items.groups or {}) do
+			beside_bases(group.items, named, is_named)
+		end
+		return unpack(r)
+	end)
+	obsidian.hook("MenuScreenLoadout", "setup_loadout", function(original, self, slot, ...)
+		local r = { original(self, slot, ...) }
+		local players = type(self.parent) == "table" and self.parent.players
+		local player = type(players) == "table" and players[slot]
+		local items = type(player) == "table" and type(player.available_items) == "table" and player.available_items.stratagems
+		if type(items) == "table" then beside_bases(items.groups, named, group_holds) end
+		return unpack(r)
+	end)
 	-- The game's functions go in once a custom stratagem is made and they all exist, and the pending ones
 	-- are made once the list is there. true stops the calls.
 	obsidian.on_frame(function()
@@ -393,6 +516,8 @@ end
 --   description  words under it; the base's if nil
 --   code         the arrows, { "down", "left", "up", ... }, 1 to 10; the base's if nil
 --   icon         an icon the HUD has, as a stratagem's icon field; the base's if nil
+--   icon_material  with icon: a material the mod ships in the boot bundle, whose sub-material icon is.
+--                Every gui listing hud/hud lists it too. The base's icon when the deploy hasn't got it
 --   type         "supply", "offensive", "defensive" or "special"; subtypes, a list as the game's
 --   unit         what it calls down: a unit every game has; the base's if nil
 --   stats        fields of the entry: num_uses, cooldown_time, activation_time, despawn_time, ...
@@ -406,11 +531,13 @@ end
 --                or "manual" (once api.stratagems.unlock(name) is called)
 -- Answers { name, id }, or nil and a reason. Before the game has its stratagem list, as in a mod's
 -- main chunk, it answers { name, pending = true } and makes the stratagem once the list is there,
--- before the save's loadout is read. A pending one that can't be made then is logged.
+-- before the save's loadout is read. A pending one that can't be made then is logged. The Arsenal and
+-- the Loadout screen list a custom stratagem right after its base.
 function M.define(def)
 	local s = settings()
 	local why = check(def, s)
 	if why then return nil, why end
+	def = with_art(def)
 	if not s then
 		pending[#pending + 1] = { def = clone(def), entry = entry_of(def) }
 		return { name = def.name, pending = true }

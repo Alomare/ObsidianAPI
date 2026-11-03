@@ -2,6 +2,11 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.22.0
+
+- New: a custom stratagem's `icon_material` names a material the mod ships in the boot bundle, holding the sub-material `icon`. Every gui that lists `hud/hud` lists it too, the loader's included. Without that material in the deploy, the base's icon.
+- Changed: the Arsenal and the Loadout screen list a custom stratagem right after its base, not at the end.
+
 ## 1.21.0
 
 - New: `bot:use_stratagem(name, pos, on_done)` calls a stratagem from the bot's slots the way a player does: the stratagem button held, the code entered one arrow at a time, and the flare thrown at `pos`. Cooldowns and uses count.
