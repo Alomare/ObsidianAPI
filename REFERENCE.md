@@ -904,6 +904,79 @@ api.world.camera.place(position, rotation)  -- moves it, in photo mode
 - A low spin or a shallow angle can make aiming feel odd, because the mouse aims in screen space.
 - The effects `camera_distance`, `camera_angle`, `free_camera_bounds` and `no_camera_shake` cover the rest.
 
+#### Taking the camera
+
+`api.world.camera.take()` stops the game moving the camera, in a mission. From then on it sits where `set(pose)` puts it, every frame, until `release()` or the next screen. A pose is plain numbers, so keep one from frame to frame:
+
+| Field | What it is |
+|---|---|
+| `position` | `{ x, y, z }` in metres |
+| `yaw` | Degrees about the up axis. 0 looks along +y, the level's north, and it grows turning left |
+| `pitch` | Degrees up (positive) or down (negative), held short of straight up or down |
+| `roll` | Degrees the picture tips |
+| `fov` | The vertical field of view, 5 to 150 degrees |
+| `ortho` | A width in metres to draw without perspective, as a plan; `false` goes back to perspective |
+| `far` | How far the camera sees, in metres; the game's own reach when left out |
+
+`get()` answers the pose now, the game's own camera when nothing has taken it. `forward(yaw, pitch)` answers the way a pose looks, as `{ x, y, z }`, for moving along it.
+
+```lua
+api.world.camera.take()
+local pose = api.world.camera.get()
+obsidian.on_frame(function()
+  local dt = rawget(_G, "ENGINE_DT") or 0.016
+  local f = api.world.camera.forward(pose.yaw, pose.pitch)
+  pose.position.x = pose.position.x + f.x * 4 * dt   -- glides ahead at 4 m/s
+  pose.position.y = pose.position.y + f.y * 4 * dt
+  api.world.camera.set(pose)
+end)
+```
+
+The game's other camera work stops while it's taken: the listener for sounds stays where it was, and shakes don't reach it. Grass and other scattered detail follow what the camera looks at.
+
+### Photos: lights, time and screenshots
+
+These are for a photo mode, and all of them are this player's alone.
+
+`api.world.light(pos, opts)` puts a light in the level: a beacon flare, hidden, with no physics, and its light taken over. `opts` takes `color` (`{ r, g, b }` from 0 to 1), `intensity`, `range` (metres it reaches), `shadows` (`true` casts them) and `spot` (an angle in degrees makes a spotlight, pointing along `yaw` and `pitch`). It answers a light with `set(opts)`, `move(pos)`, `alive()` and `remove()`, or `nil, "no_light"` where the flare has none. Remove your lights when you're done: they stay for the rest of the mission.
+
+```lua
+local key = api.world.light(api.world.ahead(4), { color = { 1, 0.8, 0.6 }, intensity = 3, range = 10, shadows = true })
+key:set({ spot = 50, yaw = 90, pitch = -40 })
+key:remove()
+```
+
+| Call | What it does |
+|---|---|
+| `time_scale(scale)` | How fast this player's game runs: 0 stops it, 1 is normal, between is slow motion. Only alone in the lobby (`"solo_only"`), and a new screen sets it back to 1 |
+| `time_now()` | The scale now |
+| `time_of_day(name, towards, blend)` | The mission's look at `"dawn"`, `"day"`, `"dusk"` or `"night"`, with `blend` (0 to 1) of `towards` mixed in. Forest planets also have the `"swamp"` set. `nil` gives the mission's own back |
+| `visible(unit, on)` | Hides a unit, shadow and all, or shows it again |
+| `flashlight(unit, on)` | A Helldiver's flashlight, as a night mission lights it |
+
+#### Screenshots: api.capture
+
+The engine has no screenshot call, so `api.capture` goes to Windows: GDI copies the game window off the screen and GDI+ writes a PNG or JPEG. It needs the game's FFI, which the PC game loads itself. `available()` answers `false, "no_ffi"` where it's missing.
+
+`shot(opts, done)` waits a few frames with the API's windows, panels and toasts held back (and, on an Obsidian with `obsidian.ui.solo`, every mod's drawing), copies the picture, and calls `done(path)`, or `done(nil, reason)`, as your mod. Check `busy()` before drawing guides of your own, as an older Obsidian can't hold them back for you.
+
+| opts | What it is |
+|---|---|
+| `folder_name` | A folder in the player's Pictures, `"Helldivers"` by default. `folder` takes a full path instead |
+| `name` | An `os.date` pattern, `"Helldivers %Y-%m-%d %H-%M-%S"` by default. A name already taken gets a number |
+| `format` | `"png"` (the default) or `"jpg"`, with `quality` from 1 to 100 |
+| `aspect` | A width over height to cut from the middle, `21 / 9` say |
+| `crop` | `{ x, y, w, h }` in shares of the picture, from the top left |
+| `keep` | `true` keeps your mod's own drawing in the picture, such as a color over it or a caption; hide your guides while `busy()` |
+
+```lua
+api.capture.shot({ aspect = 16 / 9 }, function(path, why)
+  api.menu.toast(path and ("Saved " .. path) or ("Not saved: " .. why))
+end)
+```
+
+`folder(name)` answers the Pictures folder path with `name` in it, made if missing, and `open_folder(path)` opens one in the file explorer. A failed copy answers `"no_window"`, `"minimized"`, `"black"` (the picture came back empty, as some fullscreen setups give) or `"not_saved"`.
+
 ### The look of a mission
 
 ```lua
@@ -920,6 +993,8 @@ api.world.flash()                           -- lightning
 | `scalar` | a number | `exposure`, `dof_amount`, `ambient_camera_falloff`, `sun_enabled`, `ssao_radius`, `ssao_strength`, `vignette_opacity`, `color_grading_enabled` |
 | `vector2` | `{ a, b }` | `fog_depth_range`, `dof_near_setting`, `dof_far_setting`, `bloom_threshold_offset` |
 | `vector3` | `{ a, b, c }` | `fog_color`, `fog_sun_blend`, `sun_color`, `sun_direction`, `ambient_top_color`, `ambient_bottom_color` |
+
+From 1.23.0, names from the game's shaders too: `cloud_shadow_opacity`, `dust_opacity`, `emissive_material_intensity`, `emissive_particle_intensity`, `cube_environment_intensity_sun` and `cube_environment_intensity_shadow` (scalars); `cloud_shadow_movement`, `cloud_shadow_scale`, `dust_scale0` to `dust_scale2` and `dust_speed0` to `dust_speed2` (vector2); `dust_color` and `vignette` (vector3). `sun_direction` is the way the light travels, so its `z` is below 0.
 
 A value goes on again in each new mission until you give it back. The game ships the code for these names without using all of them itself, so try yours on a first run.
 
@@ -1002,7 +1077,7 @@ api.music.volume(-12)             -- quieter; false gives the volume back
 | `release()` | Gives the music back to the game |
 | `pause()`, `resume()` | Pauses and resumes whatever plays, held or not |
 | `volume(db)` | The music's volume, the same as `api.audio.bus("music_master", db)` |
-| `now()` | `{ place, track, held, paused }`. `place` is `"menu"`, `"ship"`, `"mission"`, `"screen"` (the drop and the results), or nil where there's no music |
+| `now()` | `{ place, track, held, paused, loading }`. `place` is `"menu"`, `"ship"`, `"mission"`, `"screen"` (the drop and the results), or nil where there's no music |
 | `TRACKS` | Every music track the game's scripts start |
 
 #### The tracks
@@ -1021,6 +1096,8 @@ api.music.volume(-12)             -- quieter; false gives the volume back
 | `music_boss_bugs`, `music_boss_cyborgs`, `music_boss_illuminates` | A boss fight |
 
 The main menu, the ship and missions have the whole set, so you can play the main theme in a mission or a boss track on the ship. `tracks()` answers what a screen has loaded: `play` answers `"unknown_event"` for a track it lacks, and `"no_music"` where there's no music at all.
+
+A mission has none of the menu tracks (`music_bridge`, `music_theme`, `music_credits`), so there `play` loads the package that holds them, in the background, and answers `true, "loading"`. The game's music stays down meanwhile and the track starts once the package is there, which then stays loaded until the game unloads it on the ship. `play(track, { db = -6 })` plays a track at its own level, in decibels below the mix.
 
 #### How it behaves
 
@@ -1087,6 +1164,34 @@ api.menu.add("Panic Button", function(page)
     return "Cleared"
   end)
 end, { icon = "enemies" })
+```
+
+#### Panels
+
+`api.menu.panel(spec)` makes a window of your mod's own, down one side of the screen, with tabs along its top. Your code opens and closes it. Its rows are the rows above, plus `page:slider(label, opts)`, a number on a bar the mouse drags, from `opts.min` to `opts.max`. A choice's `swatch` (`{ r, g, b }`, 0 to 255) shows a color square beside its label, and `format` can be a function for any row with a value.
+
+A panel handles on the arrow keys, Enter, Esc, Tab (Shift and Tab goes back a tab), R and the left mouse button. W A S D, Q, E, the right mouse button and the wheel away from the panel are yours: read them raw to steer something while it's open, such as a camera. The game gets no input while a panel is open, and the F6 window waits.
+
+| spec | What it is |
+|---|---|
+| `title` | Text, or a function |
+| `tabs` | `{ { title = ..., build = function(page) end }, ... }`, at least one |
+| `side` | `"right"` (the default) or `"left"` |
+| `width` | In the game's 1280 by 720 design units, 390 by default |
+| `status` | A function answering a short text for the title bar |
+| `guide` | Your keys for its key guide, before its own: `{ { keys = { "H" }, label = "Hide" } }` |
+| `on_close` | Called as your mod when it closes, by Esc, its close button or `close()` |
+
+It answers a panel with `open(tab)`, `close()`, `is_open()`, `hide(on)` (draws nothing and reads no keys, but still keeps input from the game), `hidden()`, `select_tab(n)`, `tab_number()`, `refresh()`, `under_mouse()` and `typing()`.
+
+```lua
+local panel = api.menu.panel({ title = "Photo Mode", on_close = stop_photo_mode, tabs = {
+  { title = "Camera", build = function(page)
+    page:slider("Field of view", { min = 20, max = 120, step = 1, format = "%d deg", default = 60,
+      get = function() return fov end, set = function(v) fov = v end })
+  end },
+} })
+panel:open()
 ```
 
 `obsidian.menu` hands every call to this window from the Obsidian release after 1.1.0. On 1.1.0 it's the loader's own window, which nothing opens now that the Trainer's pages are here, so use `api.menu`. There, the key waits for a cleared lobby when Obsidian API runs as a session mod, and folders are named after the mod's id, written out.
@@ -1162,6 +1267,14 @@ With `opts.option = true`, a toggle, choice or number is the option of your `obs
 - `api.mod_settings.BINDS` is `true` from Obsidian API 1.16.0 on. On an older API, check it and leave the row out, since the row would be a separate in-game setting there.
 
 The option's labels in `obsidian.json` are Obsidian's; the row needs its own, by language as above.
+
+#### Rows of the pause menu
+
+`api.mod_settings.pause_row(id, label, fn, opts)` adds a row to the pause menu itself, under the Mods row. Choosing it closes the pause menu, then calls `fn()` as your mod. `opts.when(screen)` decides where it shows: `screen` is `"game"` in a mission and `"menu"` on the ship. The label is words or a table by language, in capitals like the game's rows. `remove_pause_row(id)` takes it away.
+
+```lua
+api.mod_settings.pause_row("photo", "Photo Mode", start_photo_mode, { when = function(screen) return screen == "game" end })
+```
 
 ```lua
 local page = api.mod_settings.page("Better HUD")
@@ -1561,7 +1674,7 @@ A session mod's hooks, frame functions, effects and edits stop while the lobby i
 
 <!-- Everything below is generated by tools/reference.py from the source. Don't edit it by hand. -->
 
-## Every call (Obsidian API 1.22.1)
+## Every call (Obsidian API 1.23.0)
 
 Each table of `api`, its calls in the order of the source, and the comment above each one. `bot:`, `drone:`, `prop:`, `marker:` and `page:` are methods of what `api.bots.add`, `api.gear.add_drone`, `api.world.prop`, `api.map.marker` and `api.mod_settings.page` answer, and under `api.menu`, of the page a build gets. Where this list and the guide above disagree, this list is right.
 
@@ -1615,6 +1728,18 @@ Bots: Helldivers this machine plays. A bot is a local co-op player on a pad nobo
 - `bot:remove()`
 - `api.bots.all()`
 - `api.bots.remove_all()`
+
+### api.capture
+
+Screenshots: the game's picture, saved as a PNG or JPEG file. The engine has no call for it, so this goes to Windows through LuaJIT's FFI, which the game's own scripts load (foundation/lua/util/noise.lua sets HAS_FFI on PC): GDI copies the game window's picture off the screen, and GDI+ writes the file. A shot waits a few frames first, with this library's window, its toasts and (on a loader with obsidian.ui.solo) every mod's drawing held back, so the picture has only the game in it. The engine shows a frame a little after Lua draws it, so the copy is taken after the frames it shows are clear. Every C name goes through a name of this library's, `obsapi_<name> __asm__("<name>")`: LuaJIT keeps one namespace for every script in the process, and two mods declaring the same name fail.
+
+- `api.capture.WAIT_FRAMES`: Frames the screen goes without anything of a mod's on it before the copy.
+- `api.capture.FOLDER_NAME`
+- `api.capture.available()`: Whether shots can be taken here: true, or false and why not ("no_ffi", "not_windows", ...).
+- `api.capture.folder(name)`: The Pictures folder of this Windows user (wherever it was moved), with a folder of `name` in it. Answers the path, made if missing, or nil and why not.
+- `api.capture.open_folder(path)`: Opens a folder in Windows' file explorer.
+- `api.capture.shot(opts, done)`: Takes a shot after the screen clears of mods: M.WAIT_FRAMES frames with nothing of this library's or any mod's drawn. done(path) gets the file's path, or done(nil, reason). opts: folder (a full path) or folder_name (a folder in Pictures, "Helldivers" by default), name (an os.date pattern), format ("png" or "jpg"), quality (1 to 100, JPEG), crop ({ x, y, w, h } in shares of the picture) or aspect (a width over height, cut from the middle), keep (true: the calling mod's own drawing stays in the picture, a tint or a caption, say; its guides are its to hide while busy()). Answers true, or false and why not.
+- `api.capture.busy()`: Whether a shot is waiting, while the screen has to stay clear: a mod drawing its own guides checks it.
 
 ### api.catalog
 
@@ -1833,7 +1958,8 @@ The in-game window that F6 opens: a folder per mod down the left with that mod's
 - `page:label(label, opts)`: A line of text.
 - `page:toggle(label, opts)`: On or off. opts: get(), set(value), default.
 - `page:number(label, opts)`: A number. opts: get(), set(value), min, max, step (Shift takes ten), format, default.
-- `page:choice(label, opts)`: One of opts.choices, a list of { id, label }. opts: get(), set(id), default.
+- `page:choice(label, opts)`: One of opts.choices, a list of { id, label }. A choice's swatch, { r, g, b } from 0 to 255, shows beside its label. opts: get(), set(id), default.
+- `page:slider(label, opts)`: A number on a bar that the mouse drags. opts: get(), set(value), min, max (both needed), step, format, default. The keys step it as they step a number.
 - `page:action(label, fn, opts)`: A row that calls fn(). A string it returns becomes a toast.
 - `page:input(label, fn, opts)`: A row that asks for a line of text, then calls fn(text). A string it returns becomes a toast. With opts.code, it takes arrows instead: the arrow keys, W A S D and a pad's directions, handed over as words, "up down left".
 - `page:page(label, build, opts)`: A row that opens a page inside this one. build(page) runs each time it opens.
@@ -1844,6 +1970,17 @@ The in-game window that F6 opens: a folder per mod down the left with that mod's
 - `api.menu.is_open()`: Whether the window is open.
 - `api.menu.toast(text, seconds)`: A short message at the top left of the screen, or beside the window while it's open.
 - `api.menu.add(title, build, opts)`: A page in the list down the left, in the folder of the mod that adds it. title: text, or a function that answers it. build(page) runs each time the page opens. opts.icon: one of obsidian.ui.glyphs().
+- `panel:open(tab)`: Opens the panel on its tab, closing the F6 window and any other panel. false while a panel can't open (as the window can't: logos, cutscenes, screen changes, the chat typing).
+- `panel:close()`: Closes it, gives the game its input and cursor back, and calls the panel's on_close.
+- `panel:is_open()`
+- `panel:hide(on)`: Hidden, it draws nothing and reads no keys, and the cursor goes, but the game still gets no input: the mod keeps steering. A screenshot hides every panel by itself.
+- `panel:hidden()`
+- `panel:tab_number()`: The tab that's open, by number.
+- `panel:select_tab(i)`
+- `panel:refresh()`: Builds the open tab again, as after an action that changes what it lists.
+- `panel:under_mouse()`: Whether the mouse is over the panel now: the mod leaves the wheel and clicks there to the panel.
+- `panel:typing()`: Whether the panel is taking the keys for itself now: typing into a row.
+- `api.menu.panel(spec)`: A panel, closed. spec: title (text or a function), tabs ({ { title = ..., build = function(page) end, icon = ... }, ... }), side ("right", the default, or "left"), width (in the game's 1280 by 720 design units, 390 by default), status (a function answering a short text for the title bar), guide (key guide entries before the panel's own: { keys = { "H" }, label = "Hide" }), on_close().
 
 ### api.mission
 
@@ -1880,15 +2017,18 @@ Mod Settings: a row of the game's pause menu that opens a list of mods, and a pa
 - `page:get(id)`
 - `page:set(id, value)`: Sets a value as the page would; false when there's no such row or the value doesn't fit it.
 - `api.mod_settings.page(title)`: The calling mod's page, titled for the list of mods. Asking again gives the same page.
+- `api.mod_settings.pause_row(id, label, fn, opts)`: A row of the pause menu, under the Mods row, that closes the pause menu and runs fn() when chosen. label: words, or a table by language. opts.when(screen): true where the row shows, screen being "game" in a mission or "menu" on the ship; without it the row shows on every pause menu. Asking again with the same id replaces the row.
+- `api.mod_settings.remove_pause_row(id)`: Takes a pause row away.
 
 ### api.music
 
 The soundtrack: what plays, holding a track of your choosing across screens, pausing and volume. All of it is local, like the rest of the sound. Each screen keeps its music in one place of its own. The main menu's music object, the ship and the mission's start and end screens each hold one event id, and swap it when they change track: a held track takes that id's place, so the screen's own fades go on working on it. The ship sets the volume of that id every frame without asking whether there is one, so the slot never goes empty: silence leaves the stopped id in it. A mission's music comes from its audio state machine instead, which starts threat and action music as patrols and fights come and go. A held track there plays beside them while they're kept silent through their "volume" parameter, the one the machine fades them with. The engine pauses only a whole sound world. The main menu and the ship play their music in worlds of their own, so they pause for real; anywhere else a pause is silence, and the track keeps its time.
 
 - `api.music.TRACKS`: Every music event the game's scripts start, menus first. A sound bank holds only some of them, so tracks() says which ones the current screen has.
+- `api.music.PACKAGES`: The package that holds each menu track's sound bank. A screen without the bank can load it: a mission has none of them. Once loaded a package stays until the game unloads it, at the ship or the menu that loads it too (abstract_base_state.lua:57).
 - `api.music.tracks()`: The music events this screen can play now.
-- `api.music.now()`: What plays: place ("menu", "ship", "mission" or "screen", nil where there's no music), track (the held one, nil while the game picks or while silence is held), held (true while either is) and paused.
-- `api.music.play(track)`: Plays a music event in place of the game's and holds it, on this screen and the next, until release(). It loops. Only a track this screen has can start it: a screen without it is silent.
+- `api.music.now()`: What plays: place ("menu", "ship", "mission" or "screen", nil where there's no music), track (the held one, nil while the game picks or while silence is held), held (true while either is), paused, and loading (true while a held track waits for its package).
+- `api.music.play(track, opts)`: Plays a music event in place of the game's and holds it, on this screen and the next, until release(). It loops. A screen without the track is silent, except for the menu tracks of PACKAGES: those load their package first, in the background, and start once it's there, silent meanwhile (the answer is then true, "loading"). opts.db: the track's own volume in decibels, 0 as mixed, down to -60.
 - `api.music.stop()`: Holds silence: the game's music stops until release().
 - `api.music.release()`: Gives the music back to the game.
 - `api.music.pause()`
@@ -1982,6 +2122,9 @@ The vehicle under the player. Driving makes a vehicle this peer's, a moment afte
 
 Time, camera, HUD, the look of the world, and finding a place in it. The camera and the look are this player's alone: nobody else sees them.
 
+- `api.world.camera.spectate(unit)`: unit: another player's avatar, from game.all_avatars. nil comes back to this player.
+- `api.world.camera.photo(on)`: Freezes the camera and clears the screen. Mission only.
+- `api.world.camera.place(pos, rotation)`: Where the frozen camera sits. pos is a Vector3, rotation a Quaternion, nil to leave it.
 - `api.world.SHADING`
 - `api.world.shading(name, kind, value)`: A value of the look of the mission. kind: scalar, vector2 or vector3. value: a number, or a list of 2 or 3. nil gives it back to the planet. It goes on again in each new mission.
 - `api.world.flash(seconds)`: A lightning flash. Only forest planets have the setting it fades to, and not the illuminates' ones (campaign.md 4.4). A name the resource lacks is left to no chance, so it's refused.
@@ -1991,12 +2134,31 @@ Time, camera, HUD, the look of the world, and finding a place in it. The camera 
 - `api.world.raycast(from, to, filter)`: The first thing on the straight line from one point to another: true, where and how far along, or false. filter: the game's collision filter, "default" when left out; "mover_blocker" is what stops a body walking, the one to ask before moving a player. from, to: vectors or { x, y, z }.
 - `api.world.prop(unit_name, pos, opts)`
 - `prop:alive()`: false once its level is gone, or it was removed.
-- `prop:move(pos)`
+- `prop:move(pos)`: Moves it, at once even in a stopped world.
 - `prop:scale(size)`
 - `prop:flow(event)`: Runs one of the unit's own flow events, the way the game makes a unit play its sounds and effects: "on_picked_up" on a research sample plays the pickup.
 - `prop:remove()`
 - `api.world.explode(pos, power, radius)`: An explosion at a position. The game's own manager does the damage and the push.
 - `api.world.clear_decals()`
+- `api.world.camera.forward(yaw, pitch)`: The way a yaw and a pitch look, as { x, y, z }.
+- `api.world.camera.get()`: Where the camera is now, as set() takes it: { position, yaw, pitch, roll, fov }. Roll reads 0.
+- `api.world.camera.take()`: Takes the camera where it is: the game stops moving it, and it goes where set() puts it, every frame, until release() or a change of screen. This player's only, in a mission. Poses are plain numbers, kept from frame to frame (the engine's vectors last a frame): position { x, y, z } in metres, and angles in degrees. yaw turns about the up axis, 0 looking along +y, the level's north, and grows turning left seen from above; pitch looks up when positive and down when negative; roll tips the picture. fov is the vertical field of view. ortho, a width in metres, draws without perspective, as a plan does; far is how far the camera sees, in metres. Answers true, or false and why not.
+- `api.world.camera.set(pose)`: Where the taken camera goes. pose: any of position, yaw, pitch, roll, fov (from 5 to 150), ortho (false or nil for perspective) and far, as get() answers them.
+- `api.world.camera.taken()`: Whether a mod has the camera.
+- `api.world.camera.release()`: Gives the camera back to the game, which goes on from where it left it.
+- `api.world.LIGHT_UNIT`: The unit a light is made of, a beacon flare in every mission's packages, and the name of its light.
+- `api.world.LIGHT_NAME`
+- `api.world.light(pos, opts)`: A light in the level that only this player sees: a beacon flare, hidden, with no physics, and its light taken over. pos: { x, y, z } or a vector. opts: color { r, g, b } from 0 to 1, intensity, range (metres the light reaches), shadows (true casts them), spot (an angle in degrees makes it a spotlight, nil an all-round light) with yaw and pitch for where a spotlight points. Answers a light with :set(opts), :move(pos), :alive() and :remove(), or nil and a reason.
+- `light:alive()`
+- `light:set(opts)`: Changes any of the light's opts, as M.light takes them.
+- `light:settle()`: The unit's scene node at once, as a stopped world doesn't move it. move() and set() do it themselves.
+- `light:move(pos)`
+- `light:remove()`
+- `api.world.time_scale(scale)`: How fast this player's game runs: 0 stops it, 1 is normal speed, anything between is slow motion. Only with nobody else in the lobby, as another player's game would part from this one. A change of screen sets it back to 1.
+- `api.world.time_now()`: 1 unless time_scale changed it.
+- `api.world.visible(unit, on)`: Whether a unit is drawn, on this machine only: false hides it, shadow and all. Nothing else about it changes.
+- `api.world.flashlight(unit, on)`: A Helldiver's flashlight, on this machine only, as the game lights it on a night mission.
+- `api.world.time_of_day(name, towards, blend)`: The time of day of the mission's look: "dawn", "day", "dusk" or "night", or nil for the mission's own. blend, from 0 to 1, mixes in a second one, `towards`: dusk part way to night, say. Forest planets also have "swamp", "swamp_dawn", "swamp_day", "swamp_dusk" and "swamp_night". This player's only.
 
 ### Effects
 

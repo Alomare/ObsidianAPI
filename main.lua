@@ -25,6 +25,7 @@ local bots = obsidian.module("lib/bots")
 local mod_settings = obsidian.module("lib/mod_settings")
 local custom = obsidian.module("lib/custom")
 local menu = obsidian.module("lib/menu")
+local capture = obsidian.module("lib/capture")
 
 local gear_failed, bots_failed, music_failed = false, false, false
 local last_state = nil
@@ -41,7 +42,12 @@ obsidian.on_frame(function()
 		map.reset()
 	end
 	pcall(mod_settings.tick)
+	local ran, why = pcall(mod_settings.run_chosen)
+	if not ran then obsidian.log("mod_settings: " .. tostring(why)) end
 	pcall(custom.tick)
+	pcall(world.tick)
+	ran, why = pcall(capture.tick)
+	if not ran then obsidian.log("capture: " .. tostring(why)) end
 	local ok, err = pcall(music.tick)
 	if not ok and not music_failed then
 		music_failed = true
@@ -67,6 +73,8 @@ map.install()
 mod_settings.install()
 -- The in-game window, for any mod's pages, in any lobby. It runs from wraps, never gated.
 menu.install()
+-- A camera a mod takes (api.world.camera.take), in any lobby: only this player sees it.
+world.install()
 
 -- Where a hit is worked out: what it costs (scaled only while api.combat.scale's effects are on, which
 -- an uncleared lobby takes off), and which player of this machine landed it, for api.combat.on_hit in
@@ -139,7 +147,8 @@ return {
 	console = guard(console, { "denied", "commands" }),
 	data = data,
 	catalog = catalog,
-	world = guard(world, { "shading", "flash", "cursor", "ahead", "raycast", "clear_decals" }),
+	world = guard(world, { "shading", "flash", "cursor", "ahead", "raycast", "clear_decals", "light", "time_scale", "time_now", "visible",
+		"flashlight", "time_of_day" }),
 	player = guard(player, { "lives" }),
 	gear = guard(gear),
 	stratagems = guard(stratagems),
@@ -156,5 +165,6 @@ return {
 	audio = audio,
 	music = music,
 	mod_settings = mod_settings,
-	menu = guard(menu, { "add", "open", "close", "toggle", "is_open", "toast" }),
+	menu = guard(menu, { "add", "open", "close", "toggle", "is_open", "toast", "panel" }),
+	capture = capture,
 }

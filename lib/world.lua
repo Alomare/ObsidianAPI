@@ -160,6 +160,7 @@ function M.camera.place(pos, rotation)
 	return true
 end
 
+
 -- HUD
 local function hud()
 	local st = game.state()
@@ -213,11 +214,15 @@ end
 
 -- Names found in the planets' shading resources, by kind (campaign.md 4.4). The viewport hands the
 -- name to the engine every frame, so anything else stays out. Reading the kinds from the same list
--- keeps a name from going to the engine as the wrong type.
+-- keeps a name from going to the engine as the wrong type. The second line of each kind was named in
+-- 1.23.0 from the strings of the game's shaders, matched to the resources' hashes and types.
 local SHADING = {
-	scalar = { "exposure", "dof_amount", "ambient_camera_falloff", "sun_enabled", "ssao_radius", "ssao_strength", "vignette_opacity", "color_grading_enabled" },
-	vector2 = { "fog_depth_range", "dof_near_setting", "dof_far_setting", "bloom_threshold_offset" },
-	vector3 = { "fog_color", "fog_sun_blend", "sun_color", "sun_direction", "ambient_top_color", "ambient_bottom_color" },
+	scalar = { "exposure", "dof_amount", "ambient_camera_falloff", "sun_enabled", "ssao_radius", "ssao_strength", "vignette_opacity", "color_grading_enabled",
+		"cloud_shadow_opacity", "dust_opacity", "emissive_material_intensity", "emissive_particle_intensity", "cube_environment_intensity_sun", "cube_environment_intensity_shadow" },
+	vector2 = { "fog_depth_range", "dof_near_setting", "dof_far_setting", "bloom_threshold_offset",
+		"cloud_shadow_movement", "cloud_shadow_scale", "dust_scale0", "dust_scale1", "dust_scale2", "dust_speed0", "dust_speed1", "dust_speed2" },
+	vector3 = { "fog_color", "fog_sun_blend", "sun_color", "sun_direction", "ambient_top_color", "ambient_bottom_color",
+		"dust_color", "vignette" },
 }
 local SIZES = { vector2 = 2, vector3 = 3 }
 
@@ -411,10 +416,12 @@ function Prop:alive()
 	return ok and alive == true
 end
 
+-- Moves it, at once even in a stopped world.
 function Prop:move(pos)
 	local at = vector(pos)
 	if not at or not self:alive() then return false end
 	game.global("Unit").teleport_local_position(self.unit, 0, at)
+	pcall(game.global("World").update_unit, self.world, self.unit)
 	return true
 end
 
@@ -452,6 +459,360 @@ function M.clear_decals()
 	if not (manager and manager.clear) then return false, "not_in_mission" end
 	manager:clear()
 	return true
+end
+
+-- The taken camera's pose, and what of it reached the engine.
+local held = nil
+
+local function finite_or(n, default)
+	if finite(n) then return n end
+	return default
+end
+
+local function viewport_camera(cm)
+	local vp = cm and cm.viewport
+	if not vp then return nil end
+	return vp, vp:get_camera(), vp.camera_unit
+end
+
+local function rotation_of(yaw, pitch, roll)
+	local Q, V3 = game.global("Quaternion"), game.global("Vector3")
+	local q = Q(V3(0, 0, 1), math.rad(yaw))
+	q = Q.multiply(q, Q(V3(1, 0, 0), math.rad(pitch)))
+	if roll ~= 0 then q = Q.multiply(q, Q(V3(0, 1, 0), math.rad(roll))) end
+	return q
+end
+
+-- The way a yaw and a pitch look, as { x, y, z }.
+function M.camera.forward(yaw, pitch)
+	local y, p = math.rad(yaw or 0), math.rad(pitch or 0)
+	return { x = -math.sin(y) * math.cos(p), y = math.cos(y) * math.cos(p), z = math.sin(p) }
+end
+
+-- Where the camera is now, as set() takes it: { position, yaw, pitch, roll, fov }. Roll reads 0.
+function M.camera.get()
+	local cm = camera()
+	local _, cam = viewport_camera(cm)
+	if not cam then return nil, "not_in_mission" end
+	if held then
+		return { position = { x = held.position.x, y = held.position.y, z = held.position.z }, yaw = held.yaw, pitch = held.pitch,
+			roll = held.roll, fov = held.fov, ortho = held.ortho, far = held.far }
+	end
+	local C, Q = game.global("Camera"), game.global("Quaternion")
+	local pos, rot = C.world_position(cam), C.world_rotation(cam)
+	local f = Q.forward(rot)
+	return { position = { x = pos.x, y = pos.y, z = pos.z }, yaw = math.deg(math.atan2(-f.x, f.y)),
+		pitch = math.deg(math.asin(math.max(-1, math.min(1, f.z)))), roll = 0, fov = math.deg(C.vertical_fov(cam)) }
+end
+
+-- Takes the camera where it is: the game stops moving it, and it goes where set() puts it, every frame,
+-- until release() or a change of screen. This player's only, in a mission. Poses are plain numbers, kept
+-- from frame to frame (the engine's vectors last a frame): position { x, y, z } in metres, and angles in
+-- degrees. yaw turns about the up axis, 0 looking along +y, the level's north, and grows turning left
+-- seen from above; pitch looks up when positive and down when negative; roll tips the picture. fov is
+-- the vertical field of view. ortho, a width in metres, draws without perspective, as a plan does; far
+-- is how far the camera sees, in metres. Answers true, or false and why not.
+function M.camera.take()
+	if not game.in_mission() then return false, "not_in_mission" end
+	if held then return true end
+	local cm = camera()
+	local _, cam = viewport_camera(cm)
+	if not cam then return false, "not_in_mission" end
+	local pose = M.camera.get()
+	local C = game.global("Camera")
+	local ok, far = pcall(C.far_range, cam)
+	held = { state = game.state(), position = pose.position, yaw = pose.yaw, pitch = pose.pitch, roll = 0, fov = pose.fov,
+		game_far = ok and far or nil, applied = {} }
+	return true
+end
+
+-- Where the taken camera goes. pose: any of position, yaw, pitch, roll, fov (from 5 to 150), ortho
+-- (false or nil for perspective) and far, as get() answers them.
+function M.camera.set(pose)
+	if not held then return false, "not_available" end
+	if type(pose) ~= "table" then return false, "bad_type" end
+	local p = pose.position
+	if type(p) == "table" and finite(p.x) and finite(p.y) and finite(p.z) then held.position = { x = p.x, y = p.y, z = p.z } end
+	held.yaw = finite_or(pose.yaw, held.yaw)
+	held.pitch = math.max(-89.9, math.min(89.9, finite_or(pose.pitch, held.pitch)))
+	held.roll = finite_or(pose.roll, held.roll)
+	held.fov = math.max(5, math.min(150, finite_or(pose.fov, held.fov)))
+	if pose.ortho ~= nil then held.ortho = finite(pose.ortho) and pose.ortho > 0 and pose.ortho or nil end
+	if pose.far ~= nil then held.far = finite(pose.far) and pose.far > 1 and pose.far or nil end
+	return true
+end
+
+-- Whether a mod has the camera.
+function M.camera.taken()
+	return held ~= nil
+end
+
+local function give_back(cm)
+	local h = held
+	held = nil
+	if not h then return end
+	local _, cam = viewport_camera(cm)
+	if not cam then return end
+	local C = game.global("Camera")
+	if h.applied.ortho then pcall(C.set_projection_type, cam, C.PERSPECTIVE) end
+	if h.applied.far and h.game_far then pcall(C.set_far_range, cam, h.game_far) end
+	-- The game sets the field of view only when its own changes.
+	if cm.fov then pcall(C.set_vertical_fov, cam, cm.fov) end
+end
+
+-- Gives the camera back to the game, which goes on from where it left it.
+function M.camera.release()
+	if not held then return true end
+	local ok, err = pcall(give_back, camera())
+	held = nil
+	if not ok then obsidian.log("camera: " .. tostring(err)) end
+	return true
+end
+
+-- In place of the game's camera update while the camera is taken: the pose, the grass and the like
+-- around what the camera sees, and the camera's own scene node.
+local function drive(cm)
+	local vp, cam, unit = viewport_camera(cm)
+	local C, V3, W = game.global("Camera"), game.global("Vector3"), game.global("World")
+	local h = held
+	local pos = V3(h.position.x, h.position.y, h.position.z)
+	C.set_local_position(cam, unit, pos)
+	C.set_local_rotation(cam, unit, rotation_of(h.yaw, h.pitch, h.roll))
+	if h.applied.fov ~= h.fov then
+		C.set_vertical_fov(cam, math.rad(h.fov))
+		h.applied.fov = h.fov
+	end
+	if (h.ortho ~= nil) ~= (h.applied.ortho == true) then
+		C.set_projection_type(cam, h.ortho and C.ORTHOGRAPHIC or C.PERSPECTIVE)
+		h.applied.ortho = h.ortho ~= nil
+	end
+	if h.ortho then
+		local w, hh = game.global("Application").resolution()
+		local half = h.ortho / 2
+		local tall = half * hh / math.max(1, w)
+		C.set_orthographic_view(cam, -half, half, -tall, tall)
+	end
+	local far = h.far or h.game_far
+	if far and h.applied.far ~= far then
+		C.set_far_range(cam, far)
+		h.applied.far = far
+	end
+	local proxy = vp:get_world_proxy()
+	if vp:is_active() and proxy:is_active() then W.update_unit(proxy:get_world(), unit) end
+	local scatter = game.global("ScatterSystem")
+	if scatter and cm.scatter_system and cm.observer_id then
+		local f = M.camera.forward(h.yaw, h.pitch)
+		local ground = h.position
+		if f.z < -0.05 then
+			local d = math.min(h.position.z / -f.z, 200)
+			ground = { x = h.position.x + f.x * d, y = h.position.y + f.y * d, z = h.position.z + f.z * d }
+		end
+		scatter.move_observer(cm.scatter_system, cm.observer_id, V3(ground.x, ground.y, ground.z + 10))
+	end
+end
+
+-- The unit a light is made of, a beacon flare in every mission's packages, and the name of its light.
+M.LIGHT_UNIT = "gameobjects/flare_01"
+M.LIGHT_NAME = "red_light"
+local LightHandle = {}
+LightHandle.__index = LightHandle
+
+-- A light in the level that only this player sees: a beacon flare, hidden, with no physics, and its light
+-- taken over. pos: { x, y, z } or a vector. opts: color { r, g, b } from 0 to 1, intensity, range (metres
+-- the light reaches), shadows (true casts them), spot (an angle in degrees makes it a spotlight, nil an
+-- all-round light) with yaw and pitch for where a spotlight points. Answers a light with :set(opts),
+-- :move(pos), :alive() and :remove(), or nil and a reason.
+function M.light(pos, opts)
+	local at = vector(pos)
+	if not at then return nil, "bad_type" end
+	local st = game.state()
+	local proxy = type(st) == "table" and st.world_proxy
+	if not (proxy and game.in_mission()) then return nil, "not_in_mission" end
+	local U, W = game.global("Unit"), game.global("World")
+	local world = proxy:get_world()
+	local ok, unit = pcall(W.spawn_unit, world, M.LIGHT_UNIT, at)
+	if not ok or not unit then return nil, "unknown" end
+	pcall(U.set_unit_visibility, unit, false)
+	pcall(U.disable_physics, unit)
+	local light = nil
+	local found, has = pcall(U.has_light, unit, M.LIGHT_NAME)
+	if found and has then
+		light = U.light(unit, M.LIGHT_NAME)
+	else
+		local counted, n = pcall(U.num_lights, unit)
+		if counted and type(n) == "number" and n > 0 then
+			local got, l = pcall(U.light, unit, 0)
+			if got then light = l end
+		end
+	end
+	if not light then
+		pcall(W.destroy_unit, world, unit)
+		return nil, "no_light"
+	end
+	local h = setmetatable({ unit = unit, world = world, light = light, opts = {} }, LightHandle)
+	pcall(game.global("Light").set_enabled, light, true)
+	h:set(opts or {})
+	return h
+end
+
+function LightHandle:alive()
+	if not self.unit then return false end
+	local ok, alive = pcall(game.global("Unit").alive, self.unit)
+	return ok and alive == true
+end
+
+-- Changes any of the light's opts, as M.light takes them.
+function LightHandle:set(opts)
+	if type(opts) ~= "table" or not self:alive() then return false end
+	local L, V3 = game.global("Light"), game.global("Vector3")
+	local o = self.opts
+	for k, v in pairs(opts) do o[k] = v end
+	local c = type(o.color) == "table" and o.color or { 1, 1, 1 }
+	local r, g, b = finite_or(c[1] or c.r, 1), finite_or(c[2] or c.g, 1), finite_or(c[3] or c.b, 1)
+	pcall(L.set_color, self.light, V3(r, g, b))
+	pcall(L.set_intensity, self.light, math.max(0, finite_or(o.intensity, 1)))
+	pcall(L.set_falloff_start, self.light, 0)
+	pcall(L.set_falloff_end, self.light, math.max(0.5, finite_or(o.range, 8)))
+	pcall(L.set_casts_shadows, self.light, o.shadows == true)
+	local spot = finite(o.spot) and o.spot > 0 and o.spot or nil
+	if (spot ~= nil) ~= (self.spot_set == true) then
+		pcall(L.set_type, self.light, spot and L.SPOT or L.OMNI)
+		self.spot_set = spot ~= nil
+	end
+	if spot then
+		pcall(L.set_spot_angle_start, self.light, 0)
+		pcall(L.set_spot_angle_end, self.light, math.rad(math.min(spot, 170) / 2))
+		local U = game.global("Unit")
+		pcall(U.teleport_local_rotation, self.unit, 0, rotation_of(finite_or(o.yaw, 0), finite_or(o.pitch, -45), 0))
+		self:settle()
+	end
+	return true
+end
+
+-- The unit's scene node at once, as a stopped world doesn't move it. move() and set() do it themselves.
+function LightHandle:settle()
+	pcall(game.global("World").update_unit, self.world, self.unit)
+end
+
+function LightHandle:move(pos)
+	local at = vector(pos)
+	if not at or not self:alive() then return false end
+	game.global("Unit").teleport_local_position(self.unit, 0, at)
+	self:settle()
+	return true
+end
+
+function LightHandle:remove()
+	if self:alive() then pcall(game.global("World").destroy_unit, self.world, self.unit) end
+	self.unit = nil
+end
+
+local slowed = nil
+
+-- How fast this player's game runs: 0 stops it, 1 is normal speed, anything between is slow motion. Only
+-- with nobody else in the lobby, as another player's game would part from this one. A change of screen
+-- sets it back to 1.
+function M.time_scale(scale)
+	if not finite(scale) or scale < 0 or scale > 1 then return false, "out_of_range" end
+	if scale < 1 and not game.alone() then return false, "solo_only" end
+	if scale >= 1 then
+		if slowed then
+			rawset(_G, "PAUSED", false)
+			rawset(_G, "TIME_SCALE", 1)
+		end
+		slowed = nil
+		return true
+	end
+	slowed = { state = game.state(), scale = scale }
+	rawset(_G, "PAUSED", scale == 0)
+	rawset(_G, "TIME_SCALE", scale == 0 and 1 or scale)
+	return true
+end
+
+-- 1 unless time_scale changed it.
+function M.time_now()
+	return slowed and slowed.scale or 1
+end
+
+-- Whether a unit is drawn, on this machine only: false hides it, shadow and all. Nothing else about it
+-- changes.
+function M.visible(unit, on)
+	local U = game.global("Unit")
+	local ok, alive = pcall(U.alive, unit)
+	if not (ok and alive) then return false, "no_target" end
+	return (pcall(U.set_unit_visibility, unit, on ~= false))
+end
+
+-- A Helldiver's flashlight, on this machine only, as the game lights it on a night mission.
+function M.flashlight(unit, on)
+	local U = game.global("Unit")
+	local ok, alive = pcall(U.alive, unit)
+	if not (ok and alive) then return false, "no_target" end
+	return (pcall(U.flow_event, unit, on and "flashlight_on" or "flashlight_off"))
+end
+
+local TIMES = { dawn = true, day = true, dusk = true, night = true }
+local SWAMP = { swamp = true, swamp_dawn = true, swamp_day = true, swamp_dusk = true, swamp_night = true }
+
+local function time_known(name, level)
+	return TIMES[name] or (SWAMP[name] and type(level) == "table" and level.environment_name == "forest")
+end
+
+-- The time of day of the mission's look: "dawn", "day", "dusk" or "night", or nil for the mission's own.
+-- blend, from 0 to 1, mixes in a second one, `towards`: dusk part way to night, say. Forest planets also
+-- have "swamp", "swamp_dawn", "swamp_day", "swamp_dusk" and "swamp_night". This player's only.
+function M.time_of_day(name, towards, blend)
+	local st = game.state()
+	local vp = type(st) == "table" and st.viewport
+	local level = type(st) == "table" and st.generated_level
+	if not (vp and game.in_mission()) then return false, "not_in_mission" end
+	if name == nil then
+		local own = type(level) == "table" and level.shading_environment_setting
+		if own then vp:set_shading_environment_settings(own, 1) end
+		return true
+	end
+	if not time_known(name, level) then return false, "wrong_environment" end
+	if towards ~= nil and not time_known(towards, level) then return false, "wrong_environment" end
+	local w = finite_or(blend, 0)
+	w = math.max(0, math.min(1, w))
+	if towards and w > 0 then
+		vp:set_shading_environment_settings(name, 1, towards, w)
+	else
+		vp:set_shading_environment_settings(name, 1)
+	end
+	return true
+end
+
+-- From main.lua, once a frame: what a change of screen gives back.
+function M.tick()
+	local st = game.state()
+	if held and held.state ~= st then
+		held = nil
+	end
+	if slowed and slowed.state ~= st then
+		slowed = nil
+		rawset(_G, "PAUSED", false)
+		rawset(_G, "TIME_SCALE", 1)
+	end
+end
+
+-- From main.lua: the wrap that moves a taken camera. A wrap, so it runs in any lobby, for client mods.
+function M.install()
+	local wrap = obsidian.wrap or obsidian.hook
+	wrap("CameraManager", "update", function(original, self, ...)
+		if held then
+			if held.state ~= game.state() then
+				held = nil
+			else
+				local ok, err = pcall(drive, self)
+				if ok then return end
+				obsidian.log("camera: " .. tostring(err))
+				pcall(give_back, self)
+				held = nil
+			end
+		end
+		return original(self, ...)
+	end)
 end
 
 return M

@@ -26,8 +26,10 @@ INTERNAL = {
     "game": {"tick", "plugin", "session_mode"},
     "gear": {"tick"},
     "map": {"install", "draw", "reset"},
-    "menu": {"install", "frame"},
-    "mod_settings": {"install", "tick"},
+    "menu": {"install", "frame", "runner", "panel_mouse"},
+    "mod_settings": {"install", "tick", "run_chosen"},
+    "world": {"install", "tick"},
+    "capture": {"tick", "reset", "hold_screen", "find_window", "save_now", "area"},
     "mission": {"on_mission_start_update"},
     "music": {"tick", "after_machine_enter"},
     "stratagems": {"find", "call_unowned", "define", "custom"},
@@ -35,9 +37,9 @@ INTERNAL = {
 # Calls one module makes public under another table's name.
 RENAMED = {"custom": ("stratagems", {"define": "define", "list": "custom", "unlock": "unlock", "lock": "lock",
                                       "is_unlocked": "is_unlocked"})}
-OBJECTS = {"Bot": "bot", "Drone": "drone", "Prop": "prop", "Marker": "marker", "Page": "page"}
+OBJECTS = {"Bot": "bot", "Drone": "drone", "Prop": "prop", "Marker": "marker", "Page": "page", "Panel": "panel", "LightHandle": "light"}
 
-FUNC = re.compile(r"^function (M|Bot|Drone|Prop|Marker|Page)[.:]([A-Za-z_]\w*)\s*\(([^)]*)\)")
+FUNC = re.compile(r"^function (M\.camera|M|Bot|Drone|Prop|Marker|Page|Panel|LightHandle)[.:]([A-Za-z_]\w*)\s*\(([^)]*)\)")
 CONST = re.compile(r"^M\.([A-Z][A-Z_]*)\s*=")
 ALIAS = re.compile(r"^M\.([a-z_]\w*)\s*=\s*([A-Za-z_][\w.]*)\s*$")
 EFFECT = re.compile(r'(?:effects\.define\(\{\s*id\s*=\s*|field_effect\(|switch_effect\()"([a-z_]+)"')
@@ -116,7 +118,12 @@ def render():
         if heads.get(name):
             out += [heads[name], ""]
         for owner, fn, args, note in calls[name]:
-            prefix = f"api.{name}." if owner == "M" else OBJECTS[owner] + ":"
+            if owner == "M":
+                prefix = f"api.{name}."
+            elif owner == "M.camera":
+                prefix = f"api.{name}.camera."
+            else:
+                prefix = OBJECTS[owner] + ":"
             sig = f"`{prefix}{fn}({args})`" if args is not None else f"`{prefix}{fn}`"
             out.append(f"- {sig}" + (f": {note}" if note else ""))
     out += ["", "### Effects", "", "Every effect id, for `api.effects.set(id, value)`, with the module that defines it. "

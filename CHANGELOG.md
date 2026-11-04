@@ -2,6 +2,20 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.23.0
+
+- New: `api.world.camera.take()`, `set(pose)`, `get()` and `release()`: a mod holds the camera and places it every frame by position, yaw, pitch, roll and field of view, with or without perspective. Client mods, any lobby.
+- New: `api.world.light(pos, opts)` puts a light in the level that only this player sees, all-round or a spotlight, with color, intensity, range and shadows.
+- New: `api.world.time_scale(scale)` stops or slows this player's game, alone in the lobby only. A new screen sets it back.
+- New: `api.world.time_of_day(name, towards, blend)` sets the mission's time of day, mixing two of them.
+- New: `api.world.visible(unit, on)` hides or shows a unit, and `api.world.flashlight(unit, on)` lights a Helldiver's flashlight.
+- New: `api.world.shading` takes 14 more names from the game's shaders: dust, cloud shadows, glow, reflections and the vignette's shape.
+- New: `api.capture` saves the game's picture as a PNG or JPEG in the player's Pictures folder, with every mod's drawing held back, cut to an aspect ratio or a crop.
+- New: `api.menu.panel(spec)`, a mod's own window with tabs down one side of the screen, which leaves W A S D, Q, E and the right mouse button to the mod.
+- New: `page:slider(label, opts)`, a number on a bar the mouse drags. A choice can show a color swatch, and `format` can be a function.
+- New: `api.mod_settings.pause_row(id, label, fn, opts)` adds a row to the pause menu under Mods, which closes the pause menu and runs `fn`.
+- Changed: `api.music.play(track, opts)` loads the ship's and the main menu's music in a mission, and takes `opts.db` for the track's own level.
+
 ## 1.22.1
 
 - Changed: a new image beside the mod in Obsidian's mod list.

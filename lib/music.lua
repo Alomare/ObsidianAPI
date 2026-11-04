@@ -25,6 +25,13 @@ M.TRACKS = { "music_theme", "music_bridge", "music_credits", "music_mission_star
 local held = nil      -- the track asked for, or false for silence; nil leaves the music to the game
 local paused = false
 local current = nil   -- this screen's place, while its state lasts
+local level = 1       -- the held track's own volume, 0 to 1
+
+-- The package that holds each menu track's sound bank. A screen without the bank can load it: a mission
+-- has none of them. Once loaded a package stays until the game unloads it, at the ship or the menu that
+-- loads it too (abstract_base_state.lua:57).
+M.PACKAGES = { music_bridge = "resource_packages/menu", music_theme = "resource_packages/main_menu", music_credits = "resource_packages/main_menu" }
+local loading = nil   -- the package a held track waits for
 
 local function timpani() return game.global("TimpaniWorld") end
 
@@ -81,7 +88,7 @@ end
 
 local function start(p, track)
 	local id = timpani().trigger_event(p.world, track)
-	set_volume(p, id, (paused and not p.own) and 0 or 1)
+	set_volume(p, id, (paused and not p.own) and 0 or level)
 	return id
 end
 
@@ -129,7 +136,7 @@ local function set_paused(p, on)
 		return
 	end
 	local v = on and 0 or 1
-	set_volume(p, p.mine, v)
+	set_volume(p, p.mine, on and 0 or level)
 	if held == nil then
 		for _, id in ipairs(theirs(p)) do set_volume(p, id, v) end
 	end
@@ -140,6 +147,17 @@ end
 function M.tick()
 	local p = place()
 	if not p then return end
+	if loading then
+		local pm = game.global("Boot").package_manager
+		if not pm:is_package_online(loading) then
+			-- Still loading: the game's own music stays down meanwhile.
+			if held and p.machine then
+				for _, id in ipairs(theirs(p)) do set_volume(p, id, 0) end
+			end
+			return
+		end
+		loading = nil
+	end
 	if p.paused ~= paused then
 		p.paused = paused
 		set_paused(p, paused)
@@ -179,22 +197,45 @@ function M.tracks()
 end
 
 -- What plays: place ("menu", "ship", "mission" or "screen", nil where there's no music), track (the
--- held one, nil while the game picks or while silence is held), held (true while either is) and paused.
+-- held one, nil while the game picks or while silence is held), held (true while either is), paused,
+-- and loading (true while a held track waits for its package).
 function M.now()
 	local p = place()
-	return { place = p and p.name, track = held or nil, held = held ~= nil, paused = paused }
+	return { place = p and p.name, track = held or nil, held = held ~= nil, paused = paused, loading = loading ~= nil }
 end
 
 -- Plays a music event in place of the game's and holds it, on this screen and the next, until
--- release(). It loops. Only a track this screen has can start it: a screen without it is silent.
-function M.play(track)
+-- release(). It loops. A screen without the track is silent, except for the menu tracks of PACKAGES:
+-- those load their package first, in the background, and start once it's there, silent meanwhile (the
+-- answer is then true, "loading"). opts.db: the track's own volume in decibels, 0 as mixed, down to -60.
+function M.play(track, opts)
 	if type(track) ~= "string" then return false, "unknown_event" end
 	local p = place()
 	if not p then return false, "no_music" end
-	if not has(p, track) then return false, "unknown_event" end
+	local db = type(opts) == "table" and tonumber(opts.db) or 0
+	if db ~= db or db > 0 or db < -60 then return false, "out_of_range" end
+	local wait = nil
+	if not has(p, track) then
+		local package = M.PACKAGES[track]
+		local boot = game.global("Boot")
+		local pm = type(boot) == "table" and boot.package_manager
+		if not (package and pm) then return false, "unknown_event" end
+		-- Asking again for a package on its way does nothing (PackageManager.load_package).
+		if not pm:is_package_online(package) then
+			pm:load_package(package, false)
+			wait = package
+		end
+	end
 	if p.mine ~= nil and p.owner then p.quiet = p.mine end
 	stop_mine(p)
-	held = track
+	held, loading, level = track, wait, 10 ^ (db / 20)
+	if wait then
+		-- Silence meanwhile: the game's own music stays down.
+		if p.machine then
+			for _, id in ipairs(theirs(p)) do set_volume(p, id, 0) end
+		end
+		return true, "loading"
+	end
 	apply(p)
 	return true
 end
@@ -213,7 +254,7 @@ end
 -- Gives the music back to the game.
 function M.release()
 	local p = place()
-	held = nil
+	held, loading, level = nil, nil, 1
 	if p then give_back(p) end
 	return true
 end

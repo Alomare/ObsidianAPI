@@ -11,5 +11,6 @@
   "menu_key_filter": "Filtrer",
   "menu_key_reset": "Réinitialiser",
   "menu_key_confirm": "Valider",
-  "menu_key_cancel": "Annuler"
+  "menu_key_cancel": "Annuler",
+  "menu_key_tabs": "Onglets"
 }

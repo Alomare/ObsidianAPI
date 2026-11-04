@@ -18,6 +18,7 @@
 -- before the game knows its language.
 local game = obsidian.module("lib/game")
 local ui = obsidian.module("lib/ui")
+local menu = obsidian.module("lib/menu")
 
 -- BINDS: rows can be bound to the mod's options (`option = true`), and words can be tables by language.
 local M = { pages = {}, order = {}, BINDS = true }
@@ -32,6 +33,12 @@ local WORDS = {
 local SELF = obsidian.caller()
 local saved = {}
 local dirty = {}
+
+-- Rows of the pause menu that mods add under the Mods row, in the order they asked: { id, owner, label,
+-- fn, when, run }. A chosen one closes the pause menu, then its fn runs as its mod, from this library's
+-- frame, outside the menu's own input.
+M.rows = {}
+local chosen = nil -- { row, screen } between the menu's input and the frame
 
 -- The storage key of a row: its own, or the pending value of the mod's option.
 local function key(page, row) return (row.option and "option/" or "mod_settings/") .. page.owner .. "/" .. row.id end
@@ -343,16 +350,108 @@ local function screens(main)
 	return true
 end
 
--- The row goes under the game's Settings, and only where a page has rows.
+local function row_key(row) return "obsidian_pause_row_" .. row.n end
+
+-- The pause rows to show on this pause menu: those whose when(screen) agrees, screen being the menu's
+-- state, "game" in a mission and "menu" on the ship.
+local function pause_rows(main)
+	local out = {}
+	for _, row in ipairs(M.rows) do
+		local yes = true
+		if row.when then
+			local ok, v = row.run(row.when, main.state_name)
+			yes = ok and v == true
+		end
+		if yes then out[#out + 1] = row end
+	end
+	return out
+end
+
+local function insert_row(main, at, name)
+	table.insert(main.options, at, { name = name })
+	if (main.selected_option or 1) >= at then main.selected_option = (main.selected_option or 1) + 1 end
+end
+
+-- The Mods row goes under the game's Settings, and only where a page has rows. The mods' own rows go
+-- under it, or under Settings without it.
 local function add_entry(main)
-	if #shown() == 0 or type(main.options) ~= "table" then return end
+	if type(main.options) ~= "table" then return end
 	local at = #main.options + 1
 	for i, o in ipairs(main.options) do
 		if o.name == "menu_settings" then at = i + 1 end
 	end
-	if not screens(main) then return end
-	table.insert(main.options, at, { name = ENTRY })
-	if (main.selected_option or 1) >= at then main.selected_option = (main.selected_option or 1) + 1 end
+	if #shown() > 0 and screens(main) then
+		insert_row(main, at, ENTRY)
+		at = at + 1
+	end
+	for _, row in ipairs(pause_rows(main)) do
+		insert_row(main, at, row_key(row))
+		at = at + 1
+	end
+end
+
+-- A row of the pause menu, under the Mods row, that closes the pause menu and runs fn() when chosen.
+-- label: words, or a table by language. opts.when(screen): true where the row shows, screen being
+-- "game" in a mission or "menu" on the ship; without it the row shows on every pause menu. Asking again
+-- with the same id replaces the row.
+function M.pause_row(id, label, fn, opts)
+	check_id(id)
+	if type(fn) ~= "function" then error("mod_settings: a pause row needs a function", 2) end
+	opts = opts or {}
+	local owner = obsidian.caller() or "?"
+	local row = { id = id, owner = owner, label = check_words(label, "a label"), fn = fn,
+		when = type(opts.when) == "function" and opts.when or nil, run = menu.runner() }
+	for i, r in ipairs(M.rows) do
+		if r.owner == owner and r.id == id then
+			row.n = r.n
+			M.rows[i] = row
+			return true
+		end
+	end
+	M.next_row = (M.next_row or 0) + 1
+	row.n = M.next_row
+	M.rows[#M.rows + 1] = row
+	return true
+end
+
+-- Takes a pause row away.
+function M.remove_pause_row(id)
+	local owner = obsidian.caller() or "?"
+	for i, r in ipairs(M.rows) do
+		if r.owner == owner and r.id == id then
+			table.remove(M.rows, i)
+			return true
+		end
+	end
+	return false
+end
+
+-- The words of the rows, as the pause menu writes them.
+local function entry_words()
+	local texts = { [ENTRY] = words() }
+	for _, row in ipairs(M.rows) do texts[row_key(row)] = caps(say(row.label)) end
+	return texts
+end
+
+local function row_named(name)
+	for _, row in ipairs(M.rows) do
+		if row_key(row) == name then return row end
+	end
+	return nil
+end
+
+-- From the frame: a chosen pause row closes the menu, as Resume does, then runs.
+function M.run_chosen()
+	local c = chosen
+	if not c then return end
+	chosen = nil
+	local parent = c.screen and c.screen.parent
+	if type(parent) == "table" and parent.active_screen == c.screen and type(parent.pop_menu) == "function" then
+		local ok, err = pcall(parent.pop_menu, parent)
+		if not ok then obsidian.log("mod_settings: closing the pause menu: " .. tostring(err)) end
+	end
+	local ok, err = c.row.run(c.row.fn)
+	if not ok and err ~= "off" then obsidian.log("mod_settings: " .. c.row.owner .. " pause row: " .. tostring(err)) end
 end
 
 function M.install()
@@ -367,7 +466,7 @@ function M.install()
 		return unpack(r)
 	end)
 	obsidian.wrap("MenuScreenMain", "update", function(original, self, ...)
-		return ui.with_texts({ [ENTRY] = words() }, original, self, ...)
+		return ui.with_texts(entry_words(), original, self, ...)
 	end)
 	-- Choosing our row: the pause menu asks MenuScreenBase.was_option_selected about itself, and gets
 	-- false after our screen opens, so none of its own rows acts.
@@ -382,6 +481,12 @@ function M.install()
 				if o and o.name == ENTRY then
 					self:play_sound_accept(nil, self.user_pad_number)
 					self:push_menu(LIST, {})
+					return false
+				end
+				local row = o and row_named(o.name)
+				if row then
+					self:play_sound_accept(nil, self.user_pad_number)
+					chosen = { row = row, screen = self }
 					return false
 				end
 			end

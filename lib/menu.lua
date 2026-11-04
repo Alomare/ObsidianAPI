@@ -54,7 +54,21 @@ local GUIDE = {
 local TYPING_GUIDE = { { keys = { "Enter" }, text = "menu_key_confirm" }, { keys = { "Esc" }, text = "menu_key_cancel" } }
 local ARROWS = { up = true, down = true, left = true, right = true }
 local REPEATS = { up = true, down = true, left = true, right = true }
-local ADJUSTABLE = { number = true, choice = true, toggle = true }
+local ADJUSTABLE = { number = true, choice = true, toggle = true, slider = true }
+
+-- A panel leaves W A S D, Q, E and the right mouse button to its mod, which steers something with them
+-- while the panel is open: a camera, say. Tab moves through its tabs, Shift and Tab back.
+local PANEL_KEYS = {
+	up = { "up" }, down = { "down" }, left = { "left" }, right = { "right" },
+	select = { "enter" }, back = { "esc" }, filter = { "tab" }, reset = { "r" },
+}
+local PANEL_GUIDE = {
+	{ keys = { "up", "down" }, text = "menu_key_move" },
+	{ keys = { "left", "right" }, text = "menu_key_change" },
+	{ keys = { "Tab" }, text = "menu_key_tabs" },
+	{ keys = { "Esc" }, text = "menu_key_back" },
+}
+local PANEL_W, PANEL_MIN_W, PANEL_GAP, TAB_H, SLIDER_W, SWATCH = 390, 300, 18, 30, 104, 11
 
 -- Obsidian's default theme.
 local GOLD, WHITE, GREY, FAINT, RED, DARK = { 240, 180, 41 }, { 236, 235, 231 }, { 180, 181, 178 }, { 158, 160, 157 }, { 255, 155, 94 }, { 15, 17, 19 }
@@ -73,6 +87,8 @@ local M = {
 	shown = false, roots = {}, owners = {}, closed = {}, root = nil, folder = nil, nav = true, stack = {}, toasts = {}, keys = {},
 	kit = nil, widths = {}, width_count = 0, field = nil, state_name = nil, hits = nil, win = nil, drag = nil, hold = nil,
 	cursor = nil, closing = false, frames = 0, toggled = nil, status = {}, names = {}, save = {},
+	-- The open panel, if any, and whether a screenshot wants the screen clear (lib/capture.lua).
+	panel_on = nil, held_back = false,
 }
 
 local function pack(...) return { n = select("#", ...), ... } end
@@ -109,6 +125,14 @@ local function call_as(owner, fn, ...)
 	local r = owner and runners[owner]
 	if not r then return pcall(fn, ...) end
 	return r.call(fn, ...)
+end
+
+-- A way back into the calling mod for this library's other parts: made while that mod's code runs, it
+-- calls a function later as that mod, protected. Answers ok and the results, or false and the error.
+function M.runner()
+	local owner = obsidian.caller() or SELF
+	if not runners[owner] then runners[owner] = make_runner(owner) end
+	return function(fn, ...) return call_as(owner, fn, ...) end
 end
 
 -- A mod's function, as that mod. An error is a log line and false: a failing row never counts against
@@ -199,8 +223,18 @@ function Page:label(label, opts) return add_item(self, "label", label, opts) end
 function Page:toggle(label, opts) return add_item(self, "toggle", label, opts) end
 -- A number. opts: get(), set(value), min, max, step (Shift takes ten), format, default.
 function Page:number(label, opts) return add_item(self, "number", label, opts) end
--- One of opts.choices, a list of { id, label }. opts: get(), set(id), default.
+-- One of opts.choices, a list of { id, label }. A choice's swatch, { r, g, b } from 0 to 255, shows
+-- beside its label. opts: get(), set(id), default.
 function Page:choice(label, opts) return add_item(self, "choice", label, opts) end
+-- A number on a bar that the mouse drags. opts: get(), set(value), min, max (both needed), step,
+-- format, default. The keys step it as they step a number.
+function Page:slider(label, opts)
+	opts = opts or {}
+	if type(opts.min) ~= "number" or type(opts.max) ~= "number" or opts.max <= opts.min then
+		return add_item(self, "label", label)
+	end
+	return add_item(self, "slider", label, opts)
+end
 
 -- A row that calls fn(). A string it returns becomes a toast.
 function Page:action(label, fn, opts)
@@ -476,7 +510,7 @@ end
 -- changes and while the chat is typing.
 function M.open()
 	if M.shown then return true end
-	if not can_open() then return false end
+	if M.panel_on or not can_open() then return false end
 	local ok, err = pcall(function()
 		ensure_interfaces()
 		hold_focus()
@@ -626,7 +660,7 @@ local function activate(frame, it)
 	if it.kind == "toggle" then
 		local ok, value = run(frame.owner, "get", it.get)
 		if ok then write(frame, it, not value) end
-	elseif it.kind == "number" then
+	elseif it.kind == "number" or it.kind == "slider" then
 		begin_number_entry(frame, it)
 	elseif it.kind == "input" then
 		begin_text_entry(frame, it)
@@ -685,7 +719,7 @@ end
 
 local function adjust(frame, it, direction)
 	if not check_enabled(frame, it) then return end
-	if it.kind == "number" then
+	if it.kind == "number" or it.kind == "slider" then
 		step_number(frame, it, direction)
 	elseif it.kind == "choice" then
 		step_choice(frame, it, direction)
@@ -706,16 +740,16 @@ local function move(frame, list, direction)
 	end
 end
 
-local function read_key(name, dt)
-	local st = M.keys[name]
+local function read_key(name, dt, keys, prefix)
+	local st = M.keys[prefix .. name]
 	local kb = global("Keyboard")
 	if not st then
 		st = { index = {}, wait = 0 }
-		for _, key in ipairs(NAV_KEYS[name]) do
+		M.keys[prefix .. name] = st
+		for _, key in ipairs(keys[name]) do
 			local ok, i = pcall(kb.button_index, key)
 			if ok and i then st.index[#st.index + 1] = i end
 		end
-		M.keys[name] = st
 	end
 	local pressed, held = false, false
 	for _, i in ipairs(st.index) do
@@ -737,14 +771,16 @@ local function read_key(name, dt)
 	return false
 end
 
-local function read_nav(dt)
+-- keys: NAV_KEYS, or a panel's PANEL_KEYS, each read with a state of its own under `prefix`.
+local function read_nav(dt, keys, prefix)
+	keys, prefix = keys or NAV_KEYS, prefix or ""
 	local ev = {}
-	for name in pairs(NAV_KEYS) do ev[name] = read_key(name, dt) end
+	for name in pairs(keys) do ev[name] = read_key(name, dt, keys, prefix) end
 	local pads = global("PadManager")
 	for i = 1, #(pads and pads.users or {}) do
 		local ok, d = pcall(pads.get_inputs, pads, IFACE, i)
 		if ok and type(d) == "table" then
-			for name in pairs(NAV_KEYS) do
+			for name in pairs(keys) do
 				if d[name] then ev[name] = true end
 			end
 		end
@@ -877,12 +913,23 @@ local function control_of(frame, it)
 	local ok, value = run(frame.owner, "get", it.get)
 	if not ok then return "error" end
 	if it.kind == "toggle" then return "switch", value and true or false end
+	local function shown(v)
+		if type(it.format) == "function" then
+			local fine, s = run(frame.owner, "format", it.format, v)
+			return fine and tostring(s) or "?"
+		end
+		return string.format(it.format or "%g", v)
+	end
 	if it.kind == "number" then
 		if type(value) ~= "number" then return "stepper", "-" end
-		return "stepper", string.format(it.format or "%g", value)
+		return "stepper", shown(value)
+	end
+	if it.kind == "slider" then
+		if type(value) ~= "number" then return "slider", "-", nil end
+		return "slider", shown(value), value
 	end
 	for _, c in ipairs(it.choices or {}) do
-		if c.id == value then return "stepper", tostring(c.label) end
+		if c.id == value then return "stepper", tostring(c.label), c.swatch end
 	end
 	return "stepper", tostring(value)
 end
@@ -1051,9 +1098,10 @@ local function draw_switch(right, y, on)
 	kit:rect(on and right - inset - knob or right - SWITCH_W + inset, y + inset, knob, SWITCH_H - inset * 2, on and DARK or GREY)
 end
 
-local function draw_stepper(right, y, row, value, mx, my)
+local function draw_stepper(right, y, row, value, mx, my, swatch)
 	local kit = M.kit
-	local w = math.max(width_of(value, BODY) + STEP_W * 2 + 10, STEPPER_W)
+	local extra = type(swatch) == "table" and SWATCH + 6 or 0
+	local w = math.max(width_of(value, BODY) + STEP_W * 2 + 10 + extra, STEPPER_W)
 	local left = right - w
 	kit:layer(LAYER_MARK)
 	kit:panel({ left, y + 3, w, ROW_H - 6, cut = 4, corners = "br", fill = FIELD })
@@ -1062,8 +1110,38 @@ local function draw_stepper(right, y, row, value, mx, my)
 	kit:layer(LAYER_MARK + 1)
 	kit:glyph("back", left + 5, y + (ROW_H - 11) / 2, 11, inside(row.minus, mx, my) and GOLD or GREY)
 	kit:glyph("forward", right - STEP_W + 5, y + (ROW_H - 11) / 2, 11, inside(row.plus, mx, my) and GOLD or GREY)
-	put(value, left + w / 2, mid(y, ROW_H, BODY), BODY, WHITE, "center")
+	local cx = left + w / 2 + extra / 2
+	if extra > 0 then
+		local sx = cx - width_of(value, BODY) / 2 - extra
+		kit:rect(sx - 1, y + (ROW_H - SWATCH) / 2 - 1, SWATCH + 2, SWATCH + 2, RESTING)
+		kit:layer(LAYER_MARK + 2)
+		kit:rect(sx, y + (ROW_H - SWATCH) / 2, SWATCH, SWATCH, { swatch[1] or 255, swatch[2] or 255, swatch[3] or 255 })
+		kit:layer(LAYER_MARK + 1)
+	end
+	put(value, cx, mid(y, ROW_H, BODY), BODY, WHITE, "center")
 	return w
+end
+
+-- A bar with a knob at the value's place, the value written to its right. The bar's area goes in
+-- row.track for the mouse.
+local function draw_slider(right, y, row, text, value, lit)
+	local kit, it = M.kit, row.it
+	local text_w = math.max(width_of(text, SMALL), 30)
+	local track_right = right - text_w - 10
+	local left = track_right - SLIDER_W
+	row.track = { x = left - 6, y = y, w = SLIDER_W + 12, h = ROW_H, left = left, width = SLIDER_W }
+	local share = 0
+	if type(value) == "number" then share = math.max(0, math.min(1, (value - it.min) / (it.max - it.min))) end
+	local cy = y + ROW_H / 2
+	kit:layer(LAYER_MARK)
+	kit:rect(left, cy - 2, SLIDER_W, 4, FIELD)
+	kit:layer(LAYER_MARK + 1)
+	kit:rect(left, cy - 2, SLIDER_W * share, 4, lit and GOLD or GREY)
+	kit:layer(LAYER_MARK + 2)
+	kit:rect(left + SLIDER_W * share - 3, cy - 7, 6, 14, lit and GOLD or WHITE)
+	kit:layer(LAYER_MARK)
+	put(text, right, mid(y, ROW_H, SMALL), SMALL, WHITE, "right")
+	return right - left + 6
 end
 
 local function draw_button(right, y, over)
@@ -1078,12 +1156,14 @@ end
 -- Draws what a row shows on its right, and answers how wide that is.
 local function draw_control(frame, row, right, mx, my, lit)
 	local kit, y, it = M.kit, row.y, row.it
-	local control, value = control_of(frame, it)
+	local control, value, extra = control_of(frame, it)
 	if control == "switch" then
 		draw_switch(right, y + (ROW_H - SWITCH_H) / 2, value)
 		return SWITCH_W
 	elseif control == "stepper" then
-		return draw_stepper(right, y, row, value, mx, my)
+		return draw_stepper(right, y, row, value, mx, my, extra)
+	elseif control == "slider" then
+		return draw_slider(right, y, row, value, extra, lit)
 	elseif control == "run" then
 		return draw_button(right, y, lit)
 	elseif control == "open" or control == "input" then
@@ -1148,7 +1228,7 @@ end
 -- The guide from x, as many entries as fit before `right`. Answers where it stopped.
 local function draw_guide(guide, x, y, right)
 	for _, entry in ipairs(guide) do
-		local label = word(entry.text)
+		local label = entry.label or word(entry.text)
 		local need = width_of(label, SMALL) + 3
 		for _, key in ipairs(entry.keys) do need = need + keycap_w(key) + 3 end
 		if x + need > right then break end
@@ -1182,7 +1262,7 @@ local function draw_field(row, right, left)
 	return w
 end
 
-local function draw_foot(frame, list, shown, left, right, bottom)
+local function draw_foot(frame, list, shown, left, right, bottom, panel)
 	local kit, hits = M.kit, M.hits
 	local foot_y = bottom + FOOT_H
 	kit:layer(LAYER_BACK + 2)
@@ -1208,10 +1288,11 @@ local function draw_foot(frame, list, shown, left, right, bottom)
 	else
 		local more = #list > shown and string.format("%d/%d", frame.selected, #list) or ""
 		local count_w = more ~= "" and width_of(more, SMALL) + 8 or 0
-		draw_guide(GUIDE, left + PAD, guide_y, right - CUT - PAD - count_w)
+		draw_guide(panel and panel.guide or GUIDE, left + PAD, guide_y, right - CUT - PAD - count_w)
 		kit:layer(LAYER_MARK)
 		if more ~= "" then put(more, right - CUT - PAD, bottom + 7, SMALL, FAINT, "right") end
 	end
+	if panel then return end
 
 	-- The grip that resizes the window, along the folded corner.
 	hits.grip = { x = right - GRIP, y = bottom, w = GRIP, h = GRIP }
@@ -1340,18 +1421,25 @@ local function draw_toasts(dt)
 	local kit = M.kit
 	local left, _, right, top = visible()
 	local x, y = left + TOAST_GAP, top - TOAST_GAP - TOAST_H
-	-- The window opens in the same corner, and a message shouldn't cover what it's about.
-	if M.shown and M.win then x, y = M.win.x + M.win.w + TOAST_GAP, M.win.top - TOAST_H end
+	-- The window opens in the same corner, and a message shouldn't cover what it's about. Beside a panel,
+	-- the messages line up with its top, on the side away from the edge.
+	local panel = M.panel_on and not M.panel_on.hidden_now and M.panel_on.box and M.panel_on
+	if M.shown and M.win then
+		x, y = M.win.x + M.win.w + TOAST_GAP, M.win.top - TOAST_H
+	elseif panel then
+		x, y = panel.box.x + panel.box.w + TOAST_GAP, panel.box.top - TOAST_H
+	end
 	for _, t in ipairs(M.toasts) do
 		local s = fit(t.text, right - left - 80, BODY)
 		local w = width_of(s, BODY) + 26
-		x = math.min(x, right - w - TOAST_GAP)
+		local at = math.min(x, right - w - TOAST_GAP)
+		if panel and panel.side ~= "left" then at = panel.box.x - TOAST_GAP - w end
 		kit:opacity(math.min(t.left * 2, 1))
 		kit:layer(LAYER_TOAST)
-		kit:panel({ x, y, w, TOAST_H, cut = 6, corners = "br", fill = PANEL })
+		kit:panel({ at, y, w, TOAST_H, cut = 6, corners = "br", fill = PANEL })
 		kit:layer(LAYER_TOAST + 1)
-		kit:rect(x, y, 3, TOAST_H, GOLD)
-		put(s, x + 13, mid(y, TOAST_H, BODY), BODY, WHITE)
+		kit:rect(at, y, 3, TOAST_H, GOLD)
+		put(s, at + 13, mid(y, TOAST_H, BODY), BODY, WHITE)
 		y = y - TOAST_H - 4
 	end
 	kit:opacity(1)
@@ -1385,12 +1473,30 @@ local function scroll_to(frame, y)
 	frame.top = 1 + math.floor(math.max(0, math.min(at, 1)) * track.span + 0.5)
 end
 
+-- A slider's value where the mouse is along its bar, on its steps.
+local function slide_to(drag, x)
+	local it = drag.it
+	local share = math.max(0, math.min(1, (x - drag.left) / drag.width))
+	local value = it.min + share * (it.max - it.min)
+	if it.step and it.step > 0 then value = it.min + math.floor((value - it.min) / it.step + 0.5) * it.step end
+	value = math.max(it.min, math.min(it.max, value))
+	if drag.last == nil or math.abs(drag.last - value) > 1e-9 then
+		drag.last = value
+		write(drag.frame, it, value)
+	end
+end
+
 local function click_row(frame, row, x, y)
 	local it = row.it
 	if not selectable(it) then return end
 	M.nav = false
 	frame.selected = row.index
 	if inside(row.reset, x, y) then return reset_row(frame, it) end
+	if it.kind == "slider" and inside(row.track, x, y) then
+		if not check_enabled(frame, it) then return end
+		M.drag = { kind = "slider", it = it, frame = frame, left = row.track.left, width = row.track.width }
+		return slide_to(M.drag, x)
+	end
 	local direction = inside(row.minus, x, y) and -1 or (inside(row.plus, x, y) and 1 or nil)
 	if direction then
 		adjust(frame, it, direction)
@@ -1439,7 +1545,9 @@ end
 local function follow_drag(frame, drag, m)
 	if not m.held then
 		M.drag = nil
-		if drag.kind ~= "scroll" then M.save.window = true end
+		if drag.kind == "move" or drag.kind == "size" then M.save.window = true end
+	elseif drag.kind == "slider" then
+		slide_to(drag, m.x)
 	elseif drag.kind == "move" then
 		M.win.x, M.win.top = m.x - drag.x, m.y - drag.y
 	elseif drag.kind == "size" then
@@ -1456,9 +1564,12 @@ local function mouse_input(dt)
 	local moved = M.mouse_x ~= nil and (m.x ~= M.mouse_x or m.y ~= M.mouse_y)
 	M.mouse_x, M.mouse_y = m.x, m.y
 	if M.closing then
-		if not m.held and not m.right_held then M.close() end
+		if not m.held and not m.right_held then
+			if M.panel_on then M.panel_on:close() else M.close() end
+		end
 		return
 	end
+	if M.panel_on then return M.panel_mouse(m, moved, dt) end
 	-- A click elsewhere ends typing, as Enter does.
 	if M.field then
 		if m.left then
@@ -1503,6 +1614,364 @@ local function mouse_input(dt)
 	end
 end
 
+-- Panels. A panel is a mod's own window down one side of the screen, with tabs along its top, which the
+-- mod opens and closes from its code: the controls of a photo mode, say. Its rows are the pages' rows.
+-- It handles on the arrow keys, Enter, Esc, Tab and the left mouse button, and leaves W A S D, Q, E,
+-- the right mouse button and the wheel away from it to the mod, which reads them raw to steer something
+-- while the panel is open. The F6 window stays closed while a panel is open, and the game gets no input.
+local Panel = {}
+Panel.__index = Panel
+
+local function text_or(owner, value, what)
+	if value == nil then return "" end
+	return text_of(owner, value, what)
+end
+
+local function call_panel(p, what, fn, ...)
+	if type(fn) ~= "function" then return end
+	local ok, err = p.run(fn, ...)
+	if not ok and err ~= "off" then limited("panel " .. what, "menu: panel " .. what .. ": " .. tostring(err)) end
+end
+
+local function open_tab(p, i)
+	local tab = p.tabs[i]
+	if not tab then return end
+	p.tab = i
+	M.stack = {}
+	M.field, M.drag, M.hold = nil, nil, nil
+	push(text_of(p.owner, tab.title, "title"), tab.build, p.owner)
+end
+
+-- Opens the panel on its tab, closing the F6 window and any other panel. false while a panel can't open
+-- (as the window can't: logos, cutscenes, screen changes, the chat typing).
+function Panel:open(tab)
+	if M.panel_on == self then
+		if tab then open_tab(self, tab) end
+		return true
+	end
+	if not can_open() then return false end
+	if M.shown then M.close() end
+	if M.panel_on then M.panel_on:close() end
+	local ok, err = pcall(function()
+		ensure_interfaces()
+		hold_focus()
+	end)
+	if not ok then
+		limited("panel open", "menu: could not take input: " .. tostring(err))
+		pcall(drop_focus)
+		return false
+	end
+	ok, err = pcall(open_cursor)
+	if not ok then
+		M.cursor = nil
+		limited("cursor", "menu: could not show the cursor: " .. tostring(err))
+	end
+	M.panel_on, M.nav, M.closing = self, false, false
+	M.mouse_x, M.mouse_y = nil, nil
+	M.state_name = state_name()
+	self.hidden_now = false
+	open_tab(self, tab or self.tab or 1)
+	return true
+end
+
+-- Closes it, gives the game its input and cursor back, and calls the panel's on_close.
+function Panel:close()
+	if M.panel_on ~= self then return end
+	M.panel_on, M.closing, M.nav = nil, false, true
+	M.field, M.drag, M.hold, M.hits = nil, nil, nil, nil
+	M.mouse_x, M.mouse_y = nil, nil
+	M.stack = {}
+	local ok, err = pcall(drop_focus)
+	if not ok then limited("focus", "menu: could not release input: " .. tostring(err)) end
+	ok, err = pcall(close_cursor)
+	if not ok then limited("cursor back", "menu: could not restore the cursor: " .. tostring(err)) end
+	call_panel(self, "on_close", self.on_close)
+end
+
+function Panel:is_open() return M.panel_on == self end
+
+-- Hidden, it draws nothing and reads no keys, and the cursor goes, but the game still gets no input:
+-- the mod keeps steering. A screenshot hides every panel by itself.
+function Panel:hide(on)
+	self.hidden_now = on and true or false
+	if M.panel_on == self and M.cursor then
+		pcall(function()
+			local cursors = global("CursorManager")
+			if on then cursors:set_show_cursor(false) else show_cursor() end
+		end)
+	end
+end
+
+function Panel:hidden() return self.hidden_now == true end
+
+-- The tab that's open, by number.
+function Panel:tab_number() return self.tab or 1 end
+
+function Panel:select_tab(i)
+	if type(i) ~= "number" or not self.tabs[i] then return false end
+	if M.panel_on == self then open_tab(self, i) else self.tab = i end
+	return true
+end
+
+-- Builds the open tab again, as after an action that changes what it lists.
+function Panel:refresh()
+	if M.panel_on ~= self then return end
+	local frame = M.stack[#M.stack]
+	if frame then build(frame) end
+end
+
+-- Whether the mouse is over the panel now: the mod leaves the wheel and clicks there to the panel.
+function Panel:under_mouse()
+	if M.panel_on ~= self or self.hidden_now or not self.box or not M.mouse_x then return false end
+	return inside({ x = self.box.x, y = self.box.top - self.box.h, w = self.box.w, h = self.box.h }, M.mouse_x, M.mouse_y)
+end
+
+-- Whether the panel is taking the keys for itself now: typing into a row.
+function Panel:typing() return M.panel_on == self and M.field ~= nil end
+
+-- A panel, closed. spec: title (text or a function), tabs ({ { title = ..., build = function(page) end,
+-- icon = ... }, ... }), side ("right", the default, or "left"), width (in the game's 1280 by 720 design
+-- units, 390 by default), status (a function answering a short text for the title bar), guide (key
+-- guide entries before the panel's own: { keys = { "H" }, label = "Hide" }), on_close().
+function M.panel(spec)
+	if type(spec) ~= "table" or type(spec.tabs) ~= "table" or #spec.tabs == 0 then return nil, "bad_type" end
+	local owner = obsidian.caller() or SELF
+	if not runners[owner] then runners[owner] = make_runner(owner) end
+	local tabs = {}
+	for _, t in ipairs(spec.tabs) do
+		if type(t) == "table" and type(t.build) == "function" then tabs[#tabs + 1] = { title = t.title or "?", build = t.build, icon = t.icon } end
+	end
+	if #tabs == 0 then return nil, "bad_type" end
+	local guide = {}
+	for _, g in ipairs(type(spec.guide) == "table" and spec.guide or {}) do
+		if type(g) == "table" and type(g.keys) == "table" and g.label then guide[#guide + 1] = { keys = g.keys, label = tostring(g.label) } end
+	end
+	for _, g in ipairs(PANEL_GUIDE) do guide[#guide + 1] = g end
+	return setmetatable({ owner = owner, run = M.runner(), title = spec.title, tabs = tabs, tab = 1, guide = guide,
+		side = spec.side == "left" and "left" or "right", width = tonumber(spec.width) or PANEL_W, status = spec.status,
+		on_close = spec.on_close, hidden_now = false }, Panel)
+end
+
+local function close_panel()
+	if M.panel_on then M.panel_on:close() end
+end
+
+local function step_tab(p, direction)
+	open_tab(p, ((p.tab or 1) - 1 + direction) % #p.tabs + 1)
+end
+
+local function handle_panel(p, ev)
+	local frame = M.stack[#M.stack]
+	if not frame then return end
+	local list = rows(frame)
+	settle(frame, list)
+	local it = list[frame.selected]
+	if ev.back then
+		go_back(frame, close_panel)
+	elseif ev.filter then
+		step_tab(p, shift_held() and -1 or 1)
+	elseif ev.up then
+		move(frame, list, -1)
+	elseif ev.down then
+		move(frame, list, 1)
+	elseif ev.reset then
+		if it and selectable(it) then reset_row(frame, it) end
+	elseif it and selectable(it) then
+		if ev.select then
+			activate(frame, it)
+		elseif ev.left then
+			adjust(frame, it, -1)
+		elseif ev.right then
+			adjust(frame, it, 1)
+		end
+	end
+end
+
+-- Where the panel sits, in the kit's units: the full height of the screen, inside a margin.
+local function panel_box(p)
+	local left, bottom, right, top = visible()
+	local w = math.max(PANEL_MIN_W, math.min(p.width, right - left - PANEL_GAP * 2))
+	local x = p.side == "left" and left + PANEL_GAP or right - PANEL_GAP - w
+	p.box = { x = x, top = top - PANEL_GAP, w = w, h = top - bottom - PANEL_GAP * 2 }
+	return p.box
+end
+
+local function draw_panel_title(p, box, mx, my)
+	local kit, hits = M.kit, M.hits
+	local x, top, w = box.x, box.top, box.w
+	local y = top - TITLE_H
+	kit:layer(LAYER_BACK + 1)
+	kit:panel({ x, y, w, TITLE_H, cut = CUT, corners = "tl", fill = HEADER })
+	kit:layer(LAYER_MARK)
+	kit:rect(x + CUT, top - 2, w - CUT, 2, GOLD)
+	kit:glyph("shield", x + 13, y + 7, 17, GOLD)
+	local close = { x = x + w - TITLE_H, y = y, w = TITLE_H, h = TITLE_H }
+	hits.close = close
+	local over = inside(close, mx, my)
+	if over then kit:rect(close.x, y, TITLE_H, TITLE_H - 2, HOVER) end
+	kit:layer(LAYER_MARK + 1)
+	kit:glyph("close", close.x + 11, y + (TITLE_H - 12) / 2, 12, over and GOLD or GREY)
+	local status = ""
+	if p.status then
+		local ok, s = p.run(p.status)
+		if ok and s ~= nil then status = tostring(s) end
+	end
+	local status_w = status ~= "" and width_of(status, SMALL) + 14 or 0
+	kit:layer(LAYER_MARK)
+	if status ~= "" then put(status, close.x - 8, mid(y, TITLE_H, SMALL), SMALL, GOLD, "right") end
+	put(fit(text_or(p.owner, p.title, "title"), w - TITLE_H - status_w - 46, TITLE), x + 38, mid(y, TITLE_H, TITLE), TITLE, WHITE)
+end
+
+local function draw_tabs(p, box, mx, my)
+	local kit, hits = M.kit, M.hits
+	local y = box.top - TITLE_H - TAB_H
+	local n = #p.tabs
+	local each = box.w / n
+	hits.tabs = {}
+	kit:layer(LAYER_BACK + 1)
+	kit:rect(box.x, y, box.w, TAB_H, WELL)
+	for i, tab in ipairs(p.tabs) do
+		local x = box.x + (i - 1) * each
+		local area = { x = x, y = y, w = each, h = TAB_H, tab = i }
+		hits.tabs[i] = area
+		local on = i == p.tab
+		kit:layer(LAYER_BACK + 2)
+		if on then
+			kit:rect(x, y, each, TAB_H, SELECTED)
+		elseif inside(area, mx, my) then
+			kit:rect(x, y, each, TAB_H, HOVER)
+		end
+		kit:layer(LAYER_MARK)
+		if on then kit:rect(x, y, each, 2, GOLD) end
+		local label = fit(text_of(p.owner, tab.title, "title"), each - 8, FOLDER)
+		put(label, x + each / 2, mid(y, TAB_H, FOLDER), FOLDER, on and WHITE or GREY, "center")
+	end
+	return y
+end
+
+local function draw_panel(p)
+	local kit = M.kit
+	local box = panel_box(p)
+	local bottom = box.top - box.h
+	local mx, my = M.mouse_x or -1, M.mouse_y or -1
+	M.hits = { rows = {}, nav = {} }
+	kit:layer(LAYER_BACK)
+	kit:panel({ box.x, bottom, box.w, box.h, cut = CUT, corners = "tl br", fill = PANEL })
+	draw_panel_title(p, box, mx, my)
+	local tabs_y = draw_tabs(p, box, mx, my)
+	local frame = M.stack[#M.stack]
+	if not frame then return end
+	local list = rows(frame)
+	settle(frame, list)
+	local left, right = box.x, box.x + box.w
+	local top = tabs_y
+	-- A page opened inside the tab gets a line with the way back and its name.
+	if #M.stack > 1 then
+		local head_y = top - PAGE_H
+		local area = { x = left, y = head_y, w = PAGE_H, h = PAGE_H }
+		M.hits.back = area
+		local over = inside(area, mx, my)
+		kit:layer(LAYER_BACK + 2)
+		if over then kit:rect(left, head_y, PAGE_H, PAGE_H, HOVER) end
+		kit:layer(LAYER_MARK)
+		kit:glyph("back", left + 11, head_y + (PAGE_H - 13) / 2, 13, over and GOLD or GREY)
+		put(fit(frame.title, right - left - PAGE_H - PAD, HEADING), left + PAGE_H, mid(head_y, PAGE_H, HEADING), HEADING, WHITE)
+		kit:layer(LAYER_BACK + 2)
+		kit:rect(left, head_y, right - left, 1, DIVIDER)
+		top = head_y
+	end
+	local view = top - (bottom + FOOT_H) - 4
+	local shown = math.max(1, math.floor(view / ROW_H))
+	if frame.follow then
+		if frame.selected < frame.top then frame.top = frame.selected end
+		if frame.selected >= frame.top + shown then frame.top = frame.selected - shown + 1 end
+		frame.follow = false
+	end
+	frame.top = math.max(1, math.min(frame.top, #list - shown + 1))
+	draw_rows(frame, list, shown, left, right, top - 4, mx, my)
+	draw_scroll(frame, list, shown, right, top - 4, mx, my)
+	draw_foot(frame, list, shown, left, right, bottom, p)
+end
+
+local function press_panel(p, frame, x, y)
+	local hits = M.hits
+	if inside(hits.close, x, y) then
+		M.closing = true
+	elseif inside(hits.back, x, y) then
+		go_back(frame)
+	elseif inside(hits.track, x, y) then
+		M.drag = { kind = "scroll" }
+		scroll_to(frame, y)
+	else
+		for _, area in ipairs(hits.tabs or {}) do
+			if inside(area, x, y) then return open_tab(p, area.tab) end
+		end
+		for _, row in ipairs(hits.rows) do
+			if inside(row, x, y) then return click_row(frame, row, x, y) end
+		end
+	end
+end
+
+-- The mouse for an open panel: the left button and the wheel over it. The right button and anything
+-- away from the panel are the mod's.
+function M.panel_mouse(m, moved, dt)
+	local p = M.panel_on
+	if p.hidden_now then return end
+	if M.field then
+		if m.left then
+			local field = M.field
+			M.field = nil
+			field.done(field.text)
+		end
+		return
+	end
+	local frame = M.stack[#M.stack]
+	if not frame then return end
+	if M.drag then return follow_drag(frame, M.drag, m) end
+	if M.hold then
+		if not m.held then
+			M.hold = nil
+			return
+		end
+		M.hold.wait = M.hold.wait - dt
+		if M.hold.wait <= 0 then
+			M.hold.wait = NEXT_REPEAT
+			adjust(frame, M.hold.it, M.hold.direction)
+		end
+		return
+	end
+	if not M.hits or not p:under_mouse() then return end
+	if m.wheel > 0 then
+		frame.top = frame.top - WHEEL_ROWS
+	elseif m.wheel < 0 then
+		frame.top = frame.top + WHEEL_ROWS
+	end
+	if moved then
+		for _, row in ipairs(M.hits.rows) do
+			if selectable(row.it) and inside(row, m.x, m.y) then frame.selected = row.index end
+		end
+	end
+	if m.left then press_panel(p, frame, m.x, m.y) end
+end
+
+local function panel_frame(dt)
+	local p = M.panel_on
+	hold_focus()
+	if M.cursor and not p.hidden_now then pcall(hold_cursor) end
+	if not p.hidden_now then
+		if M.field then
+			read_field()
+		else
+			handle_panel(p, read_nav(dt, PANEL_KEYS, "panel "))
+		end
+	end
+	if M.panel_on == p then mouse_input(dt) end
+	-- A row's change can change what the tab lists: page:refresh() asks for it.
+	local frame = M.stack[#M.stack]
+	if M.panel_on == p and frame and frame.page and frame.page.dirty then build(frame) end
+	if M.panel_on == p and not p.hidden_now and not M.held_back then draw_panel(p) end
+end
+
 -- The window's place and the closed folders go to this library's storage from the frame, where this
 -- library's code is the code running.
 local function flush_saves()
@@ -1522,17 +1991,21 @@ end
 function M.frame()
 	M.frames = M.frames + 1
 	M.status = {}
-	if M.shown then
+	if M.shown or M.panel_on then
 		local name = state_name()
-		if name ~= M.state_name then M.close() end
+		if name ~= M.state_name then
+			if M.panel_on then M.panel_on:close() end
+			M.close()
+		end
 		M.state_name = name
 	else
 		M.state_name = state_name()
 	end
-	if not M.kit or (not M.shown and #M.toasts == 0) then return flush_saves() end
+	if not M.kit or (not M.shown and not M.panel_on and #M.toasts == 0) then return flush_saves() end
 	local script = global("Script")
 	local vectors, quaternions, matrices = script.temp_count()
 	local dt = global("ENGINE_DT") or 0
+	if M.panel_on then panel_frame(dt) end
 	if M.shown then
 		hold_focus()
 		if M.cursor then pcall(hold_cursor) end
@@ -1547,11 +2020,11 @@ function M.frame()
 		local frame = M.stack[#M.stack]
 		if not allowed(frame.owner or M.folder) then
 			M.close()
-		else
+		elseif not M.held_back then
 			draw_menu()
 		end
 	end
-	if #M.toasts > 0 then draw_toasts(dt) end
+	if #M.toasts > 0 and not M.held_back then draw_toasts(dt) end
 	script.set_temp_count(vectors, quaternions, matrices)
 	flush_saves()
 end
@@ -1560,6 +2033,7 @@ local function protected_frame()
 	local ok, err = pcall(M.frame)
 	if not ok then
 		limited("frame", "menu: " .. tostring(err))
+		if M.panel_on then pcall(M.panel_on.close, M.panel_on) end
 		if M.shown then pcall(M.close) end
 	end
 end
@@ -1582,12 +2056,13 @@ function M.install()
 	-- Hooks may run later than the frame, so a chat opened with the window's select key is refused here
 	-- rather than noticed afterwards.
 	wrap("TextChat", "start_typing", function(original, self, ...)
-		if M.shown then return end
+		if M.shown or M.panel_on then return end
 		return original(self, ...)
 	end)
 	-- The key opens the window once a page is listed, and closes it. The loader before obsidian.keybind's
 	-- opts.always gates it as it gates this library.
 	obsidian.keybind("open", function()
+		if M.panel_on then return end
 		if M.shown or #listed_roots() > 0 then M.toggle() end
 	end, { always = true })
 end

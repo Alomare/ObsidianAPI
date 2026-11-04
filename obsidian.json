@@ -1,7 +1,7 @@
 {
   "obsidian": 1,
   "id": "obsidian.api",
-  "version": "1.22.1",
+  "version": "1.23.0",
   "name": {
     "en": "Obsidian API",
     "pt-BR": "Obsidian API",
@@ -48,7 +48,8 @@
     "lib/audio.lua",
     "lib/music.lua",
     "lib/mod_settings.lua",
-    "lib/menu.lua"
+    "lib/menu.lua",
+    "lib/capture.lua"
   ],
   "keybinds": [
     {

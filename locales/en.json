@@ -11,5 +11,6 @@
   "menu_key_filter": "Filter",
   "menu_key_reset": "Reset",
   "menu_key_confirm": "Confirm",
-  "menu_key_cancel": "Cancel"
+  "menu_key_cancel": "Cancel",
+  "menu_key_tabs": "Tabs"
 }
