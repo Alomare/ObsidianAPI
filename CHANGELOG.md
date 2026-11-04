@@ -2,6 +2,10 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.29.1
+
+- Changed: client mods can call `api.world.to_screen`, `api.world.placement`, `api.world.part_units` and `api.world.part_hidden`, which only read. They answered `false, "needs_session"` before, so Better HUD's enemy health bars, damage numbers and reload and ammo circles drew nothing unless a session mod was deployed and the lobby cleared.
+
 ## 1.29.0
 
 - New: `api.world.place(unit, pos, angle, floor)` and `api.world.placement(unit)` move and turn a Helldiver in a stopped game, by the mover and character states the game places it from each frame. The physics mover stays above `floor`, so a Helldiver sunk into the ground doesn't fall out of the level.
