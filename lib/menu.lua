@@ -88,10 +88,13 @@ local M = {
 	kit = nil, widths = {}, width_count = 0, field = nil, state_name = nil, hits = nil, win = nil, drag = nil, hold = nil,
 	cursor = nil, closing = false, frames = 0, toggled = nil, status = {}, names = {}, save = {},
 	-- The open panel, if any, and whether a screenshot wants the screen clear (lib/capture.lua).
-	panel_on = nil, held_back = false,
+	panel_on = nil, held_back = false, panels = {},
 }
 
 local function pack(...) return { n = select("#", ...), ... } end
+
+-- With the panels, further down: a point in a panel's own units.
+local panel_point
 
 -- Calls as each mod. A runner is made while its mod's code runs, so the loader takes the wrap as that
 -- mod's. A mod that has been switched off gets the wrap skipped, and its runner refuses.
@@ -151,6 +154,54 @@ local function word(key)
 	if obsidian.caller() == SELF or not runners[SELF] then return obsidian.text(key) end
 	local ok, s = runners[SELF].call(obsidian.text, key)
 	return ok and s or key
+end
+
+-- The game's own menu sounds (menu_screen_base.lua:58-92), quieter: moving, changing a value, choosing,
+-- going back. One plays a frame, the strongest asked for, and moving or changing at most every 0.06 s,
+-- so a held key or a dragged slider doesn't rattle. They play in the sound world of the world the engine
+-- keeps for drawing the screen, which runs every frame, a paused mission too; else in the screen's own.
+-- A panel made with sounds = false asks for none.
+local SOUND = {
+	kinds = { move = { "ui_move", 1 }, change = { "ui_move", 2 }, invalid = { "ui_invalid", 3 }, select = { "ui_select", 4 }, back = { "ui_back", 4 } },
+	volume = 0.35, gap = 0.06, event = nil, rank = 0, clock = 0, last = -1, off = false,
+}
+
+function SOUND.ask(kind)
+	local p = M.panel_on
+	if SOUND.off or (p and p.sounds == false) then return end
+	local k = SOUND.kinds[kind]
+	if k and k[2] >= SOUND.rank then SOUND.event, SOUND.rank = k[1], k[2] end
+end
+
+function SOUND.world(timpani, event)
+	local boot, W = global("Boot"), global("World")
+	if type(boot) == "table" and boot.brightness_world and type(W) == "table" and W.timpani_world then
+		local world = W.timpani_world(boot.brightness_world)
+		if world and timpani.has_event(world, event) then return world end
+	end
+	local st = game.state()
+	local proxy = type(st) == "table" and st.world_proxy
+	local world = type(proxy) == "table" and proxy:get_timpani_world()
+	if world and timpani.has_event(world, event) then return world end
+	return nil
+end
+
+-- Once a frame: the sound asked for since the last frame.
+function SOUND.flush(dt)
+	SOUND.clock = SOUND.clock + (dt or 0)
+	local event, rank = SOUND.event, SOUND.rank
+	SOUND.event, SOUND.rank = nil, 0
+	if not event or (rank < 3 and SOUND.clock - SOUND.last < SOUND.gap) then return end
+	SOUND.last = SOUND.clock
+	local ok, err = pcall(function()
+		local timpani = global("TimpaniWorld")
+		if type(timpani) ~= "table" then return end
+		local world = SOUND.world(timpani, event)
+		if not world then return end
+		local id = timpani.trigger_event(world, event)
+		if id ~= nil and timpani.set_parameter then timpani.set_parameter(world, id, "volume", SOUND.volume) end
+	end)
+	if not ok then limited("sound", "menu: a sound failed: " .. tostring(err)) end
 end
 
 local function check_scope()
@@ -397,6 +448,7 @@ end
 local function step(direction)
 	local entries = nav_entries()
 	if #entries == 0 then return end
+	SOUND.ask("move")
 	local at = cursor_at(entries)
 	if not at then return go(entries[direction > 0 and 1 or #entries]) end
 	go(entries[(at - 1 + direction) % #entries + 1])
@@ -406,6 +458,7 @@ end
 -- to the folder.
 local function set_closed(owner, closed)
 	if (M.closed[owner] == true) == closed then return end
+	SOUND.ask("move")
 	M.closed[owner] = closed or nil
 	M.save.folders = true
 	if closed and M.root and M.root.owner == owner then open_folder(owner) end
@@ -496,6 +549,7 @@ end
 -- Closes the window and gives the input and the cursor back to the game.
 function M.close()
 	if not M.shown then return end
+	SOUND.ask("back")
 	M.shown, M.closing, M.nav = false, false, true
 	M.field, M.drag, M.hold, M.hits = nil, nil, nil, nil
 	M.mouse_x, M.mouse_y = nil, nil
@@ -540,6 +594,7 @@ function M.open()
 		end
 		go(first or entries[1])
 	end
+	SOUND.ask("select")
 	return true
 end
 
@@ -586,7 +641,7 @@ end
 local function write(frame, it, value)
 	if it.set then
 		local ok, err = run(frame.owner, "set", it.set, value)
-		if not ok then M.toast(tostring(err)) end
+		if not ok then M.toast(tostring(err)) else SOUND.ask("change") end
 	end
 end
 
@@ -614,6 +669,7 @@ local function check_enabled(frame, it)
 	if not it.enabled then return true end
 	local ok, on, why = run(frame.owner, "enabled", it.enabled)
 	if ok and on then return true end
+	SOUND.ask("invalid")
 	M.toast(why or word("menu_unavailable"))
 	return false
 end
@@ -657,6 +713,8 @@ end
 
 local function activate(frame, it)
 	if not check_enabled(frame, it) then return end
+	-- A toggle and a choice sound as a change, from write.
+	if it.kind ~= "toggle" and it.kind ~= "choice" then SOUND.ask("select") end
 	if it.kind == "toggle" then
 		local ok, value = run(frame.owner, "get", it.get)
 		if ok then write(frame, it, not value) end
@@ -711,7 +769,7 @@ local function reset_row(frame, it)
 	if not (resettable(it) and changed(frame, it) and check_enabled(frame, it)) then return end
 	if it.reset then
 		local ok, err = run(frame.owner, "reset", it.reset)
-		if not ok then M.toast(tostring(err)) end
+		if not ok then M.toast(tostring(err)) else SOUND.ask("change") end
 	else
 		write(frame, it, it.default)
 	end
@@ -734,6 +792,7 @@ local function move(frame, list, direction)
 	for _ = 1, #list do
 		i = (i - 1 + direction) % #list + 1
 		if selectable(list[i]) then
+			if i ~= frame.selected then SOUND.ask("move") end
 			frame.selected, frame.follow = i, true
 			return
 		end
@@ -806,6 +865,7 @@ local function read_code_field(f)
 	f.text = table.concat(f.arrows, " ")
 	if finished then
 		M.field = nil
+		SOUND.ask(cancelled and "back" or "select")
 		if not cancelled then f.done(f.text) end
 	end
 end
@@ -823,6 +883,7 @@ local function read_field()
 	if f.change and f.text ~= before then f.change(f.text) end
 	if finished then
 		M.field = nil
+		SOUND.ask(cancelled and "back" or "select")
 		if not cancelled then f.done(f.text) end
 	end
 end
@@ -830,6 +891,7 @@ end
 -- From the top of a page the keys go to the list, and a click, whose button is still down, closes the
 -- window through its own close.
 local function go_back(frame, close)
+	SOUND.ask("back")
 	if frame.filter and frame.filter ~= "" then
 		frame.filter = nil
 		settle(frame, rows(frame))
@@ -869,8 +931,10 @@ local function handle_nav(ev)
 			set_closed(here.folder, true)
 		end
 	elseif ev.select or ev.right then
+		SOUND.ask("select")
 		M.nav = false
 	elseif ev.left and here and here.root then
+		SOUND.ask("move")
 		open_folder(here.root.owner)
 	end
 end
@@ -945,7 +1009,8 @@ local function mid(y, h, style)
 end
 
 local function width_of(s, style)
-	local key = style.font .. style.size .. "/" .. (style.tracking or 0) .. "\0" .. s
+	-- A scaled panel measures at the panel's size (Scaled, with the panels).
+	local key = style.font .. style.size .. "/" .. (style.tracking or 0) .. "@" .. (M.kit.panel_scale or 1) .. "\0" .. s
 	local w = M.widths[key]
 	if not w then
 		w = M.kit:measure(s, style)
@@ -1031,7 +1096,6 @@ local function draw_title(win, mx, my)
 	kit:panel({ x, y, w, TITLE_H, cut = CUT, corners = "tl", fill = HEADER })
 	kit:layer(LAYER_MARK)
 	kit:rect(x + CUT, top - 2, w - CUT, 2, GOLD)
-	kit:glyph("shield", x + 13, y + 7, 17, GOLD)
 	hits.title = { x = x, y = y, w = w, h = TITLE_H }
 
 	local function button(area_x, area_w, glyph, label)
@@ -1053,7 +1117,7 @@ local function draw_title(win, mx, my)
 	hits.filter = button(x + w - TITLE_H - filter_w, filter_w, "search", filter)
 	local title = M.root and name_of(M.root.owner) or word("menu_title")
 	kit:layer(LAYER_MARK)
-	put(fit(title, w - TITLE_H - filter_w - 46, TITLE), x + 38, mid(y, TITLE_H, TITLE), TITLE, WHITE)
+	put(fit(title, w - TITLE_H - filter_w - PAD - 8, TITLE), x + PAD, mid(y, TITLE_H, TITLE), TITLE, WHITE)
 end
 
 local function draw_nav(win, bottom, mx, my)
@@ -1262,24 +1326,23 @@ local function draw_field(row, right, left)
 	return w
 end
 
-local function draw_foot(frame, list, shown, left, right, bottom, panel)
-	local kit, hits = M.kit, M.hits
-	local foot_y = bottom + FOOT_H
-	kit:layer(LAYER_BACK + 2)
-	kit:rect(left, foot_y, right - left, 1, DIVIDER)
-	local width = right - left - PAD * 2
-	local selected = list[frame.selected]
-	kit:layer(LAYER_MARK)
-	if selected and selected.help then
-		local lines = wrap_text(text_of(selected.owner or frame.owner, selected.help, "help"), width, SMALL)
-		if #lines > HELP_LINES then lines[HELP_LINES] = fit(lines[HELP_LINES] .. " " .. lines[HELP_LINES + 1], width, SMALL) end
-		local y = foot_y - SMALL.size - 5
-		for i = 1, math.min(HELP_LINES, #lines) do
-			put(lines[i], left + PAD, y, SMALL, GREY)
-			y = y - SMALL.size - 1
-		end
+-- Help, wrapped from the baseline y down, at most n lines: the last is cut with dots when there's more.
+local function draw_help(text, n, x, y, width)
+	local lines = wrap_text(text, width, SMALL)
+	if #lines > n then lines[n] = fit(lines[n] .. " " .. lines[n + 1], width, SMALL) end
+	for i = 1, math.min(n, #lines) do
+		put(lines[i], x, y, SMALL, GREY)
+		y = y - SMALL.size - 1
 	end
+end
+
+-- The bottom line of a foot: the keys that end typing, the line being typed, or the key guide and where
+-- the selection is in a long list.
+local function draw_keys(frame, list, shown, left, right, bottom, guide)
+	local kit = M.kit
+	local width = right - left - PAD * 2
 	local guide_y = bottom + 4
+	kit:layer(LAYER_MARK)
 	if M.field and M.field.item then
 		-- The row shows what's typed; the foot, the keys that end it.
 		draw_guide(TYPING_GUIDE, left + PAD, guide_y, right - CUT - PAD)
@@ -1288,11 +1351,23 @@ local function draw_foot(frame, list, shown, left, right, bottom, panel)
 	else
 		local more = #list > shown and string.format("%d/%d", frame.selected, #list) or ""
 		local count_w = more ~= "" and width_of(more, SMALL) + 8 or 0
-		draw_guide(panel and panel.guide or GUIDE, left + PAD, guide_y, right - CUT - PAD - count_w)
+		draw_guide(guide, left + PAD, guide_y, right - CUT - PAD - count_w)
 		kit:layer(LAYER_MARK)
 		if more ~= "" then put(more, right - CUT - PAD, bottom + 7, SMALL, FAINT, "right") end
 	end
-	if panel then return end
+end
+
+local function draw_foot(frame, list, shown, left, right, bottom)
+	local kit, hits = M.kit, M.hits
+	local foot_y = bottom + FOOT_H
+	kit:layer(LAYER_BACK + 2)
+	kit:rect(left, foot_y, right - left, 1, DIVIDER)
+	local selected = list[frame.selected]
+	kit:layer(LAYER_MARK)
+	if selected and selected.help then
+		draw_help(text_of(selected.owner or frame.owner, selected.help, "help"), HELP_LINES, left + PAD, foot_y - SMALL.size - 5, right - left - PAD * 2)
+	end
+	draw_keys(frame, list, shown, left, right, bottom, GUIDE)
 
 	-- The grip that resizes the window, along the folded corner.
 	hits.grip = { x = right - GRIP, y = bottom, w = GRIP, h = GRIP }
@@ -1422,18 +1497,19 @@ local function draw_toasts(dt)
 	local left, _, right, top = visible()
 	local x, y = left + TOAST_GAP, top - TOAST_GAP - TOAST_H
 	-- The window opens in the same corner, and a message shouldn't cover what it's about. Beside a panel,
-	-- the messages line up with its top, on the side away from the edge.
-	local panel = M.panel_on and not M.panel_on.hidden_now and M.panel_on.box and M.panel_on
+	-- the messages line up with the panel's top, on the side with more room.
+	local panel = M.panel_on and not M.panel_on.hidden_now and M.panel_on.screen
+	local on_left = panel and panel.x - left >= right - panel.x - panel.w
 	if M.shown and M.win then
 		x, y = M.win.x + M.win.w + TOAST_GAP, M.win.top - TOAST_H
 	elseif panel then
-		x, y = panel.box.x + panel.box.w + TOAST_GAP, panel.box.top - TOAST_H
+		x, y = panel.x + panel.w + TOAST_GAP, panel.top - TOAST_H
 	end
 	for _, t in ipairs(M.toasts) do
 		local s = fit(t.text, right - left - 80, BODY)
 		local w = width_of(s, BODY) + 26
 		local at = math.min(x, right - w - TOAST_GAP)
-		if panel and panel.side ~= "left" then at = panel.box.x - TOAST_GAP - w end
+		if on_left then at = math.max(left + TOAST_GAP, panel.x - TOAST_GAP - w) end
 		kit:opacity(math.min(t.left * 2, 1))
 		kit:layer(LAYER_TOAST)
 		kit:panel({ at, y, w, TOAST_H, cut = 6, corners = "br", fill = PANEL })
@@ -1533,6 +1609,7 @@ local function press(frame, x, y)
 				-- A click on a folder opens or closes it, and leaves the keys where they are.
 				if area.folder then return set_closed(area.folder, not M.closed[area.folder]) end
 				M.nav = false
+				SOUND.ask("move")
 				return open_root(area.root)
 			end
 		end
@@ -1561,6 +1638,9 @@ local function mouse_input(dt)
 	local m = read_mouse()
 	if not m then return end
 	m.x, m.y = M.kit:point(m.x, m.y)
+	-- A scaled panel has units of the panel's own; a move or a resize goes by the kit's.
+	m.sx, m.sy = m.x, m.y
+	if M.panel_on then m.x, m.y = panel_point(M.panel_on, m.x, m.y) end
 	local moved = M.mouse_x ~= nil and (m.x ~= M.mouse_x or m.y ~= M.mouse_y)
 	M.mouse_x, M.mouse_y = m.x, m.y
 	if M.closing then
@@ -1614,39 +1694,207 @@ local function mouse_input(dt)
 	end
 end
 
--- Panels. A panel is a mod's own window down one side of the screen, with tabs along its top, which the
--- mod opens and closes from its code: the controls of a photo mode, say. Its rows are the pages' rows.
--- It handles on the arrow keys, Enter, Esc, Tab and the left mouse button, and leaves W A S D, Q, E,
--- the right mouse button and the wheel away from it to the mod, which reads them raw to steer something
--- while the panel is open. The F6 window stays closed while a panel is open, and the game gets no input.
+-- Panels. A panel is a mod's own window, at the bottom right of the screen at first, with tabs along the
+-- top, which the mod opens and closes from code: the controls of a photo mode, say. The rows are the
+-- pages' rows. A panel handles the arrow keys, Enter, Esc, Tab and the left mouse button, and leaves
+-- W A S D, Q, E, the right mouse button and the wheel away from the panel to the mod, which reads them
+-- raw to steer something while the panel is open. The F6 window stays closed while a panel is open, and
+-- the game gets no input.
+--
+-- The player drags a panel by the title bar, resizes it from the grip in the corner across from where it
+-- is kept, and drags the line over the help to make room for longer help. The place, size, help room,
+-- background strength and scale go to this library's storage, per mod and spec.id.
+
+-- The panels' own helpers and sizes, in one table: the file has as many locals as Lua allows.
+local P = {}
+
 local Panel = {}
 Panel.__index = Panel
 
-local function text_or(owner, value, what)
+-- The corners a panel is kept at, and which way it grows from there: across, then up. "right" and
+-- "left" are the top corners with the full height of the screen at first, as panels were docked before.
+P.ANCHORS = { bottom_right = { -1, 1 }, bottom_left = { 1, 1 }, top_right = { -1, -1 }, top_left = { 1, -1 } }
+P.DOCKED = { right = "top_right", left = "top_left" }
+P.PANEL_KEY = "menu/panel/"
+P.PANEL_DEFAULT_W, P.PANEL_DEFAULT_H, P.PANEL_MIN_H, P.PANEL_OPACITY = 540, 360, 200, 0.5
+P.SCALE_MIN, P.SCALE_MAX = 0.6, 1.6
+-- The foot: lines of help over the key guide. Four lines at first, one at the least.
+P.HELP_STEP, P.GUIDE_BAND, P.PANEL_HELP_LINES = SMALL.size + 1, KEYCAP_H + 8, 4
+P.FOOT_MIN = P.HELP_STEP + 8 + P.GUIDE_BAND
+P.PANEL_FOOT = P.PANEL_HELP_LINES * P.HELP_STEP + 8 + P.GUIDE_BAND
+
+function P.clamp(v, low, high) return math.max(low, math.min(v, high)) end
+
+-- A call as this library, whoever is running: the panels' places are in this library's storage.
+function P.own(fn, ...)
+	if obsidian.caller() == SELF or not runners[SELF] then return pcall(fn, ...) end
+	return runners[SELF].call(fn, ...)
+end
+
+function P.text_or(owner, value, what)
 	if value == nil then return "" end
 	return text_of(owner, value, what)
 end
 
-local function call_panel(p, what, fn, ...)
+function P.call_panel(p, what, fn, ...)
 	if type(fn) ~= "function" then return end
 	local ok, err = p.run(fn, ...)
 	if not ok and err ~= "off" then limited("panel " .. what, "menu: panel " .. what .. ": " .. tostring(err)) end
 end
 
-local function open_tab(p, i)
+-- Kept as "opacity scale foot", then "anchor x y w h" once the panel has a place. A place kept for
+-- another anchor is dropped: the spec moved the panel.
+function P.load_panel(p)
+	if p.loaded then return end
+	p.loaded = true
+	local ok, saved = P.own(function() return obsidian.storage.get(p.key) end)
+	local t = {}
+	for word_of in tostring(ok and saved or ""):gmatch("%S+") do t[#t + 1] = word_of end
+	local alpha, scale, foot = tonumber(t[1]), tonumber(t[2]), tonumber(t[3])
+	if alpha then p.alpha_now = P.clamp(alpha, 0, 1) end
+	if scale then p.scale_now = P.clamp(scale, P.SCALE_MIN, P.SCALE_MAX) end
+	if foot then p.foot = foot end
+	local x, y, w, h = tonumber(t[5]), tonumber(t[6]), tonumber(t[7]), tonumber(t[8])
+	if t[4] == p.anchor and x and y and w and h then p.place = { x = x, y = y, w = w, h = h } end
+end
+
+function P.want_save(p)
+	p.save_wanted = true
+	M.save.panels = true
+end
+
+function P.save_panels()
+	for _, p in ipairs(M.panels) do
+		if p.save_wanted then
+			p.save_wanted = nil
+			local s = string.format("%.4g %.4g %.14g", p.alpha_now, p.scale_now, p.foot)
+			local pl = p.place
+			if pl then s = s .. string.format(" %s %.14g %.14g %.14g %.14g", p.anchor, pl.x, pl.y, pl.w, pl.h) end
+			obsidian.storage.set(p.key, s)
+		end
+	end
+end
+
+-- Where the panel is, kept on screen. place: the anchor's corner in the kit's units, and the size in the
+-- panel's own units, which the scale multiplies from that corner. p.box is the panel in the panel's
+-- units, p.screen in the kit's.
+function P.place_panel(p)
+	P.load_panel(p)
+	local left, bottom, right, top = visible()
+	local hx, vy, s = p.hx, p.vy, p.scale_now
+	local pl = p.place
+	if not pl then
+		local h = p.height or (p.docked and (top - bottom - PANEL_GAP * 2) / s) or P.PANEL_DEFAULT_H
+		pl = { x = hx < 0 and right - PANEL_GAP or left + PANEL_GAP, y = vy > 0 and bottom + PANEL_GAP or top - PANEL_GAP, w = p.width, h = h }
+		p.place = pl
+	end
+	pl.w = math.max(PANEL_MIN_W, math.min(pl.w, (right - left) / s))
+	pl.h = math.max(P.PANEL_MIN_H, math.min(pl.h, (top - bottom) / s))
+	local sw, sh = pl.w * s, pl.h * s
+	if hx < 0 then pl.x = P.clamp(pl.x, left + sw, right) else pl.x = P.clamp(pl.x, left, right - sw) end
+	if vy > 0 then pl.y = P.clamp(pl.y, bottom, top - sh) else pl.y = P.clamp(pl.y, bottom + sh, top) end
+	p.foot = P.clamp(p.foot, P.FOOT_MIN, math.max(P.FOOT_MIN, pl.h - TITLE_H - TAB_H - 8 - ROW_H * 2))
+	local low = vy > 0 and pl.y or pl.y - pl.h
+	p.box = { x = hx > 0 and pl.x or pl.x - pl.w, top = low + pl.h, w = pl.w, h = pl.h }
+	local screen_low = vy > 0 and pl.y or pl.y - sh
+	p.screen = { x = hx > 0 and pl.x or pl.x - sw, top = screen_low + sh, w = sw, h = sh }
+	return p.box
+end
+
+-- A point in the kit's units, in the panel's.
+function panel_point(p, x, y)
+	local s, pl = p.scale_now, p.place
+	if not pl or s == 1 then return x, y end
+	return pl.x + (x - pl.x) / s, pl.y + (y - pl.y) / s
+end
+
+-- The kit as a scaled panel draws through it: every place and size grows from the anchor's corner, and
+-- panel_point brings the mouse back the same way.
+P.Scaled = {}
+P.Scaled.__index = P.Scaled
+
+function P.scaled_kit(kit, s, ax, ay)
+	return setmetatable({ base = kit, panel_scale = s, ax = ax, ay = ay }, P.Scaled)
+end
+
+function P.scale_x(k, x) return k.ax + (x - k.ax) * k.panel_scale end
+function P.scale_y(k, y) return k.ay + (y - k.ay) * k.panel_scale end
+
+function P.scaled_style(style, s)
+	return { font = style.font, size = style.size and style.size * s, tracking = style.tracking and style.tracking * s,
+		align = style.align, color = style.color, leading = style.leading and style.leading * s }
+end
+
+function P.Scaled:layer(n) return self.base:layer(n) end
+function P.Scaled:opacity(a) return self.base:opacity(a) end
+function P.Scaled:point(x, y)
+	local px, py = self.base:point(x, y)
+	return self.ax + (px - self.ax) / self.panel_scale, self.ay + (py - self.ay) / self.panel_scale
+end
+function P.Scaled:rect(x, y, w, h, c) return self.base:rect(P.scale_x(self, x), P.scale_y(self, y), w * self.panel_scale, h * self.panel_scale, c) end
+function P.Scaled:poly(points, c)
+	local out = {}
+	for i = 1, #points, 2 do out[i], out[i + 1] = P.scale_x(self, points[i]), P.scale_y(self, points[i + 1]) end
+	return self.base:poly(out, c)
+end
+function P.Scaled:panel(p)
+	local s = self.panel_scale
+	return self.base:panel({ P.scale_x(self, p.x or p[1]), P.scale_y(self, p.y or p[2]), (p.w or p[3]) * s, (p.h or p[4]) * s, cut = (p.cut or 0) * s,
+		corners = p.corners, fill = p.fill, line = p.line, line_width = (p.line_width or 1) * s })
+end
+function P.Scaled:glyph(name, x, y, size, c) return self.base:glyph(name, P.scale_x(self, x), P.scale_y(self, y), size * self.panel_scale, c) end
+function P.Scaled:icon(name, x, y, w, h, c, uv)
+	return self.base:icon(name, P.scale_x(self, x), P.scale_y(self, y), w * self.panel_scale, h * self.panel_scale, c, uv)
+end
+function P.Scaled:text(s, x, y, style) return self.base:text(s, P.scale_x(self, x), P.scale_y(self, y), P.scaled_style(style or {}, self.panel_scale)) end
+function P.Scaled:measure(s, style)
+	local w, h = self.base:measure(s, P.scaled_style(style or {}, self.panel_scale))
+	return (w or 0) / self.panel_scale, (h or 0) / self.panel_scale
+end
+function P.Scaled:clip(x, y, w, h, fn)
+	local s = self.panel_scale
+	return self.base:clip(P.scale_x(self, x), P.scale_y(self, y), w * s, h * s, function() return fn(self) end)
+end
+
+-- A glyph of obsidian.ui.glyphs(), or else an icon of the game's HUD. false when neither draws.
+P.glyph_set = nil
+
+function P.is_glyph(name)
+	if P.glyph_set == nil then
+		local ok, list = pcall(function() return obsidian.ui.glyphs() end)
+		P.glyph_set = false
+		if ok and type(list) == "table" then
+			P.glyph_set = {}
+			for _, n in ipairs(list) do P.glyph_set[n] = true end
+		end
+	end
+	if P.glyph_set == false then return nil end
+	return P.glyph_set[name] == true
+end
+
+function P.draw_symbol(name, x, y, size, c)
+	if type(name) ~= "string" or name == "" then return false end
+	local known = P.is_glyph(name)
+	if known ~= false and M.kit:glyph(name, x, y, size, c) ~= false then return true end
+	if known == true then return false end
+	return M.kit:icon(name, x, y, size, size, c) ~= false
+end
+
+function P.open_tab(p, i)
 	local tab = p.tabs[i]
 	if not tab then return end
+	if p.tab ~= i then SOUND.ask("move") end
 	p.tab = i
 	M.stack = {}
 	M.field, M.drag, M.hold = nil, nil, nil
 	push(text_of(p.owner, tab.title, "title"), tab.build, p.owner)
 end
 
--- Opens the panel on its tab, closing the F6 window and any other panel. false while a panel can't open
+-- Opens the panel on a tab, closing the F6 window and any other panel. false while a panel can't open
 -- (as the window can't: logos, cutscenes, screen changes, the chat typing).
 function Panel:open(tab)
 	if M.panel_on == self then
-		if tab then open_tab(self, tab) end
+		if tab then P.open_tab(self, tab) end
 		return true
 	end
 	if not can_open() then return false end
@@ -1667,25 +1915,31 @@ function Panel:open(tab)
 		limited("cursor", "menu: could not show the cursor: " .. tostring(err))
 	end
 	M.panel_on, M.nav, M.closing = self, false, false
+	SOUND.ask("select")
 	M.mouse_x, M.mouse_y = nil, nil
 	M.state_name = state_name()
 	self.hidden_now = false
-	open_tab(self, tab or self.tab or 1)
+	if self.cursor_off and M.cursor then pcall(function() global("CursorManager"):set_show_cursor(false) end) end
+	P.open_tab(self, tab or self.tab or 1)
 	return true
 end
 
--- Closes it, gives the game its input and cursor back, and calls the panel's on_close.
+-- Closes the panel, gives the game the input and the cursor back, and calls on_close. A hidden cursor
+-- (set_cursor_hidden) comes back for the next open.
 function Panel:close()
 	if M.panel_on ~= self then return end
+	SOUND.ask("back")
+	if M.drag and M.drag.panel then P.want_save(self) end
 	M.panel_on, M.closing, M.nav = nil, false, true
 	M.field, M.drag, M.hold, M.hits = nil, nil, nil, nil
 	M.mouse_x, M.mouse_y = nil, nil
 	M.stack = {}
+	self.cursor_off = false
 	local ok, err = pcall(drop_focus)
 	if not ok then limited("focus", "menu: could not release input: " .. tostring(err)) end
 	ok, err = pcall(close_cursor)
 	if not ok then limited("cursor back", "menu: could not restore the cursor: " .. tostring(err)) end
-	call_panel(self, "on_close", self.on_close)
+	P.call_panel(self, "on_close", self.on_close)
 end
 
 function Panel:is_open() return M.panel_on == self end
@@ -1697,42 +1951,102 @@ function Panel:hide(on)
 	if M.panel_on == self and M.cursor then
 		pcall(function()
 			local cursors = global("CursorManager")
-			if on then cursors:set_show_cursor(false) else show_cursor() end
+			if on or self.cursor_off then cursors:set_show_cursor(false) else show_cursor() end
 		end)
 	end
 end
 
 function Panel:hidden() return self.hidden_now == true end
 
+-- With on, the cursor hides and the panel leaves the mouse alone, still drawn: for looking around while a
+-- mouse button is held, say. Off brings the cursor back. Closing the panel turns it off.
+function Panel:set_cursor_hidden(on)
+	self.cursor_off = on and true or false
+	if M.panel_on == self and M.cursor and not self.hidden_now then
+		pcall(function()
+			if self.cursor_off then global("CursorManager"):set_show_cursor(false) else show_cursor() end
+		end)
+	end
+	return true
+end
+
+function Panel:cursor_hidden() return self.cursor_off == true end
+
+-- How strong the background is, from 0 (clear) to 1, 0.5 at first. The rows and the words stay at full
+-- strength. Kept with the panel's place for the next launch.
+function Panel:set_opacity(a)
+	if type(a) ~= "number" then return false, "bad_type" end
+	P.load_panel(self)
+	self.alpha_now = P.clamp(a, 0, 1)
+	P.want_save(self)
+	return true
+end
+
+function Panel:opacity()
+	P.load_panel(self)
+	return self.alpha_now
+end
+
+-- How big everything in the panel is drawn, from 0.6 to 1.6, 1 at first, growing from the corner the
+-- panel is kept at. Kept with the panel's place for the next launch.
+function Panel:set_scale(s)
+	if type(s) ~= "number" then return false, "bad_type" end
+	P.load_panel(self)
+	self.scale_now = P.clamp(s, P.SCALE_MIN, P.SCALE_MAX)
+	P.want_save(self)
+	return true
+end
+
+function Panel:scale()
+	P.load_panel(self)
+	return self.scale_now
+end
+
+-- Puts the panel back where and as big as it first opened, help room included. Opacity and scale stay.
+function Panel:reset_place()
+	P.load_panel(self)
+	self.place, self.foot = nil, P.PANEL_FOOT
+	P.want_save(self)
+	return true
+end
+
 -- The tab that's open, by number.
 function Panel:tab_number() return self.tab or 1 end
 
 function Panel:select_tab(i)
 	if type(i) ~= "number" or not self.tabs[i] then return false end
-	if M.panel_on == self then open_tab(self, i) else self.tab = i end
+	if M.panel_on == self then P.open_tab(self, i) else self.tab = i end
 	return true
 end
 
--- Builds the open tab again, as after an action that changes what it lists.
+-- Builds the open tab again, as after an action that changes what the tab lists.
 function Panel:refresh()
 	if M.panel_on ~= self then return end
 	local frame = M.stack[#M.stack]
 	if frame then build(frame) end
 end
 
--- Whether the mouse is over the panel now: the mod leaves the wheel and clicks there to the panel.
+-- Whether the mouse is over the panel now: the mod leaves the wheel and clicks there to the panel. false
+-- while the cursor is hidden.
 function Panel:under_mouse()
-	if M.panel_on ~= self or self.hidden_now or not self.box or not M.mouse_x then return false end
+	if M.panel_on ~= self or self.hidden_now or self.cursor_off or not self.box or not M.mouse_x then return false end
 	return inside({ x = self.box.x, y = self.box.top - self.box.h, w = self.box.w, h = self.box.h }, M.mouse_x, M.mouse_y)
 end
 
 -- Whether the panel is taking the keys for itself now: typing into a row.
 function Panel:typing() return M.panel_on == self and M.field ~= nil end
 
--- A panel, closed. spec: title (text or a function), tabs ({ { title = ..., build = function(page) end,
--- icon = ... }, ... }), side ("right", the default, or "left"), width (in the game's 1280 by 720 design
--- units, 390 by default), status (a function answering a short text for the title bar), guide (key
--- guide entries before the panel's own: { keys = { "H" }, label = "Hide" }), on_close().
+-- A panel, closed. spec: title (text or a function); tabs ({ { title = ..., build = function(page) end,
+-- icon = ... }, ... }), where an icon (a name of obsidian.ui.glyphs(), or an icon of the game's HUD)
+-- shows in place of the title, and the title shows over the help; id (names the kept place among the
+-- mod's panels, "panel" by default); anchor ("bottom_right", the default, "bottom_left", "top_right",
+-- "top_left", or "right" and "left" for the full height down that side; side is the same); width and
+-- height (in the game's 1280 by 720 design units, 540 by 360 by default, 390 wide down a side);
+-- opacity (0.5) and scale (1) until the player changes them; buttons (in the title bar, left of the
+-- close button: { { glyph = "reset", help = "...", run = function() end } }, run as the mod, a string
+-- answered becoming a toast); sounds (false, and the panel plays none of the game's menu sounds);
+-- status (a function answering a short text for the title bar); guide (key guide entries before the
+-- panel's own: { keys = { "H" }, label = "Hide" }); on_close().
 function M.panel(spec)
 	if type(spec) ~= "table" or type(spec.tabs) ~= "table" or #spec.tabs == 0 then return nil, "bad_type" end
 	local owner = obsidian.caller() or SELF
@@ -1747,29 +2061,45 @@ function M.panel(spec)
 		if type(g) == "table" and type(g.keys) == "table" and g.label then guide[#guide + 1] = { keys = g.keys, label = tostring(g.label) } end
 	end
 	for _, g in ipairs(PANEL_GUIDE) do guide[#guide + 1] = g end
-	return setmetatable({ owner = owner, run = M.runner(), title = spec.title, tabs = tabs, tab = 1, guide = guide,
-		side = spec.side == "left" and "left" or "right", width = tonumber(spec.width) or PANEL_W, status = spec.status,
-		on_close = spec.on_close, hidden_now = false }, Panel)
+	local buttons = {}
+	for _, b in ipairs(type(spec.buttons) == "table" and spec.buttons or {}) do
+		if type(b) == "table" and type(b.run) == "function" then buttons[#buttons + 1] = { glyph = b.glyph or b.icon, help = b.help, run = b.run } end
+	end
+	local asked = spec.anchor or spec.side
+	local docked = P.DOCKED[asked] ~= nil
+	local anchor = P.DOCKED[asked] or (P.ANCHORS[asked] and asked) or "bottom_right"
+	local hx, vy = P.ANCHORS[anchor][1], P.ANCHORS[anchor][2]
+	local id = (tostring(spec.id or "panel"):gsub("%s", "_"))
+	local grip = (vy > 0 and "t" or "b") .. (hx < 0 and "l" or "r")
+	local p = setmetatable({ owner = owner, run = M.runner(), title = spec.title, tabs = tabs, tab = 1, guide = guide, buttons = buttons,
+		anchor = anchor, docked = docked, hx = hx, vy = vy, side = hx < 0 and "right" or "left", grip = grip,
+		corners = grip .. " " .. (vy > 0 and "b" or "t") .. (hx < 0 and "r" or "l"),
+		width = tonumber(spec.width) or (docked and PANEL_W or P.PANEL_DEFAULT_W), height = tonumber(spec.height),
+		alpha_now = P.clamp(tonumber(spec.opacity) or P.PANEL_OPACITY, 0, 1), scale_now = P.clamp(tonumber(spec.scale) or 1, P.SCALE_MIN, P.SCALE_MAX),
+		foot = P.PANEL_FOOT, key = P.PANEL_KEY .. owner .. "/" .. id, status = spec.status, on_close = spec.on_close,
+		hidden_now = false, cursor_off = false, sounds = spec.sounds ~= false }, Panel)
+	M.panels[#M.panels + 1] = p
+	return p
 end
 
-local function close_panel()
+function P.close_panel()
 	if M.panel_on then M.panel_on:close() end
 end
 
-local function step_tab(p, direction)
-	open_tab(p, ((p.tab or 1) - 1 + direction) % #p.tabs + 1)
+function P.step_tab(p, direction)
+	P.open_tab(p, ((p.tab or 1) - 1 + direction) % #p.tabs + 1)
 end
 
-local function handle_panel(p, ev)
+function P.handle_panel(p, ev)
 	local frame = M.stack[#M.stack]
 	if not frame then return end
 	local list = rows(frame)
 	settle(frame, list)
 	local it = list[frame.selected]
 	if ev.back then
-		go_back(frame, close_panel)
+		go_back(frame, P.close_panel)
 	elseif ev.filter then
-		step_tab(p, shift_held() and -1 or 1)
+		P.step_tab(p, shift_held() and -1 or 1)
 	elseif ev.up then
 		move(frame, list, -1)
 	elseif ev.down then
@@ -1787,30 +2117,45 @@ local function handle_panel(p, ev)
 	end
 end
 
--- Where the panel sits, in the kit's units: the full height of the screen, inside a margin.
-local function panel_box(p)
-	local left, bottom, right, top = visible()
-	local w = math.max(PANEL_MIN_W, math.min(p.width, right - left - PANEL_GAP * 2))
-	local x = p.side == "left" and left + PANEL_GAP or right - PANEL_GAP - w
-	p.box = { x = x, top = top - PANEL_GAP, w = w, h = top - bottom - PANEL_GAP * 2 }
-	return p.box
+function P.see_through(c, a)
+	return { c[1], c[2], c[3], (c[4] or 255) * a }
 end
 
-local function draw_panel_title(p, box, mx, my)
+-- A button of the title bar: the close button, or one of spec.buttons.
+function P.title_button(area, symbol, mx, my)
+	local kit = M.kit
+	local over = inside(area, mx, my)
+	kit:layer(LAYER_MARK)
+	if over then kit:rect(area.x, area.y, area.w, TITLE_H - 2, HOVER) end
+	kit:layer(LAYER_MARK + 1)
+	P.draw_symbol(symbol, area.x + 11, area.y + (TITLE_H - 12) / 2, 12, over and GOLD or GREY)
+	return over
+end
+
+function P.draw_panel_title(p, box, mx, my, back)
 	local kit, hits = M.kit, M.hits
 	local x, top, w = box.x, box.top, box.w
 	local y = top - TITLE_H
+	local cut_top = p.corners:match("t[lr]")
 	kit:layer(LAYER_BACK + 1)
-	kit:panel({ x, y, w, TITLE_H, cut = CUT, corners = "tl", fill = HEADER })
+	kit:panel({ x, y, w, TITLE_H, cut = CUT, corners = cut_top, fill = back.header })
 	kit:layer(LAYER_MARK)
-	kit:rect(x + CUT, top - 2, w - CUT, 2, GOLD)
-	kit:glyph("shield", x + 13, y + 7, 17, GOLD)
-	local close = { x = x + w - TITLE_H, y = y, w = TITLE_H, h = TITLE_H }
+	kit:rect(cut_top == "tl" and x + CUT or x, top - 2, w - CUT, 2, GOLD)
+	-- A grip on top takes the end of the bar.
+	local left_x = x + PAD + (p.grip == "tl" and GRIP or 0)
+	local right_x = x + w - (p.grip == "tr" and GRIP or 0)
+	hits.title = { x = x, y = y, w = w, h = TITLE_H }
+	local close = { x = right_x - TITLE_H, y = y, w = TITLE_H, h = TITLE_H }
 	hits.close = close
-	local over = inside(close, mx, my)
-	if over then kit:rect(close.x, y, TITLE_H, TITLE_H - 2, HOVER) end
-	kit:layer(LAYER_MARK + 1)
-	kit:glyph("close", close.x + 11, y + (TITLE_H - 12) / 2, 12, over and GOLD or GREY)
+	P.title_button(close, "close", mx, my)
+	hits.buttons = {}
+	local edge = close.x
+	for i, b in ipairs(p.buttons) do
+		edge = edge - TITLE_H
+		local area = { x = edge, y = y, w = TITLE_H, h = TITLE_H, button = b }
+		hits.buttons[i] = area
+		if P.title_button(area, b.glyph, mx, my) then p.hover_button = b end
+	end
 	local status = ""
 	if p.status then
 		local ok, s = p.run(p.status)
@@ -1818,54 +2163,117 @@ local function draw_panel_title(p, box, mx, my)
 	end
 	local status_w = status ~= "" and width_of(status, SMALL) + 14 or 0
 	kit:layer(LAYER_MARK)
-	if status ~= "" then put(status, close.x - 8, mid(y, TITLE_H, SMALL), SMALL, GOLD, "right") end
-	put(fit(text_or(p.owner, p.title, "title"), w - TITLE_H - status_w - 46, TITLE), x + 38, mid(y, TITLE_H, TITLE), TITLE, WHITE)
+	if status ~= "" then put(status, edge - 8, mid(y, TITLE_H, SMALL), SMALL, GOLD, "right") end
+	put(fit(P.text_or(p.owner, p.title, "title"), edge - status_w - 8 - left_x, TITLE), left_x, mid(y, TITLE_H, TITLE), TITLE, WHITE)
 end
 
-local function draw_tabs(p, box, mx, my)
+-- The tabs: a tab's icon in place of the title when the tab has one that draws.
+function P.draw_tabs(p, box, mx, my, back)
 	local kit, hits = M.kit, M.hits
 	local y = box.top - TITLE_H - TAB_H
 	local n = #p.tabs
 	local each = box.w / n
 	hits.tabs = {}
 	kit:layer(LAYER_BACK + 1)
-	kit:rect(box.x, y, box.w, TAB_H, WELL)
+	kit:rect(box.x, y, box.w, TAB_H, back.well)
 	for i, tab in ipairs(p.tabs) do
 		local x = box.x + (i - 1) * each
 		local area = { x = x, y = y, w = each, h = TAB_H, tab = i }
 		hits.tabs[i] = area
-		local on = i == p.tab
+		local on, over = i == p.tab, inside(area, mx, my)
+		if over then p.hover_tab = i end
 		kit:layer(LAYER_BACK + 2)
 		if on then
 			kit:rect(x, y, each, TAB_H, SELECTED)
-		elseif inside(area, mx, my) then
+		elseif over then
 			kit:rect(x, y, each, TAB_H, HOVER)
 		end
 		kit:layer(LAYER_MARK)
 		if on then kit:rect(x, y, each, 2, GOLD) end
-		local label = fit(text_of(p.owner, tab.title, "title"), each - 8, FOLDER)
-		put(label, x + each / 2, mid(y, TAB_H, FOLDER), FOLDER, on and WHITE or GREY, "center")
+		if tab.icon then
+			local size = P.is_glyph(tab.icon) == false and 22 or 16
+			area.icon = P.draw_symbol(tab.icon, x + (each - size) / 2, y + (TAB_H - size) / 2, size, on and GOLD or (over and WHITE or GREY))
+		end
+		if not area.icon then
+			local label = fit(text_of(p.owner, tab.title, "title"), each - 8, FOLDER)
+			put(label, x + each / 2, mid(y, TAB_H, FOLDER), FOLDER, on and WHITE or GREY, "center")
+		end
 	end
 	return y
 end
 
-local function draw_panel(p)
+-- The foot: a header button's help while the mouse is on the button; else the name of the tab under the
+-- mouse or open, when that tab shows an icon, then the selected row's help. The line over it drags.
+function P.draw_panel_foot(p, frame, list, shown, left, right, bottom, mx, my)
+	local kit, hits = M.kit, M.hits
+	local foot_y = bottom + p.foot
+	hits.divider = { x = left, y = foot_y - 5, w = right - left, h = 8 }
+	local lit = inside(hits.divider, mx, my) or (M.drag and M.drag.kind == "foot")
+	kit:layer(LAYER_BACK + 2)
+	kit:rect(left, foot_y, right - left, lit and 2 or 1, lit and GREY or DIVIDER)
+	local x, width = left + PAD, right - left - PAD * 2
+	local n = math.max(1, math.floor((p.foot - P.GUIDE_BAND - 8) / P.HELP_STEP))
+	local y = foot_y - SMALL.size - 5
+	kit:layer(LAYER_MARK)
+	local b = p.hover_button
+	if b then
+		if b.help then draw_help(P.text_or(p.owner, b.help, "help"), n, x, y, width) end
+	else
+		local named = nil
+		local hover = p.hover_tab and hits.tabs[p.hover_tab]
+		if hover and hover.icon then
+			named = p.tabs[p.hover_tab]
+		elseif hits.tabs[p.tab] and hits.tabs[p.tab].icon then
+			named = p.tabs[p.tab]
+		end
+		if named then
+			put(fit(text_of(p.owner, named.title, "title"), width, HEADING), x, y, HEADING, GOLD)
+			y, n = y - P.HELP_STEP, n - 1
+		end
+		local selected = list[frame.selected]
+		if n > 0 and selected and selected.help then
+			draw_help(text_of(selected.owner or frame.owner, selected.help, "help"), n, x, y, width)
+		end
+	end
+	draw_keys(frame, list, shown, left, right, bottom, p.guide)
+end
+
+-- The grip, in the corner across from the anchor's, as dots along the fold.
+function P.draw_panel_grip(p, box, mx, my)
+	local right_side, top_side = p.grip:sub(2) == "r", p.grip:sub(1, 1) == "t"
+	local cx = right_side and box.x + box.w or box.x
+	local cy = top_side and box.top or box.top - box.h
+	local area = { x = right_side and cx - GRIP or cx, y = top_side and cy - GRIP or cy, w = GRIP, h = GRIP }
+	M.hits.grip = area
+	local c = (inside(area, mx, my) or (M.drag and M.drag.kind == "panel_size")) and GOLD or GREY
+	M.kit:layer(LAYER_MARK + 1)
+	for row_at = 0, 2 do
+		for dot = 0, 2 - row_at do
+			M.kit:rect(right_side and cx - 6 - dot * 4 or cx + 4 + dot * 4, top_side and cy - 8 - row_at * 4 or cy + 6 + row_at * 4, 2, 2, c)
+		end
+	end
+end
+
+function P.draw_panel_body(p, box)
 	local kit = M.kit
-	local box = panel_box(p)
 	local bottom = box.top - box.h
 	local mx, my = M.mouse_x or -1, M.mouse_y or -1
+	if p.cursor_off then mx, my = -1e9, -1e9 end
 	M.hits = { rows = {}, nav = {} }
+	p.hover_tab, p.hover_button = nil, nil
+	local a = p.alpha_now
+	local back = { header = P.see_through(HEADER, a), well = P.see_through(WELL, a) }
 	kit:layer(LAYER_BACK)
-	kit:panel({ box.x, bottom, box.w, box.h, cut = CUT, corners = "tl br", fill = PANEL })
-	draw_panel_title(p, box, mx, my)
-	local tabs_y = draw_tabs(p, box, mx, my)
+	kit:panel({ box.x, bottom, box.w, box.h, cut = CUT, corners = p.corners, fill = P.see_through(PANEL, a) })
+	P.draw_panel_title(p, box, mx, my, back)
+	local tabs_y = P.draw_tabs(p, box, mx, my, back)
 	local frame = M.stack[#M.stack]
 	if not frame then return end
 	local list = rows(frame)
 	settle(frame, list)
 	local left, right = box.x, box.x + box.w
 	local top = tabs_y
-	-- A page opened inside the tab gets a line with the way back and its name.
+	-- A page opened inside the tab gets a line with the way back and the page's name.
 	if #M.stack > 1 then
 		local head_y = top - PAGE_H
 		local area = { x = left, y = head_y, w = PAGE_H, h = PAGE_H }
@@ -1880,7 +2288,7 @@ local function draw_panel(p)
 		kit:rect(left, head_y, right - left, 1, DIVIDER)
 		top = head_y
 	end
-	local view = top - (bottom + FOOT_H) - 4
+	local view = top - (bottom + p.foot) - 4
 	local shown = math.max(1, math.floor(view / ROW_H))
 	if frame.follow then
 		if frame.selected < frame.top then frame.top = frame.selected end
@@ -1890,21 +2298,58 @@ local function draw_panel(p)
 	frame.top = math.max(1, math.min(frame.top, #list - shown + 1))
 	draw_rows(frame, list, shown, left, right, top - 4, mx, my)
 	draw_scroll(frame, list, shown, right, top - 4, mx, my)
-	draw_foot(frame, list, shown, left, right, bottom, p)
+	P.draw_panel_foot(p, frame, list, shown, left, right, bottom, mx, my)
+	P.draw_panel_grip(p, box, mx, my)
 end
 
-local function press_panel(p, frame, x, y)
-	local hits = M.hits
+-- At a scale other than 1, the panel draws through a scaled kit, and the real one comes back after.
+function P.draw_panel(p)
+	local real = M.kit
+	local box = P.place_panel(p)
+	if p.scale_now ~= 1 then M.kit = P.scaled_kit(real, p.scale_now, p.place.x, p.place.y) end
+	local ok, err = pcall(P.draw_panel_body, p, box)
+	M.kit = real
+	if not ok then error(err, 0) end
+end
+
+-- A header button, as the mod. A string it answers becomes a toast.
+function P.run_button(p, b)
+	SOUND.ask("select")
+	local ok, result = p.run(b.run)
+	if not ok then
+		if result ~= "off" then
+			limited("panel button", "menu: panel button: " .. tostring(result))
+			M.toast(tostring(result))
+		end
+	elseif type(result) == "string" then
+		M.toast(result)
+	end
+end
+
+function P.press_panel(p, frame, m)
+	local hits, x, y = M.hits, m.x, m.y
+	local pl, s = p.place, p.scale_now
 	if inside(hits.close, x, y) then
 		M.closing = true
+		return
+	end
+	for _, area in ipairs(hits.buttons or {}) do
+		if inside(area, x, y) then return P.run_button(p, area.button) end
+	end
+	if pl and inside(hits.grip, x, y) then
+		M.drag = { kind = "panel_size", panel = true, w = pl.w * s - (m.sx - pl.x) * p.hx, h = pl.h * s - (m.sy - pl.y) * p.vy }
 	elseif inside(hits.back, x, y) then
 		go_back(frame)
 	elseif inside(hits.track, x, y) then
 		M.drag = { kind = "scroll" }
 		scroll_to(frame, y)
+	elseif inside(hits.divider, x, y) then
+		M.drag = { kind = "foot", panel = true, foot = p.foot, y = y }
+	elseif pl and inside(hits.title, x, y) then
+		M.drag = { kind = "panel_move", panel = true, sx = m.sx, sy = m.sy, x = pl.x, y = pl.y }
 	else
 		for _, area in ipairs(hits.tabs or {}) do
-			if inside(area, x, y) then return open_tab(p, area.tab) end
+			if inside(area, x, y) then return P.open_tab(p, area.tab) end
 		end
 		for _, row in ipairs(hits.rows) do
 			if inside(row, x, y) then return click_row(frame, row, x, y) end
@@ -1912,11 +2357,37 @@ local function press_panel(p, frame, x, y)
 	end
 end
 
+function P.end_panel_drag(p)
+	local drag = M.drag
+	M.drag = nil
+	if drag and drag.panel then P.want_save(p) end
+end
+
+-- A move and a resize go by the mouse in the kit's units, the help's line in the panel's.
+function P.follow_panel_drag(p, drag, m)
+	if not m.held then return P.end_panel_drag(p) end
+	local pl, s = p.place, p.scale_now
+	if drag.kind == "panel_move" then
+		pl.x, pl.y = drag.x + m.sx - drag.sx, drag.y + m.sy - drag.sy
+	elseif drag.kind == "panel_size" then
+		pl.w = ((m.sx - pl.x) * p.hx + drag.w) / s
+		pl.h = ((m.sy - pl.y) * p.vy + drag.h) / s
+	elseif drag.kind == "foot" then
+		p.foot = drag.foot + m.y - drag.y
+	end
+	P.place_panel(p)
+end
+
 -- The mouse for an open panel: the left button and the wheel over it. The right button and anything
--- away from the panel are the mod's.
+-- away from the panel are the mod's, and while the cursor is hidden, all of the mouse is.
 function M.panel_mouse(m, moved, dt)
 	local p = M.panel_on
 	if p.hidden_now then return end
+	if p.cursor_off then
+		if M.drag and M.drag.panel then P.end_panel_drag(p) else M.drag = nil end
+		M.hold = nil
+		return
+	end
 	if M.field then
 		if m.left then
 			local field = M.field
@@ -1927,7 +2398,10 @@ function M.panel_mouse(m, moved, dt)
 	end
 	local frame = M.stack[#M.stack]
 	if not frame then return end
-	if M.drag then return follow_drag(frame, M.drag, m) end
+	if M.drag then
+		if M.drag.panel then return P.follow_panel_drag(p, M.drag, m) end
+		return follow_drag(frame, M.drag, m)
+	end
 	if M.hold then
 		if not m.held then
 			M.hold = nil
@@ -1951,25 +2425,26 @@ function M.panel_mouse(m, moved, dt)
 			if selectable(row.it) and inside(row, m.x, m.y) then frame.selected = row.index end
 		end
 	end
-	if m.left then press_panel(p, frame, m.x, m.y) end
+	if m.left then P.press_panel(p, frame, m) end
 end
 
-local function panel_frame(dt)
+function P.panel_frame(dt)
 	local p = M.panel_on
 	hold_focus()
-	if M.cursor and not p.hidden_now then pcall(hold_cursor) end
+	if M.cursor and not p.hidden_now and not p.cursor_off then pcall(hold_cursor) end
+	P.place_panel(p)
 	if not p.hidden_now then
 		if M.field then
 			read_field()
 		else
-			handle_panel(p, read_nav(dt, PANEL_KEYS, "panel "))
+			P.handle_panel(p, read_nav(dt, PANEL_KEYS, "panel "))
 		end
 	end
 	if M.panel_on == p then mouse_input(dt) end
 	-- A row's change can change what the tab lists: page:refresh() asks for it.
 	local frame = M.stack[#M.stack]
 	if M.panel_on == p and frame and frame.page and frame.page.dirty then build(frame) end
-	if M.panel_on == p and not p.hidden_now and not M.held_back then draw_panel(p) end
+	if M.panel_on == p and not p.hidden_now and not M.held_back then P.draw_panel(p) end
 end
 
 -- The window's place and the closed folders go to this library's storage from the frame, where this
@@ -1984,6 +2459,7 @@ local function flush_saves()
 		table.sort(list)
 		obsidian.storage.set(FOLDERS_KEY, table.concat(list, " "))
 	end
+	if M.save.panels then P.save_panels() end
 	M.save = {}
 end
 
@@ -1994,18 +2470,23 @@ function M.frame()
 	if M.shown or M.panel_on then
 		local name = state_name()
 		if name ~= M.state_name then
+			-- A new screen closes them without a sound: the old screen's sound world may be going.
+			SOUND.off = true
 			if M.panel_on then M.panel_on:close() end
 			M.close()
+			SOUND.off, SOUND.event, SOUND.rank = false, nil, 0
 		end
 		M.state_name = name
 	else
 		M.state_name = state_name()
 	end
+	-- What was asked for since the last frame, a key that opened the window among it.
+	SOUND.flush(global("ENGINE_DT") or 0)
 	if not M.kit or (not M.shown and not M.panel_on and #M.toasts == 0) then return flush_saves() end
 	local script = global("Script")
 	local vectors, quaternions, matrices = script.temp_count()
 	local dt = global("ENGINE_DT") or 0
-	if M.panel_on then panel_frame(dt) end
+	if M.panel_on then P.panel_frame(dt) end
 	if M.shown then
 		hold_focus()
 		if M.cursor then pcall(hold_cursor) end
@@ -2033,8 +2514,10 @@ local function protected_frame()
 	local ok, err = pcall(M.frame)
 	if not ok then
 		limited("frame", "menu: " .. tostring(err))
+		SOUND.off = true
 		if M.panel_on then pcall(M.panel_on.close, M.panel_on) end
 		if M.shown then pcall(M.close) end
+		SOUND.off, SOUND.event, SOUND.rank = false, nil, 0
 	end
 end
 

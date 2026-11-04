@@ -2,6 +2,20 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.24.0
+
+- New: a panel drags by the title bar, resizes from a corner grip and stays on screen. The place and size are kept for the next launch, per mod and `spec.id`.
+- New: `spec.anchor` keeps a panel at a corner of the screen, `"bottom_right"` by default, 540 by 360 (`spec.width`, `spec.height`). `"right"` and `"left"` keep the full height down that side, and `side` still works.
+- New: `panel:set_opacity(a)` sets the background's strength, 0.5 by default, and `panel:set_scale(s)` draws the whole panel from 0.6 to 1.6 times as big. Both are kept with the place.
+- New: a tab's `icon` shows in place of the tab's title, which then shows over the help.
+- New: `spec.buttons` adds buttons to a panel's title bar, left of the close button, which run as the mod.
+- New: `panel:set_cursor_hidden(on)` hides the cursor and leaves the mouse to the mod while the panel stays drawn, for looking around with a held button.
+- New: `panel:reset_place()` puts a panel back where it first opened.
+- New: the F6 window and panels play the game's own menu sounds, quietly, for moving, changing a value, choosing and going back. `spec.sounds = false` turns them off for a panel.
+- Changed: a panel's help has room for four lines, and players drag the line above the help for more or less.
+- Changed: a new panel opens at the bottom right of the screen, three wide by two high, at half opacity.
+- Removed: the shield in the title bars of the F6 window and panels.
+
 ## 1.23.0
 
 - New: `api.world.camera.take()`, `set(pose)`, `get()` and `release()`: a mod holds the camera and places it every frame by position, yaw, pitch, roll and field of view, with or without perspective. Client mods, any lobby.

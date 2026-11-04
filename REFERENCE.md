@@ -1125,7 +1125,7 @@ end)
 
 ### The in-game window: api.menu
 
-F6 opens a window over the game: a folder for each mod down the left with that mod's pages in it, and the open page on the right. The title bar names the mod whose page is open. It works with the keys, a pad and the mouse, players can move and resize it, and it opens where it was left. The key is Obsidian API's, so your mod needs none: it opens the window once a page is listed, and players change it in the Keys tab of Obsidian API.
+F6 opens a window over the game: a folder for each mod down the left with that mod's pages in it, and the open page on the right. The title bar names the mod whose page is open. It works with the keys, a pad and the mouse, players can move and resize it, and it opens where it was left. Moving, changing a value, choosing and going back play the game's own menu sounds, quietly. The key is Obsidian API's, so your mod needs none: it opens the window once a page is listed, and players change it in the Keys tab of Obsidian API.
 
 `api.menu.add(title, build, opts)` adds a page to your mod's folder. `title` is text, or a function that answers it, since at boot the game's language isn't known yet. `build(page)` runs each time the page opens. `opts.icon` is one of `obsidian.ui.glyphs()`.
 
@@ -1168,29 +1168,45 @@ end, { icon = "enemies" })
 
 #### Panels
 
-`api.menu.panel(spec)` makes a window of your mod's own, down one side of the screen, with tabs along its top. Your code opens and closes it. Its rows are the rows above, plus `page:slider(label, opts)`, a number on a bar the mouse drags, from `opts.min` to `opts.max`. A choice's `swatch` (`{ r, g, b }`, 0 to 255) shows a color square beside its label, and `format` can be a function for any row with a value.
+`api.menu.panel(spec)` makes a window of your mod's own, with tabs along the top, at the bottom right of the screen at first. Your code opens and closes it. The rows are the rows above, plus `page:slider(label, opts)`, a number on a bar the mouse drags, from `opts.min` to `opts.max`. A choice's `swatch` (`{ r, g, b }`, 0 to 255) shows a color square beside the choice's label, and `format` can be a function for any row with a value.
 
-A panel handles on the arrow keys, Enter, Esc, Tab (Shift and Tab goes back a tab), R and the left mouse button. W A S D, Q, E, the right mouse button and the wheel away from the panel are yours: read them raw to steer something while it's open, such as a camera. The game gets no input while a panel is open, and the F6 window waits.
+A panel handles the arrow keys, Enter, Esc, Tab (Shift and Tab goes back a tab), R and the left mouse button, and the wheel while the mouse is over the panel. W A S D, Q, E, the right mouse button and the wheel away from the panel are yours: read them raw to steer something while the panel is open, such as a camera. The game gets no input while a panel is open, and the F6 window waits.
+
+Players drag a panel by the title bar and resize it from the grip in the corner across from the anchor. The line between the rows and the help drags too, for room for longer help: four lines at first. The place, the size, the help's room, the opacity and the scale are kept for the next launch, per mod and `spec.id`, in Obsidian API's storage. A panel always stays on screen.
 
 | spec | What it is |
 |---|---|
 | `title` | Text, or a function |
-| `tabs` | `{ { title = ..., build = function(page) end }, ... }`, at least one |
-| `side` | `"right"` (the default) or `"left"` |
-| `width` | In the game's 1280 by 720 design units, 390 by default |
+| `tabs` | `{ { title = ..., build = function(page) end, icon = ... }, ... }`, at least one. With `icon`, one of `obsidian.ui.glyphs()` or a HUD icon from `obsidian.ui.icons()`, the tab shows the icon in place of the title, and the title shows over the help while the tab is open or under the mouse. An icon that doesn't draw leaves the title |
+| `id` | Names the kept place among your mod's panels, `"panel"` by default |
+| `anchor` | The corner the panel is kept at and grows from: `"bottom_right"` (the default), `"bottom_left"`, `"top_right"` or `"top_left"`. `"right"` and `"left"` are the top corners with the full height of the screen at first. `side` is the same as `anchor` |
+| `width`, `height` | In the game's 1280 by 720 design units: 540 by 360 by default, and 390 wide for `"right"` and `"left"` |
+| `opacity` | The background's strength, from 0 to 1, until the player's own is kept: 0.5 by default. The rows and words stay at full strength |
+| `scale` | How big everything in the panel is drawn, from 0.6 to 1.6, 1 by default |
+| `buttons` | Buttons in the title bar, left of the close button: `{ { glyph = "reset", help = "...", run = function() end } }`. `glyph` is one of `obsidian.ui.glyphs()` or a HUD icon. `run` runs as your mod, and a string it answers shows as a toast. The help shows over the panel's help while the mouse is on the button |
+| `sounds` | `false` and the panel plays none of the game's menu sounds |
 | `status` | A function answering a short text for the title bar |
-| `guide` | Your keys for its key guide, before its own: `{ { keys = { "H" }, label = "Hide" } }` |
-| `on_close` | Called as your mod when it closes, by Esc, its close button or `close()` |
+| `guide` | Your keys for the panel's key guide, before the panel's own: `{ { keys = { "H" }, label = "Hide" } }` |
+| `on_close` | Called as your mod when the panel closes, by Esc, the close button or `close()` |
 
-It answers a panel with `open(tab)`, `close()`, `is_open()`, `hide(on)` (draws nothing and reads no keys, but still keeps input from the game), `hidden()`, `select_tab(n)`, `tab_number()`, `refresh()`, `under_mouse()` and `typing()`.
+A panel answers `open(tab)`, `close()`, `is_open()`, `hide(on)` (draws nothing and reads no keys, but still keeps input from the game), `hidden()`, `select_tab(n)`, `tab_number()`, `refresh()`, `under_mouse()` and `typing()`, and also:
+
+| Call | What it does |
+|---|---|
+| `set_opacity(a)`, `opacity()` | The background's strength, from 0 to 1. Kept with the place |
+| `set_scale(s)`, `scale()` | Everything in the panel bigger or smaller, from 0.6 to 1.6, growing from the anchor's corner. Kept with the place |
+| `reset_place()` | Back to the first place and size, the help's room too. Opacity and scale stay |
+| `set_cursor_hidden(on)`, `cursor_hidden()` | With `true`, the cursor hides and the panel leaves the mouse alone while still drawn: for looking around while the right mouse button is held, say. `false` brings the cursor back, and so does closing the panel |
 
 ```lua
-local panel = api.menu.panel({ title = "Photo Mode", on_close = stop_photo_mode, tabs = {
-  { title = "Camera", build = function(page)
-    page:slider("Field of view", { min = 20, max = 120, step = 1, format = "%d deg", default = 60,
-      get = function() return fov end, set = function(v) fov = v end })
-  end },
-} })
+local panel = api.menu.panel({ title = "Photo Mode", id = "controls", on_close = stop_photo_mode,
+  buttons = { { glyph = "reset", help = "Puts every setting back.", run = reset_everything } },
+  tabs = {
+    { title = "Camera", icon = "weapons", build = function(page)
+      page:slider("Field of view", { min = 20, max = 120, step = 1, format = "%d deg", default = 60,
+        get = function() return fov end, set = function(v) fov = v end })
+    end },
+  } })
 panel:open()
 ```
 
@@ -1674,7 +1690,7 @@ A session mod's hooks, frame functions, effects and edits stop while the lobby i
 
 <!-- Everything below is generated by tools/reference.py from the source. Don't edit it by hand. -->
 
-## Every call (Obsidian API 1.23.0)
+## Every call (Obsidian API 1.24.0)
 
 Each table of `api`, its calls in the order of the source, and the comment above each one. `bot:`, `drone:`, `prop:`, `marker:` and `page:` are methods of what `api.bots.add`, `api.gear.add_drone`, `api.world.prop`, `api.map.marker` and `api.mod_settings.page` answer, and under `api.menu`, of the page a build gets. Where this list and the guide above disagree, this list is right.
 
@@ -1970,17 +1986,24 @@ The in-game window that F6 opens: a folder per mod down the left with that mod's
 - `api.menu.is_open()`: Whether the window is open.
 - `api.menu.toast(text, seconds)`: A short message at the top left of the screen, or beside the window while it's open.
 - `api.menu.add(title, build, opts)`: A page in the list down the left, in the folder of the mod that adds it. title: text, or a function that answers it. build(page) runs each time the page opens. opts.icon: one of obsidian.ui.glyphs().
-- `panel:open(tab)`: Opens the panel on its tab, closing the F6 window and any other panel. false while a panel can't open (as the window can't: logos, cutscenes, screen changes, the chat typing).
-- `panel:close()`: Closes it, gives the game its input and cursor back, and calls the panel's on_close.
+- `panel:open(tab)`: Opens the panel on a tab, closing the F6 window and any other panel. false while a panel can't open (as the window can't: logos, cutscenes, screen changes, the chat typing).
+- `panel:close()`: Closes the panel, gives the game the input and the cursor back, and calls on_close. A hidden cursor (set_cursor_hidden) comes back for the next open.
 - `panel:is_open()`
 - `panel:hide(on)`: Hidden, it draws nothing and reads no keys, and the cursor goes, but the game still gets no input: the mod keeps steering. A screenshot hides every panel by itself.
 - `panel:hidden()`
+- `panel:set_cursor_hidden(on)`: With on, the cursor hides and the panel leaves the mouse alone, still drawn: for looking around while a mouse button is held, say. Off brings the cursor back. Closing the panel turns it off.
+- `panel:cursor_hidden()`
+- `panel:set_opacity(a)`: How strong the background is, from 0 (clear) to 1, 0.5 at first. The rows and the words stay at full strength. Kept with the panel's place for the next launch.
+- `panel:opacity()`
+- `panel:set_scale(s)`: How big everything in the panel is drawn, from 0.6 to 1.6, 1 at first, growing from the corner the panel is kept at. Kept with the panel's place for the next launch.
+- `panel:scale()`
+- `panel:reset_place()`: Puts the panel back where and as big as it first opened, help room included. Opacity and scale stay.
 - `panel:tab_number()`: The tab that's open, by number.
 - `panel:select_tab(i)`
-- `panel:refresh()`: Builds the open tab again, as after an action that changes what it lists.
-- `panel:under_mouse()`: Whether the mouse is over the panel now: the mod leaves the wheel and clicks there to the panel.
+- `panel:refresh()`: Builds the open tab again, as after an action that changes what the tab lists.
+- `panel:under_mouse()`: Whether the mouse is over the panel now: the mod leaves the wheel and clicks there to the panel. false while the cursor is hidden.
 - `panel:typing()`: Whether the panel is taking the keys for itself now: typing into a row.
-- `api.menu.panel(spec)`: A panel, closed. spec: title (text or a function), tabs ({ { title = ..., build = function(page) end, icon = ... }, ... }), side ("right", the default, or "left"), width (in the game's 1280 by 720 design units, 390 by default), status (a function answering a short text for the title bar), guide (key guide entries before the panel's own: { keys = { "H" }, label = "Hide" }), on_close().
+- `api.menu.panel(spec)`: A panel, closed. spec: title (text or a function); tabs ({ { title = ..., build = function(page) end, icon = ... }, ... }), where an icon (a name of obsidian.ui.glyphs(), or an icon of the game's HUD) shows in place of the title, and the title shows over the help; id (names the kept place among the mod's panels, "panel" by default); anchor ("bottom_right", the default, "bottom_left", "top_right", "top_left", or "right" and "left" for the full height down that side; side is the same); width and height (in the game's 1280 by 720 design units, 540 by 360 by default, 390 wide down a side); opacity (0.5) and scale (1) until the player changes them; buttons (in the title bar, left of the close button: { { glyph = "reset", help = "...", run = function() end } }, run as the mod, a string answered becoming a toast); sounds (false, and the panel plays none of the game's menu sounds); status (a function answering a short text for the title bar); guide (key guide entries before the panel's own: { keys = { "H" }, label = "Hide" }); on_close().
 
 ### api.mission
 
