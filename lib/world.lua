@@ -127,10 +127,17 @@ local function photo_screen(st, on)
 	if st.mission_manager and st.mission_manager.set_display_objectives then st.mission_manager:set_display_objectives(on) end
 end
 
+-- Missions and the ship. The camera goes back to the state it had: "follow" in a mission,
+-- "follow_menu" on the ship.
+local PHOTO_SCREENS = { game = true, menu = true }
+local photo_state_before = nil
+
 effects.define({ id = "photo_mode",
 	apply = function(ctx)
-		if ctx.name ~= "game" then return end
-		camera():set_state("fully_static")
+		if not PHOTO_SCREENS[ctx.name] then return end
+		local cm = camera()
+		if cm.state ~= "fully_static" then photo_state_before = cm.state end
+		cm:set_state("fully_static")
 		photo_screen(ctx.state, false)
 		if not effects.is_on("hide_hud") then
 			photo_hid_hud = true
@@ -138,8 +145,9 @@ effects.define({ id = "photo_mode",
 		end
 	end,
 	remove = function(ctx)
-		if ctx.name == "game" then
-			camera():set_state("follow")
+		if PHOTO_SCREENS[ctx.name] then
+			camera():set_state(photo_state_before or (ctx.name == "menu" and "follow_menu" or "follow"))
+			photo_state_before = nil
 			photo_screen(ctx.state, true)
 		end
 		if photo_hid_hud then
@@ -184,9 +192,9 @@ function M.camera.spectate(unit)
 	return false, "no_avatar"
 end
 
--- Freezes the camera and clears the screen. Mission only.
+-- Freezes the camera and clears the screen. In a mission or on the ship.
 function M.camera.photo(on)
-	if on and not game.in_mission() then return false, "not_in_mission" end
+	if on and not (game.in_mission() or game.on_ship()) then return false, "not_in_mission" end
 	return effects.set("photo_mode", on and true or false)
 end
 
@@ -549,9 +557,9 @@ end
 -- degrees. yaw turns about the up axis, 0 looking along +y, the level's north, and grows turning left
 -- seen from above; pitch looks up when positive and down when negative; roll tips the picture. fov is
 -- the vertical field of view. ortho, a width in metres, draws without perspective, as a plan does; far
--- is how far the camera sees, in metres. Answers true, or false and why not.
+-- is how far the camera sees, in metres. In a mission or on the ship. Answers true, or false and why not.
 function M.camera.take()
-	if not game.in_mission() then return false, "not_in_mission" end
+	if not (game.in_mission() or game.on_ship()) then return false, "not_in_mission" end
 	if held then return true end
 	local cm = camera()
 	local _, cam = viewport_camera(cm)

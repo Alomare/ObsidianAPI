@@ -2,6 +2,10 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.26.0
+
+- Changed: `api.world.camera.take()` and `api.world.camera.photo()` work on the ship as well as in missions. The camera goes back to the state it had, the ship's own there.
+
 ## 1.25.0
 
 - Changed: the `camera_fov`, `camera_distance` and `camera_angle` effects give back the camera the game set on the current screen when they come off. They gave back a mission's 60 degrees, 17 m and 65 degrees, which is wrong on the ship.
