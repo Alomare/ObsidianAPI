@@ -1,4 +1,5 @@
 {
+  "menu_tab_reset": "Puts this tab's settings back to the defaults.",
   "menu_title": "Obsidian",
   "menu_empty": "No mod has added a page.",
   "menu_failed": "This page failed to open. See the log.",

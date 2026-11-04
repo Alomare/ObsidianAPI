@@ -918,14 +918,6 @@ function M.planet_shading(name)
 	return out
 end
 
--- A Helldiver's flashlight, on this machine only, as the game lights it on a night mission.
-function M.flashlight(unit, on)
-	local U = game.global("Unit")
-	local ok, alive = pcall(U.alive, unit)
-	if not (ok and alive) then return false, "no_target" end
-	return (pcall(U.flow_event, unit, on and "flashlight_on" or "flashlight_off"))
-end
-
 -- Which way the sunlight comes from in this player's view, as a unit vector pointing at the sun, or
 -- nil where there's no sun to read: a sun_direction set through shading() first, else the planet's.
 function M.sun()
@@ -982,6 +974,184 @@ function M.time_of_day(name, towards, blend)
 end
 
 -- From main.lua, once a frame: what a change of screen gives back.
+-- The parts of a Helldiver that show or hide on their own, by name: the armour pieces the
+-- customization state holds, the weapon in hand, the other weapons carried, and equipment that isn't
+-- a weapon (a backpack). body is the whole figure under the armour.
+M.HELLDIVER_PARTS = {
+	helmet = { custom = "helmet_unit" }, heavy_armor = { custom = "heavy_armor_unit" }, boots = { custom = "all_terrain_boots_unit" },
+	cape = { custom = "cape_unit" }, body = { custom = "body_unit" },
+	weapon = { carried = "current" }, holstered = { carried = "holstered" }, backpack = { carried = "pack" },
+}
+
+-- The units of one part of a Helldiver (a name of HELLDIVER_PARTS), with what's linked to them, such as
+-- a weapon's sights. Empty when the Helldiver has none.
+function M.part_units(unit, part)
+	local spec = M.HELLDIVER_PARTS[part]
+	if not (spec and unit) then return {} end
+	local units = {}
+	if spec.custom then
+		local custom = game.slaves("customization")[unit]
+		local s = type(custom) == "table" and custom.state or {}
+		if s[spec.custom] then units[1] = s[spec.custom] end
+	else
+		local inv = game.master(unit, "inventory")
+		local current = inv and inv.current_weapon
+		local weapons = {}
+		for _, key in ipairs({ "primary_weapon", "sidearm_weapon", "current_weapon" }) do
+			if inv and inv[key] then weapons[inv[key]] = true end
+		end
+		if spec.carried == "current" then
+			units[1] = current
+		else
+			for item, ctx in pairs(game.slaves("equipment")) do
+				if type(ctx) == "table" and type(ctx.state) == "table" and ctx.state.wielder == unit and item ~= current then
+					if (spec.carried == "holstered") == (weapons[item] == true) then units[#units + 1] = item end
+				end
+			end
+		end
+	end
+	local out, seen = {}, {}
+	for _, u in ipairs(units) do linked_units(u, out, seen) end
+	return out
+end
+
+-- Meshes hidden by part_visible: unit -> { [mesh index] = whether it showed before }.
+local part_meshes = setmetatable({}, { __mode = "k" })
+
+-- Shows or hides one part of a Helldiver, on this machine only. It hides mesh by mesh and gives each
+-- mesh back as it was, so meshes the game keeps hidden stay hidden; a part hangs on a node of the
+-- Helldiver, so the size of the part can't hide it. Answers false and "no_target" when the Helldiver has none.
+function M.part_visible(unit, part, on)
+	local U = game.global("Unit")
+	local units = M.part_units(unit, part)
+	if #units == 0 then return false, "no_target" end
+	for _, u in ipairs(units) do
+		if on == false then
+			if not part_meshes[u] then
+				local kept = {}
+				local ok, n = pcall(U.num_meshes, u)
+				for i = 0, (ok and n or 0) - 1 do
+					local got, vis = pcall(U.mesh_visibility, u, i)
+					kept[i] = not got or vis ~= false
+					pcall(U.set_mesh_visibility, u, i, false)
+				end
+				part_meshes[u] = kept
+			end
+		else
+			local kept = part_meshes[u]
+			part_meshes[u] = nil
+			for i, vis in pairs(kept or {}) do pcall(U.set_mesh_visibility, u, i, vis) end
+		end
+	end
+	return true
+end
+
+-- Whether part_visible has a part of a Helldiver hidden.
+function M.part_hidden(unit, part)
+	for _, u in ipairs(M.part_units(unit, part)) do
+		if part_meshes[u] then return true end
+	end
+	return false
+end
+
+-- Where a Helldiver stands and the way it faces, in degrees (the character's rotation_angle).
+function M.placement(unit)
+	local U, EA = game.global("Unit"), game.global("EntityAux")
+	local ok, p = pcall(U.local_position, unit, 0)
+	if not ok then return nil end
+	local got, cs = pcall(EA.state_master, unit, "character")
+	local angle = got and type(cs) == "table" and tonumber(cs.rotation_angle) or nil
+	return { x = p.x, y = p.y, z = p.z }, angle and math.deg(angle) or nil
+end
+
+-- Puts a Helldiver at pos facing `angle` degrees (nil keeps the way it faces), on this machine only,
+-- in a stopped game too. Every frame the game puts a Helldiver at the mover component's position and
+-- turns it to the character's rotation_angle (character_component.lua:1000), so both the master and the slave
+-- states change, as the game's own teleport changes them (mover_component.lua). The physics mover goes
+-- along, never below `floor` (a height; nil for none): a mover under the ground falls out of the
+-- level, and the game removes what falls out. The Helldiver itself goes as low as asked. A running
+-- game carries on from the mover.
+function M.place(unit, pos, angle, floor)
+	local at = vector(pos)
+	if not at then return false, "bad_type" end
+	local U, V3, EA, box, Mover = game.global("Unit"), game.global("Vector3"), game.global("EntityAux"), game.global("Vector3Aux"), game.global("Mover")
+	local ok, alive = pcall(U.alive, unit)
+	if not (ok and alive) then return false, "no_target" end
+	local x, y, z = V3.x(at), V3.y(at), V3.z(at)
+	pcall(U.set_local_position, unit, 0, at)
+	local got, mover = pcall(U.mover, unit)
+	if got and mover and Mover then pcall(Mover.set_position, mover, V3(x, y, floor and math.max(z, floor) or z)) end
+	for _, getter in ipairs({ "state_master", "state" }) do
+		local has, ms = pcall(EA[getter], unit, "mover")
+		if has and type(ms) == "table" then
+			for _, key in ipairs({ "position", "previous_position", "last_position" }) do
+				if ms[key] then ms[key] = box.box(ms[key], at) end
+			end
+			ms.position_x, ms.position_y, ms.position_z = x, y, z
+		end
+		if angle then
+			local found, cs = pcall(EA[getter], unit, "character")
+			if found and type(cs) == "table" and type(cs.rotation_angle) == "number" then cs.rotation_angle = math.rad(angle) end
+		end
+	end
+	-- The rotation the game makes from a rotation_angle (character_component.lua:1000).
+	local turn = rawget(math, "normalized_angle_to_quaternion")
+	if angle and turn then pcall(U.set_local_rotation, unit, 0, turn(math.rad(angle))) end
+	settle_parts(unit)
+	return true
+end
+
+-- Poses that hold until the game ends them, and how each is left; every pose is then cleared with
+-- no_animation_fullbody, which ends what a full-body animation left (at_ease has no way out of the pose).
+M.POSE_EXITS = { radio_activate = "radio_deactivate", map_open = "map_close", sit = "stand", on_enter_stratagem_input = "on_exit_stratagem_input" }
+M.POSE_CLEAR = "no_animation_fullbody"
+local posed = setmetatable({}, { __mode = "k" })
+
+-- Ends the pose pose() sent last to a Helldiver. Answers whether there was one. A stopped game shows
+-- the change once it runs for a moment.
+function M.end_pose(unit)
+	local was = posed[unit]
+	posed[unit] = nil
+	if not was then return false end
+	local U = game.global("Unit")
+	if M.POSE_EXITS[was] then pcall(U.animation_event, unit, M.POSE_EXITS[was]) end
+	pcall(U.animation_event, unit, M.POSE_CLEAR)
+	return true
+end
+
+-- Sends one of a Helldiver's animation events as a pose, on this machine only, after ending the pose
+-- sent before it, so poses don't pile up. Answers false and "no_event" when the unit hasn't that event.
+-- A stopped game plays it once it runs for a moment.
+function M.pose(unit, event)
+	local U = game.global("Unit")
+	local ok, has = pcall(U.has_animation_event, unit, event)
+	if not (ok and has) then return false, "no_event" end
+	M.end_pose(unit)
+	if not pcall(U.animation_event, unit, event) then return false, "no_event" end
+	posed[unit] = event
+	return true
+end
+
+local function has_own_light(unit)
+	local U = game.global("Unit")
+	for _, part in ipairs(M.parts_of(unit)) do
+		local ok, n = pcall(U.num_lights, part)
+		if ok and n > 0 then return true end
+	end
+	return false
+end
+
+-- A Helldiver's flashlight, on this machine only, as the game lights it on a night mission. Only the
+-- night armour carries one (a light in the armour's units): anywhere else this answers false and
+-- "no_flashlight".
+function M.flashlight(unit, on)
+	local U = game.global("Unit")
+	local ok, alive = pcall(U.alive, unit)
+	if not (ok and alive) then return false, "no_target" end
+	if not has_own_light(unit) then return false, "no_flashlight" end
+	return (pcall(U.flow_event, unit, on and "flashlight_on" or "flashlight_off"))
+end
+
 function M.tick()
 	local st = game.state()
 	if held and held.state ~= st then

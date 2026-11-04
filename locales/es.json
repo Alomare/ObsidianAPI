@@ -1,4 +1,5 @@
 {
+  "menu_tab_reset": "Devuelve los ajustes de esta pestaña a los valores predeterminados.",
   "menu_title": "Obsidian",
   "menu_empty": "Ningún mod ha añadido una página.",
   "menu_failed": "Esta página no se pudo abrir. Mira el registro.",

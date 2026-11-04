@@ -1,4 +1,5 @@
 {
+  "menu_tab_reset": "Remet les réglages de cet onglet par défaut.",
   "menu_title": "Obsidian",
   "menu_empty": "Aucun mod n'a ajouté de page.",
   "menu_failed": "Cette page n'a pas pu s'ouvrir. Voir le journal.",

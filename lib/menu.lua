@@ -1872,51 +1872,6 @@ function P.is_glyph(name)
 	return P.glyph_set[name] == true
 end
 
--- Gui triangles have no anti-aliasing, so a small shape's edges step. Under each polygon goes a copy
--- grown by under a pixel at about half the opacity, which softens the steps. points: a flat list of a
--- convex polygon's corners in screen pixels. Answers the grown copy.
-local function feathered(points, grow)
-	local n = #points / 2
-	local area = 0
-	for i = 0, n - 1 do
-		local j = (i + 1) % n
-		area = area + points[i * 2 + 1] * points[j * 2 + 2] - points[j * 2 + 1] * points[i * 2 + 2]
-	end
-	local turn = area >= 0 and 1 or -1
-	local out = {}
-	for i = 0, n - 1 do
-		local p, q = (i - 1) % n, (i + 1) % n
-		local x, y = points[i * 2 + 1], points[i * 2 + 2]
-		local ax, ay = x - points[p * 2 + 1], y - points[p * 2 + 2]
-		local bx, by = points[q * 2 + 1] - x, points[q * 2 + 2] - y
-		local la, lb = math.sqrt(ax * ax + ay * ay), math.sqrt(bx * bx + by * by)
-		if la < 1e-6 or lb < 1e-6 then
-			out[#out + 1], out[#out + 2] = x, y
-		else
-			-- Outward normals of the two edges at this corner, and the way between them.
-			local nax, nay = ay / la * turn, -ax / la * turn
-			local nbx, nby = by / lb * turn, -bx / lb * turn
-			local mx, my = nax + nbx, nay + nby
-			local lm = math.sqrt(mx * mx + my * my)
-			if lm < 1e-6 then
-				out[#out + 1], out[#out + 2] = x + nax * grow, y + nay * grow
-			else
-				mx, my = mx / lm, my / lm
-				local reach = grow / math.max(0.35, mx * nax + my * nay)
-				out[#out + 1], out[#out + 2] = x + mx * reach, y + my * reach
-			end
-		end
-	end
-	return out
-end
-
-local function faded(c, share)
-	if type(c) ~= "table" then return c end
-	return { c[1] or c.r or 255, c[2] or c.g or 255, c[3] or c.b or 255, (c[4] or c.a or 255) * share }
-end
-
-P.feathered = feathered
-
 -- A mod's own icon: convex polygons on a grid of 16 with y up, each a flat list of points, as the
 -- glyphs are made.
 function P.draw_shapes(shapes, x, y, size, c)
@@ -1930,7 +1885,6 @@ function P.draw_shapes(shapes, x, y, size, c)
 				points[#points + 1], points[#points + 2] = x + px * s, y + py * s
 			end
 			if points then
-				M.kit:poly(feathered(points, 0.75), faded(c, 0.45))
 				M.kit:poly(points, c)
 				drew = true
 			end
@@ -2115,14 +2069,19 @@ function Panel:typing() return M.panel_on == self and M.field ~= nil end
 -- close button: { { glyph = "reset", help = "...", run = function() end } }, run as the mod, a string
 -- answered becoming a toast); sounds (false, and the panel plays none of the game's menu sounds);
 -- status (a function answering a short text for the title bar); guide (key guide entries before the
--- panel's own: { keys = { "H" }, label = "Hide" }); on_close().
+-- panel's own: { keys = { "H" }, label = "Hide" }); headings (true: the open tab's title in capitals
+-- over the tab's rows, with a reset button beside it for a tab that has `reset`, a function run as the
+-- mod whose answered string becomes a toast, and `reset_help` for the foot); on_close().
 function M.panel(spec)
 	if type(spec) ~= "table" or type(spec.tabs) ~= "table" or #spec.tabs == 0 then return nil, "bad_type" end
 	local owner = obsidian.caller() or SELF
 	if not runners[owner] then runners[owner] = make_runner(owner) end
 	local tabs = {}
 	for _, t in ipairs(spec.tabs) do
-		if type(t) == "table" and type(t.build) == "function" then tabs[#tabs + 1] = { title = t.title or "?", build = t.build, icon = t.icon } end
+		if type(t) == "table" and type(t.build) == "function" then
+			tabs[#tabs + 1] = { title = t.title or "?", build = t.build, icon = t.icon,
+				reset = type(t.reset) == "function" and t.reset or nil, reset_help = t.reset_help }
+		end
 	end
 	if #tabs == 0 then return nil, "bad_type" end
 	local guide = {}
@@ -2146,7 +2105,7 @@ function M.panel(spec)
 		width = tonumber(spec.width) or (docked and PANEL_W or P.PANEL_DEFAULT_W), height = tonumber(spec.height),
 		alpha_now = P.clamp(tonumber(spec.opacity) or P.PANEL_OPACITY, 0, 1), scale_now = P.clamp(tonumber(spec.scale) or 1, P.SCALE_MIN, P.SCALE_MAX),
 		foot = P.PANEL_FOOT, key = P.PANEL_KEY .. owner .. "/" .. id, status = spec.status, on_close = spec.on_close,
-		hidden_now = false, cursor_off = false, sounds = spec.sounds ~= false }, Panel)
+		hidden_now = false, cursor_off = false, sounds = spec.sounds ~= false, headings = spec.headings == true }, Panel)
 	M.panels[#M.panels + 1] = p
 	return p
 end
@@ -2271,6 +2230,41 @@ function P.draw_tabs(p, box, mx, my, back)
 	return y
 end
 
+-- The open tab's title over the tab's rows: capitals on a lighter strip with a gold mark before them,
+-- above the gold row headings, and the tab's reset button at the right end. Answers where the rows start.
+P.HEADING_H = 28
+local TAB_TITLE = { font = "ui_heading", size = 17, tracking = 1.4 }
+local TITLE_STRIP = { 255, 255, 255, 10 }
+
+function P.draw_tab_heading(p, box, top, mx, my)
+	local kit, hits = M.kit, M.hits
+	local tab = p.tabs[p.tab]
+	if not tab then return top end
+	local left, right = box.x, box.x + box.w
+	local h = P.HEADING_H
+	local y = top - h
+	kit:layer(LAYER_BACK + 2)
+	kit:rect(left, y, right - left, h, TITLE_STRIP)
+	kit:layer(LAYER_MARK)
+	kit:rect(left, y, 3, h, GOLD)
+	local reset_w = tab.reset and h or 0
+	local title = string.upper(text_of(p.owner, tab.title, "title"))
+	put(fit(title, right - left - PAD * 2 - reset_w, TAB_TITLE), left + PAD, mid(y, h, TAB_TITLE), TAB_TITLE, WHITE)
+	if tab.reset then
+		local area = { x = right - TRACK_W - h, y = y, w = h, h = h, tab_reset = tab }
+		hits.tab_reset = area
+		local over = inside(area, mx, my)
+		kit:layer(LAYER_BACK + 3)
+		if over then
+			kit:rect(area.x, area.y, area.w, area.h, HOVER)
+			p.hover_button = { help = tab.reset_help or word("menu_tab_reset") }
+		end
+		kit:layer(LAYER_MARK + 1)
+		P.draw_symbol("reset", area.x + (h - 12) / 2, area.y + (h - 12) / 2, 12, over and GOLD or GREY)
+	end
+	return y
+end
+
 -- The foot: a header button's help while the mouse is on the button; else the name of the tab under the
 -- mouse or open, when that tab shows an icon, then the selected row's help. The line over it drags.
 function P.draw_panel_foot(p, frame, list, shown, left, right, bottom, mx, my)
@@ -2295,7 +2289,7 @@ function P.draw_panel_foot(p, frame, list, shown, left, right, bottom, mx, my)
 		elseif hits.tabs[p.tab] and hits.tabs[p.tab].icon then
 			named = p.tabs[p.tab]
 		end
-		if named then
+		if named and not (p.headings and named == p.tabs[p.tab]) then
 			put(fit(text_of(p.owner, named.title, "title"), width, HEADING), x, y, HEADING, GOLD)
 			y, n = y - P.HELP_STEP, n - 1
 		end
@@ -2342,6 +2336,7 @@ function P.draw_panel_body(p, box)
 	settle(frame, list)
 	local left, right = box.x, box.x + box.w
 	local top = tabs_y
+	if p.headings then top = P.draw_tab_heading(p, box, top, mx, my) end
 	-- A page opened inside the tab gets a line with the way back and the page's name.
 	if #M.stack > 1 then
 		local head_y = top - PAGE_H
@@ -2404,6 +2399,10 @@ function P.press_panel(p, frame, m)
 	end
 	for _, area in ipairs(hits.buttons or {}) do
 		if inside(area, x, y) then return P.run_button(p, area.button) end
+	end
+	if hits.tab_reset and inside(hits.tab_reset, x, y) then
+		P.run_button(p, { run = hits.tab_reset.tab_reset.reset })
+		return p:refresh()
 	end
 	if pl and inside(hits.grip, x, y) then
 		M.drag = { kind = "panel_size", panel = true, w = pl.w * s - (m.sx - pl.x) * p.hx, h = pl.h * s - (m.sy - pl.y) * p.vy }

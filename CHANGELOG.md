@@ -2,6 +2,15 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.29.0
+
+- New: `api.world.place(unit, pos, angle, floor)` and `api.world.placement(unit)` move and turn a Helldiver in a stopped game, by the mover and character states the game places it from each frame. The physics mover stays above `floor`, so a Helldiver sunk into the ground doesn't fall out of the level.
+- New: `api.world.pose(unit, event)` and `api.world.end_pose(unit)` play a Helldiver's animation event as a pose and end it, so held poses such as at_ease and radio_activate don't stay.
+- New: `api.world.part_visible(unit, part, on)`, `api.world.part_hidden(unit, part)` and `api.world.part_units(unit, part)` hide one part of a Helldiver, such as the helmet or the weapon in hand, mesh by mesh.
+- New: panels take `headings = true`, which shows the open tab's title over the tab's rows, with a reset button for a tab that has `reset`.
+- Changed: `api.world.flashlight()` answers `false, "no_flashlight"` for a Helldiver without one. Only the night armour carries a flashlight.
+- Changed: tab icons drawn from shapes have the hard edges of 1.27.0 again.
+
 ## 1.28.0
 
 - Added: `api.world.detail(multiplier)` keeps the most detailed models farther from the camera, so a camera far from the game's own doesn't see units drop their models or vanish.
