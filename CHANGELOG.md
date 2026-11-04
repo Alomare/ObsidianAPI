@@ -2,6 +2,10 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.22.1
+
+- Changed: a new image beside the mod in Obsidian's mod list.
+
 ## 1.22.0
 
 - New: a custom stratagem's `icon_material` names a material the mod ships in the boot bundle, holding the sub-material `icon`. Every gui that lists `hud/hud` lists it too, the loader's included. Without that material in the deploy, the base's icon.
