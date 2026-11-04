@@ -698,6 +698,9 @@ function M.light(pos, opts)
 	local h = setmetatable({ unit = unit, world = world, light = light, opts = {} }, LightHandle)
 	pcall(game.global("Light").set_enabled, light, true)
 	h:set(opts or {})
+	-- A stopped world never places a new unit's scene node, and the light would stay where the unit's
+	-- own space starts until the first move.
+	h:settle()
 	return h
 end
 
@@ -780,13 +783,57 @@ function M.time_now()
 	return slowed and slowed.scale or 1
 end
 
--- Whether a unit is drawn, on this machine only: false hides it, shadow and all. Nothing else about it
--- changes.
+-- What a Helldiver is drawn with. The avatar's own unit is never drawn (customization_component.lua:34):
+-- the armour, helmet, cape and boots are units of their own, linked to it, and so are the weapons and
+-- the backpack it carries (equipment_component.lua:94).
+M.AVATAR_PARTS = { "heavy_armor_unit", "all_terrain_boots_unit", "helmet_unit", "cape_unit", "body_unit" }
+
+local function linked_units(unit, out, seen)
+	local U = game.global("Unit")
+	if seen[unit] then return end
+	seen[unit] = true
+	out[#out + 1] = unit
+	if type(U.children) == "function" then
+		local list = {}
+		if pcall(U.children, unit, list) then
+			for _, child in ipairs(list) do linked_units(child, out, seen) end
+		end
+	end
+end
+
+-- The unit and every unit linked to it that draws as part of it: children, and for a Helldiver the
+-- armour parts and what it carries.
+function M.parts_of(unit)
+	local out, seen = {}, {}
+	linked_units(unit, out, seen)
+	local custom = game.slaves("customization")[unit]
+	local state = type(custom) == "table" and custom.state
+	if type(state) == "table" then
+		for _, key in ipairs(M.AVATAR_PARTS) do
+			if state[key] then linked_units(state[key], out, seen) end
+		end
+	end
+	for item, ctx in pairs(game.slaves("equipment")) do
+		if type(ctx) == "table" and type(ctx.state) == "table" and ctx.state.wielder == unit then linked_units(item, out, seen) end
+	end
+	return out
+end
+
+-- Whether a unit is drawn, on this machine only: false hides it, shadow and all, with every part linked
+-- to it (a Helldiver's armour and weapons too). Nothing else about it changes. The avatar's own unit is
+-- left as the game keeps it, never drawn.
 function M.visible(unit, on)
 	local U = game.global("Unit")
 	local ok, alive = pcall(U.alive, unit)
 	if not (ok and alive) then return false, "no_target" end
-	return (pcall(U.set_unit_visibility, unit, on ~= false))
+	local custom = game.slaves("customization")[unit]
+	local any = false
+	for _, part in ipairs(M.parts_of(unit)) do
+		local skip = part == unit and type(custom) == "table" and on ~= false
+		local live_ok, live = pcall(U.alive, part)
+		if not skip and live_ok and live and pcall(U.set_unit_visibility, part, on ~= false) then any = true end
+	end
+	return any
 end
 
 -- A Helldiver's flashlight, on this machine only, as the game lights it on a night mission.
@@ -795,6 +842,29 @@ function M.flashlight(unit, on)
 	local ok, alive = pcall(U.alive, unit)
 	if not (ok and alive) then return false, "no_target" end
 	return (pcall(U.flow_event, unit, on and "flashlight_on" or "flashlight_off"))
+end
+
+-- Which way the sunlight comes from in this player's view, as a unit vector pointing at the sun, or
+-- nil where there's no sun to read: a sun_direction set through shading() first, else the planet's.
+function M.sun()
+	local v = viewport()
+	if not v then return nil end
+	local dir = nil
+	-- What shading() set waits in the viewport's own list until the next frame (viewport_proxy.lua:104).
+	local set = type(v.variable_values) == "table" and v.variable_values.sun_direction
+	if type(set) == "table" and tonumber(set[1]) and tonumber(set[2]) and tonumber(set[3]) then dir = { x = set[1], y = set[2], z = set[3] } end
+	if not dir then
+		local SE = game.global("ShadingEnvironment")
+		local env = type(v.get_shading_environment) == "function" and v:get_shading_environment() or nil
+		if not (SE and env and SE.vector3) then return nil end
+		local ok, d = pcall(SE.vector3, env, "sun_direction")
+		if not (ok and d) then return nil end
+		dir = { x = d.x, y = d.y, z = d.z }
+	end
+	local len = math.sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z)
+	if not (len > 1e-6) then return nil end
+	-- The variable points the way the light travels: the sun is the other way.
+	return { x = -dir.x / len, y = -dir.y / len, z = -dir.z / len }
 end
 
 local TIMES = { dawn = true, day = true, dusk = true, night = true }

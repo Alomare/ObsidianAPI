@@ -2,6 +2,14 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.27.0
+
+- Added: `api.world.sun()`, the direction toward the sun in this player's view, from a set `sun_direction` or the planet's.
+- Added: `api.world.parts_of(unit)`, the unit with every unit linked to it, and for a Helldiver the armour parts and what it carries.
+- Added: a panel tab's icon can be shapes of the mod's own, convex polygons on a grid of 16, as the glyphs are made.
+- Fixed: `api.world.visible()` hid nothing on a Helldiver, whose own unit is never drawn. It now hides the armour, helmet, cape, boots, weapons and backpack with it.
+- Fixed: a light from `api.world.light()` stayed away from where it was placed until it was first moved, in a stopped game.
+
 ## 1.26.0
 
 - Changed: `api.world.camera.take()` and `api.world.camera.photo()` work on the ship as well as in missions. The camera goes back to the state it had, the ship's own there.

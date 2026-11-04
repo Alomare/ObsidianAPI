@@ -148,7 +148,7 @@ return {
 	data = data,
 	catalog = catalog,
 	world = guard(world, { "shading", "flash", "cursor", "ahead", "raycast", "clear_decals", "light", "time_scale", "time_now", "visible",
-		"flashlight", "time_of_day" }),
+		"flashlight", "time_of_day", "sun", "parts_of" }),
 	player = guard(player, { "lives" }),
 	gear = guard(gear),
 	stratagems = guard(stratagems),

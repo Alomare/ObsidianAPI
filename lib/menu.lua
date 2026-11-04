@@ -1872,7 +1872,29 @@ function P.is_glyph(name)
 	return P.glyph_set[name] == true
 end
 
+-- A mod's own icon: convex polygons on a grid of 16 with y up, each a flat list of points, as the
+-- glyphs are made.
+function P.draw_shapes(shapes, x, y, size, c)
+	local s, drew = size / 16, false
+	for _, poly in ipairs(shapes) do
+		if type(poly) == "table" and #poly >= 6 then
+			local points = {}
+			for i = 1, #poly - 1, 2 do
+				local px, py = tonumber(poly[i]), tonumber(poly[i + 1])
+				if not (px and py) then points = nil break end
+				points[#points + 1], points[#points + 2] = x + px * s, y + py * s
+			end
+			if points then
+				M.kit:poly(points, c)
+				drew = true
+			end
+		end
+	end
+	return drew
+end
+
 function P.draw_symbol(name, x, y, size, c)
+	if type(name) == "table" then return P.draw_shapes(name, x, y, size, c) end
 	if type(name) ~= "string" or name == "" then return false end
 	local known = P.is_glyph(name)
 	if known ~= false and M.kit:glyph(name, x, y, size, c) ~= false then return true end
@@ -2037,8 +2059,9 @@ end
 function Panel:typing() return M.panel_on == self and M.field ~= nil end
 
 -- A panel, closed. spec: title (text or a function); tabs ({ { title = ..., build = function(page) end,
--- icon = ... }, ... }), where an icon (a name of obsidian.ui.glyphs(), or an icon of the game's HUD)
--- shows in place of the title, and the title shows over the help; id (names the kept place among the
+-- icon = ... }, ... }), where an icon (a name of obsidian.ui.glyphs(), an icon of the game's HUD, or
+-- shapes of the mod's own: a list of convex polygons on a grid of 16 with y up, each a flat list of
+-- points { x1, y1, x2, y2, ... }, as the glyphs are made) shows in place of the title, and the title shows over the help; id (names the kept place among the
 -- mod's panels, "panel" by default); anchor ("bottom_right", the default, "bottom_left", "top_right",
 -- "top_left", or "right" and "left" for the full height down that side; side is the same); width and
 -- height (in the game's 1280 by 720 design units, 540 by 360 by default, 390 wide down a side);
@@ -2191,7 +2214,7 @@ function P.draw_tabs(p, box, mx, my, back)
 		kit:layer(LAYER_MARK)
 		if on then kit:rect(x, y, each, 2, GOLD) end
 		if tab.icon then
-			local size = P.is_glyph(tab.icon) == false and 22 or 16
+			local size = (type(tab.icon) == "string" and P.is_glyph(tab.icon) == false) and 22 or 16
 			area.icon = P.draw_symbol(tab.icon, x + (each - size) / 2, y + (TAB_H - size) / 2, size, on and GOLD or (over and WHITE or GREY))
 		end
 		if not area.icon then
