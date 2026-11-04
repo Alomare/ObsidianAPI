@@ -50,6 +50,7 @@ int obsapi_ClientToScreen(void *hwnd, obsapi_POINT *point) __asm__("ClientToScre
 void *obsapi_GetDC(void *hwnd) __asm__("GetDC");
 int obsapi_ReleaseDC(void *hwnd, void *dc) __asm__("ReleaseDC");
 int obsapi_PrintWindow(void *hwnd, void *dc, unsigned int flags) __asm__("PrintWindow");
+void *obsapi_SetThreadDpiAwarenessContext(void *context) __asm__("SetThreadDpiAwarenessContext");
 
 void *obsapi_CreateCompatibleDC(void *dc) __asm__("CreateCompatibleDC");
 int obsapi_DeleteDC(void *dc) __asm__("DeleteDC");
@@ -263,8 +264,41 @@ local function unused_name(folder, stem, ext)
 	end
 end
 
+-- The game isn't aware of display scaling, so with Windows at 125% it's told a window 1.25 times smaller
+-- than the screen pixels it fills, while the screen copy works in real pixels: the picture came out as
+-- the top left of the frame. While a copy is made, this thread asks Windows for real pixels (per
+-- monitor aware, version 2, Windows 10 1703 and later), then goes back. Answers what to go back to.
+local PER_MONITOR_AWARE_V2 = -4
+
+local function real_pixels(c)
+	local ok, before = pcall(function()
+		return c.user32.obsapi_SetThreadDpiAwarenessContext(c.ffi.cast("void*", PER_MONITOR_AWARE_V2))
+	end)
+	if ok and before ~= nil then return before end
+	return nil
+end
+
+local function back_to(c, before)
+	if before ~= nil then pcall(c.user32.obsapi_SetThreadDpiAwarenessContext, before) end
+end
+
+local save_scaled
+
 -- The copy and the file, right now. Answers the path, or nil and why not.
 function M.save_now(opts)
+	local c, why = load()
+	if not c then return nil, why end
+	local before = real_pixels(c)
+	local ok, path, reason = pcall(save_scaled, opts)
+	back_to(c, before)
+	if not ok then
+		obsidian.log("capture: " .. tostring(path))
+		return nil, "failed"
+	end
+	return path, reason
+end
+
+save_scaled = function(opts)
 	opts = opts or {}
 	local c, why = load()
 	if not c then return nil, why end

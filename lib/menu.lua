@@ -1872,6 +1872,51 @@ function P.is_glyph(name)
 	return P.glyph_set[name] == true
 end
 
+-- Gui triangles have no anti-aliasing, so a small shape's edges step. Under each polygon goes a copy
+-- grown by under a pixel at about half the opacity, which softens the steps. points: a flat list of a
+-- convex polygon's corners in screen pixels. Answers the grown copy.
+local function feathered(points, grow)
+	local n = #points / 2
+	local area = 0
+	for i = 0, n - 1 do
+		local j = (i + 1) % n
+		area = area + points[i * 2 + 1] * points[j * 2 + 2] - points[j * 2 + 1] * points[i * 2 + 2]
+	end
+	local turn = area >= 0 and 1 or -1
+	local out = {}
+	for i = 0, n - 1 do
+		local p, q = (i - 1) % n, (i + 1) % n
+		local x, y = points[i * 2 + 1], points[i * 2 + 2]
+		local ax, ay = x - points[p * 2 + 1], y - points[p * 2 + 2]
+		local bx, by = points[q * 2 + 1] - x, points[q * 2 + 2] - y
+		local la, lb = math.sqrt(ax * ax + ay * ay), math.sqrt(bx * bx + by * by)
+		if la < 1e-6 or lb < 1e-6 then
+			out[#out + 1], out[#out + 2] = x, y
+		else
+			-- Outward normals of the two edges at this corner, and the way between them.
+			local nax, nay = ay / la * turn, -ax / la * turn
+			local nbx, nby = by / lb * turn, -bx / lb * turn
+			local mx, my = nax + nbx, nay + nby
+			local lm = math.sqrt(mx * mx + my * my)
+			if lm < 1e-6 then
+				out[#out + 1], out[#out + 2] = x + nax * grow, y + nay * grow
+			else
+				mx, my = mx / lm, my / lm
+				local reach = grow / math.max(0.35, mx * nax + my * nay)
+				out[#out + 1], out[#out + 2] = x + mx * reach, y + my * reach
+			end
+		end
+	end
+	return out
+end
+
+local function faded(c, share)
+	if type(c) ~= "table" then return c end
+	return { c[1] or c.r or 255, c[2] or c.g or 255, c[3] or c.b or 255, (c[4] or c.a or 255) * share }
+end
+
+P.feathered = feathered
+
 -- A mod's own icon: convex polygons on a grid of 16 with y up, each a flat list of points, as the
 -- glyphs are made.
 function P.draw_shapes(shapes, x, y, size, c)
@@ -1885,6 +1930,7 @@ function P.draw_shapes(shapes, x, y, size, c)
 				points[#points + 1], points[#points + 2] = x + px * s, y + py * s
 			end
 			if points then
+				M.kit:poly(feathered(points, 0.75), faded(c, 0.45))
 				M.kit:poly(points, c)
 				drew = true
 			end

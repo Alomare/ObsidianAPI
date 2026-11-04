@@ -446,8 +446,13 @@ function M.run_chosen()
 	if not c then return end
 	chosen = nil
 	local parent = c.screen and c.screen.parent
-	if type(parent) == "table" and parent.active_screen == c.screen and type(parent.pop_menu) == "function" then
-		local ok, err = pcall(parent.pop_menu, parent)
+	-- A mission keeps one open screen; the ship keeps a stack of them (state_menu.lua:2941), closed all
+	-- at once as its Resume does.
+	local stack = rawget(_G, "stack")
+	local screens = type(parent) == "table" and parent.active_screens
+	local on_top = type(screens) == "table" and type(stack) == "table" and not stack.empty(screens) and stack.top(screens) == c.screen
+	if type(parent) == "table" and type(parent.pop_menu) == "function" and (parent.active_screen == c.screen or on_top) then
+		local ok, err = pcall(parent.pop_menu, parent, on_top or nil)
 		if not ok then obsidian.log("mod_settings: closing the pause menu: " .. tostring(err)) end
 	end
 	local ok, err = c.row.run(c.row.fn)

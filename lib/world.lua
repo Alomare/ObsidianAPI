@@ -819,21 +819,103 @@ function M.parts_of(unit)
 	return out
 end
 
--- Whether a unit is drawn, on this machine only: false hides it, shadow and all, with every part linked
--- to it (a Helldiver's armour and weapons too). Nothing else about it changes. The avatar's own unit is
--- left as the game keeps it, never drawn.
+-- Hidden Helldivers: unit -> the size it had.
+local shrunk = setmetatable({}, { __mode = "k" })
+M.SHRUNK = 1e-4
+
+local function settle_parts(unit)
+	local st = game.state()
+	local proxy = type(st) == "table" and st.world_proxy
+	local world = proxy and proxy:get_world()
+	if not world then return end
+	local W = game.global("World")
+	for _, part in ipairs(M.parts_of(unit)) do pcall(W.update_unit, world, part) end
+end
+
+-- A Helldiver's cape: cloth, which doesn't follow a change of size, so it's hidden on its own.
+function M.cape_of(unit)
+	local custom = game.slaves("customization")[unit]
+	local state = type(custom) == "table" and custom.state
+	return type(state) == "table" and state.cape_unit or nil
+end
+
+-- Whether a unit is drawn, on this machine only: false hides it, shadow and all. Nothing else about it
+-- changes. A Helldiver hides whole, armour and what it carries too, by shrinking to nothing and growing
+-- back to the size it had: making a unit visible again would also show the meshes the game keeps
+-- hidden, such as the stratagem radio. Its cape is cloth and hides on its own.
 function M.visible(unit, on)
-	local U = game.global("Unit")
+	local U, V3 = game.global("Unit"), game.global("Vector3")
 	local ok, alive = pcall(U.alive, unit)
 	if not (ok and alive) then return false, "no_target" end
-	local custom = game.slaves("customization")[unit]
-	local any = false
-	for _, part in ipairs(M.parts_of(unit)) do
-		local skip = part == unit and type(custom) == "table" and on ~= false
-		local live_ok, live = pcall(U.alive, part)
-		if not skip and live_ok and live and pcall(U.set_unit_visibility, part, on ~= false) then any = true end
+	if not game.slaves("customization")[unit] then
+		return (pcall(U.set_unit_visibility, unit, on ~= false))
 	end
-	return any
+	local cape = M.cape_of(unit)
+	if on == false then
+		if not shrunk[unit] then
+			local got, s = pcall(U.local_scale, unit, 0)
+			if not got then return false, "no_target" end
+			shrunk[unit] = { x = s.x, y = s.y, z = s.z }
+		end
+		pcall(U.set_local_scale, unit, 0, V3(M.SHRUNK, M.SHRUNK, M.SHRUNK))
+		if cape then pcall(U.set_unit_visibility, cape, false) end
+	else
+		local s = shrunk[unit]
+		shrunk[unit] = nil
+		if s then pcall(U.set_local_scale, unit, 0, V3(s.x, s.y, s.z)) end
+		if cape then pcall(U.set_unit_visibility, cape, true) end
+	end
+	settle_parts(unit)
+	return true
+end
+
+-- Whether visible() has a Helldiver hidden.
+function M.hidden(unit)
+	return shrunk[unit] ~= nil
+end
+
+-- How far the engine keeps the most detailed models, as a multiple of the game's own (lod_object_
+-- multiplier, a renderer setting). A camera further out than the game's own would see units drop their
+-- models, and some vanish. nil gives the game's back. This player's only, and back at a change of screen.
+effects.define({ id = "detail",
+	apply = function(_, value)
+		local app = game.global("Application")
+		pcall(app.set_renderer_setting, "lod_object_multiplier", tostring(value))
+	end,
+	remove = function()
+		local app = game.global("Application")
+		local ok, own = pcall(app.user_setting, "render_settings", "lod_object_multiplier")
+		pcall(app.set_renderer_setting, "lod_object_multiplier", tostring(ok and own or 1))
+	end,
+})
+
+function M.detail(multiplier)
+	if multiplier == nil then return effects.set("detail", false) end
+	if not (finite(multiplier) and multiplier >= 1 and multiplier <= 100) then return false, "out_of_range" end
+	return effects.set("detail", multiplier)
+end
+
+-- A value of the planet's look as the mission set it, before any change through shading(): a number, or
+-- a list of 2 or 3. nil where it can't be read.
+function M.planet_shading(name)
+	local kind = shading_kind(name)
+	if not kind then return nil, "unknown_shading" end
+	local v = viewport()
+	local SE = game.global("ShadingEnvironment")
+	local env = v and type(v.get_shading_environment) == "function" and v:get_shading_environment() or nil
+	if not (SE and env and SE[kind]) then return nil end
+	local set = type(v.variable_values) == "table" and v.variable_values[name]
+	if set then
+		-- What shading() set is in the environment now: the planet's comes back for a frame without it.
+		return nil, "changed"
+	end
+	local ok, value = pcall(SE[kind], env, name)
+	if not ok or value == nil then return nil end
+	if kind == "scalar" then return tonumber(value) end
+	local out = { tonumber(value.x) or tonumber(value[1]), tonumber(value.y) or tonumber(value[2]) }
+	if kind == "vector3" then out[3] = tonumber(value.z) or tonumber(value[3]) end
+	if not (out[1] and out[2]) then return nil end
+	return out
 end
 
 -- A Helldiver's flashlight, on this machine only, as the game lights it on a night mission.

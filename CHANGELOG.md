@@ -2,6 +2,16 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.28.0
+
+- Added: `api.world.detail(multiplier)` keeps the most detailed models farther from the camera, so a camera far from the game's own doesn't see units drop their models or vanish.
+- Added: `api.world.planet_shading(name)` reads a value of the planet's look as the mission set it.
+- Added: `api.world.cape_of(unit)` and `api.world.hidden(unit)`.
+- Changed: `api.world.visible()` hides a Helldiver by shrinking it to nothing and gives back the size it had. Showing it no longer reveals meshes the game keeps hidden, such as the stratagem radio. The cape, which is cloth, hides on its own.
+- Changed: tab icons drawn from shapes have softer edges.
+- Fixed: screenshots with Windows display scaling above 100% came out as the top left of the frame, enlarged.
+- Fixed: a pause menu row on the ship left the pause menu open.
+
 ## 1.27.0
 
 - Added: `api.world.sun()`, the direction toward the sun in this player's view, from a set `sun_direction` or the planet's.
