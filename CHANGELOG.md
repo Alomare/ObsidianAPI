@@ -2,6 +2,11 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.25.0
+
+- Changed: the `camera_fov`, `camera_distance` and `camera_angle` effects give back the camera the game set on the current screen when they come off. They gave back a mission's 60 degrees, 17 m and 65 degrees, which is wrong on the ship.
+- New: `api.world.camera.defaults()` answers the game's own field of view, distance and angle for the current screen.
+
 ## 1.24.0
 
 - New: a panel drags by the title bar, resizes from a corner grip and stays on screen. The place and size are kept for the next launch, per mod and `spec.id`.

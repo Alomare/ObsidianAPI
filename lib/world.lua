@@ -25,15 +25,38 @@ effects.define({ id = "pause",
 	remove = function() rawset(_G, "PAUSED", false) end,
 })
 
--- Camera. change_settings has to be used: follow_distance alone is rewritten every frame.
+-- Camera. change_settings has to be used: follow_distance alone is rewritten every frame. Each screen
+-- sets the camera up its own way (a mission at 60 degrees and 17 m, the ship at 52 degrees and 10 m:
+-- state_game.lua:196, state_menu.lua:295), so what the game set is kept the first time one of these
+-- effects changes it on a screen, and given back when they come off.
+local camera_kept = nil
+
+local function kept(ctx)
+	local cm = camera()
+	if not camera_kept or camera_kept.state ~= ctx.state then
+		camera_kept = { state = ctx.state, fov = cm.fov, distance = cm.follow_distance, max = cm.max_follow_distance,
+			min = cm.min_follow_distance, angle = cm.follow_angle }
+	end
+	return camera_kept
+end
+
 effects.define({ id = "camera_distance",
-	apply = function(_, value) camera():change_settings(nil, value, nil, nil) end,
-	remove = function() camera():change_settings(nil, 17, nil, nil) end,
+	apply = function(ctx, value)
+		kept(ctx)
+		camera():change_settings(nil, value, nil, nil)
+	end,
+	remove = function(ctx)
+		local k, cm = kept(ctx), camera()
+		cm.follow_distance, cm.max_follow_distance, cm.min_follow_distance = k.distance, k.max, k.min
+	end,
 })
 
 effects.define({ id = "camera_angle",
-	apply = function(_, value) camera():change_settings(nil, nil, value, nil) end,
-	remove = function() camera():change_settings(nil, nil, 65, nil) end,
+	apply = function(ctx, value)
+		kept(ctx)
+		camera():change_settings(nil, nil, value, nil)
+	end,
+	remove = function(ctx) camera().follow_angle = kept(ctx).angle end,
 })
 
 effects.define({ id = "free_camera_bounds",
@@ -45,10 +68,13 @@ effects.define({ id = "free_camera_bounds",
 effects.define({ id = "no_camera_shake" })
 
 -- The manager is one table that each state sets up again, so these go back on after a change of
--- state. 60 degrees and a spin of -45 are what a mission starts with (state_game.lua:196).
+-- state. A spin of -45 is what a mission starts with (state_game.lua:196).
 effects.define({ id = "camera_fov",
-	apply = function(_, value) camera():set_fov(math.rad(value)) end,
-	remove = function() camera():set_fov(math.rad(60)) end,
+	apply = function(ctx, value)
+		kept(ctx)
+		camera():set_fov(math.rad(value))
+	end,
+	remove = function(ctx) camera():set_fov(kept(ctx).fov) end,
 })
 
 effects.define({ id = "camera_spin",
@@ -136,6 +162,18 @@ M.camera = {
 	-- Degrees around the player, from -360 to 360.
 	spin = ranged("camera_spin", -360, 360),
 }
+
+-- The camera the game set on this screen, before any effect changed it: { fov, distance, angle }, the
+-- field of view and the angle in degrees, the distance in metres. A mission starts at 60, 17 and 65;
+-- the ship has its own.
+function M.camera.defaults()
+	local cm = camera()
+	if type(cm) ~= "table" then return nil end
+	local st = game.state()
+	local k = (camera_kept and camera_kept.state == st) and camera_kept
+		or { fov = cm.fov, distance = cm.min_follow_distance or cm.follow_distance, angle = cm.follow_angle }
+	return { fov = k.fov and math.deg(k.fov), distance = k.min or k.distance, angle = k.angle and math.deg(k.angle) }
+end
 
 -- unit: another player's avatar, from game.all_avatars. nil comes back to this player.
 function M.camera.spectate(unit)
