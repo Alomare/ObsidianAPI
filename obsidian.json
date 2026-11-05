@@ -71,13 +71,13 @@
       "default": "thumbs",
       "scope": "client",
       "choices": [
-        { "id": "thumbs", "label": { "en": "Both sticks pressed in (L3 + R3)" } },
-        { "id": "back_right_thumb", "label": { "en": "Back + right stick pressed in (R3)" } },
-        { "id": "shoulders_back", "label": { "en": "LB + RB + Back" } },
-        { "id": "off", "label": { "en": "Off" } }
+        { "id": "thumbs", "label": { "en": "Both sticks pressed in (L3 + R3)", "pt-BR": "Os dois analógicos pressionados (L3 + R3)", "zh-CN": "同时按下两个摇杆 (L3 + R3)", "fr": "Les deux sticks enfoncés (L3 + R3)", "es": "Ambos sticks pulsados (L3 + R3)" } },
+        { "id": "back_right_thumb", "label": { "en": "Back + right stick pressed in (R3)", "pt-BR": "Back + analógico direito pressionado (R3)", "zh-CN": "Back + 按下右摇杆 (R3)", "fr": "Back + stick droit enfoncé (R3)", "es": "Back + stick derecho pulsado (R3)" } },
+        { "id": "shoulders_back", "label": { "en": "LB + RB + Back", "pt-BR": "LB + RB + Back", "zh-CN": "LB + RB + Back", "fr": "LB + RB + Back", "es": "LB + RB + Back" } },
+        { "id": "off", "label": { "en": "Off", "pt-BR": "Desligado", "zh-CN": "关闭", "fr": "Désactivé", "es": "Desactivado" } }
       ],
-      "label": { "en": "Open the menu with a controller" },
-      "description": { "en": "The buttons that open and close the F6 menu from a controller, pressed together. In the menu, the D-pad or the left stick moves, A selects, B goes back, Y resets a row, and LB and RB switch pages." }
+      "label": { "en": "Open the menu with a controller", "pt-BR": "Abrir o menu com um controle", "zh-CN": "用手柄打开菜单", "fr": "Ouvrir le menu avec une manette", "es": "Abrir el menú con un mando" },
+      "description": { "en": "The buttons that open and close the F6 menu from a controller, pressed together. In the menu, the D-pad or the left stick moves, A selects, B goes back, Y resets a row, and LB and RB switch pages.", "pt-BR": "Os botões que abrem e fecham o menu F6 pelo controle, pressionados juntos. No menu, o direcional ou o analógico esquerdo move, A escolhe, B volta, Y redefine uma linha, e LB e RB trocam de página.", "zh-CN": "用手柄同时按下即可打开和关闭 F6 菜单的按键。在菜单中，十字键或左摇杆移动，A 选择，B 返回，Y 重置一行，LB 和 RB 切换页面。", "fr": "Les boutons qui ouvrent et ferment le menu F6 depuis une manette, appuyés ensemble. Dans le menu, la croix directionnelle ou le stick gauche déplace, A choisit, B revient, Y réinitialise une ligne, et LB et RB changent de page.", "es": "Los botones que abren y cierran el menú F6 desde un mando, pulsados a la vez. En el menú, la cruceta o el stick izquierdo mueve, A elige, B vuelve, Y restablece una fila, y LB y RB cambian de página." }
     }
   ]
 }
