@@ -52,6 +52,44 @@ local GUIDE = {
 	{ keys = { "R" }, text = "menu_key_reset" },
 }
 local TYPING_GUIDE = { { keys = { "Enter" }, text = "menu_key_confirm" }, { keys = { "Esc" }, text = "menu_key_cancel" } }
+
+-- The pad's names, guides and readers, in one table: a chunk has room for 200 locals.
+local PADS = {}
+
+-- A pad, read through the window's input interface, which copies ControllerSettings.pad: the names it gives
+-- the buttons. "up" and the other directions join the D-pad and the left stick, and "select" and "back"
+-- are A and B (cross and circle). A pad reports what's held on some machines and a press on others, so
+-- only a change counts as a press, and the window repeats a held direction itself.
+PADS.NAMES = {
+	up = "up", down = "down", left = "left", right = "right", select = "select", back = "back",
+	reset = "triangle", prev = "left_shoulder", next = "right_shoulder",
+}
+-- What the guide shows while a pad is in use: the Xbox names, which the game's own prompts use on PC.
+PADS.GUIDE = {
+	{ keys = { "A" }, text = "menu_key_select" },
+	{ keys = { "B" }, text = "menu_key_back" },
+	{ keys = { "up", "down" }, text = "menu_key_move" },
+	{ keys = { "left", "right" }, text = "menu_key_change" },
+	{ keys = { "LB", "RB" }, text = "menu_key_sections" },
+	{ keys = { "Y" }, text = "menu_key_reset" },
+}
+PADS.TYPING_GUIDE = { { keys = { "B" }, text = "menu_key_cancel" } }
+PADS.CODE_GUIDE = { { keys = { "A" }, text = "menu_key_confirm" }, { keys = { "B" }, text = "menu_key_cancel" } }
+PADS.PANEL_GUIDE = {
+	{ keys = { "up", "down" }, text = "menu_key_move" },
+	{ keys = { "left", "right" }, text = "menu_key_change" },
+	{ keys = { "LB", "RB" }, text = "menu_key_tabs" },
+	{ keys = { "B" }, text = "menu_key_back" },
+}
+-- The buttons that open and close the window from a pad, read raw from the pad, as the game reads none
+-- of the window's input while it's closed. The option pad_open picks them; they go down together.
+-- Both sticks pressed in is what the game uses least: the left stick's click starts a sprint.
+PADS.COMBOS = {
+	thumbs = { "left_thumb", "right_thumb" },
+	back_right_thumb = { "back", "right_thumb" },
+	shoulders_back = { "left_shoulder", "right_shoulder", "back" },
+}
+PADS.COMBO_DEFAULT = "thumbs"
 local ARROWS = { up = true, down = true, left = true, right = true }
 local REPEATS = { up = true, down = true, left = true, right = true }
 local ADJUSTABLE = { number = true, choice = true, toggle = true, slider = true }
@@ -89,6 +127,9 @@ local M = {
 	cursor = nil, closing = false, frames = 0, toggled = nil, status = {}, names = {}, save = {},
 	-- The open panel, if any, and whether a screenshot wants the screen clear (lib/capture.lua).
 	panel_on = nil, held_back = false, panels = {},
+	-- "pad" or "keyboard": what drove the window last, for the guide. Each pad's held buttons, and
+	-- whether each pad holds the buttons that open the window.
+	device = "keyboard", pad_held = {}, combo_down = {}, pad_combo = PADS.COMBO_DEFAULT,
 }
 
 local function pack(...) return { n = select("#", ...), ... } end
@@ -831,20 +872,86 @@ local function read_key(name, dt, keys, prefix)
 end
 
 -- keys: NAV_KEYS, or a panel's PANEL_KEYS, each read with a state of its own under `prefix`.
-local function read_nav(dt, keys, prefix)
-	keys, prefix = keys or NAV_KEYS, prefix or ""
+-- The pads' presses this frame, by the window's names (PADS.NAMES): a button that went down, or a
+-- direction held long enough to repeat. Every pad the game has a user for drives the window.
+function PADS.read(dt)
 	local ev = {}
-	for name in pairs(keys) do ev[name] = read_key(name, dt, keys, prefix) end
 	local pads = global("PadManager")
 	for i = 1, #(pads and pads.users or {}) do
 		local ok, d = pcall(pads.get_inputs, pads, IFACE, i)
+		local was = M.pad_held[i] or {}
+		local now = {}
 		if ok and type(d) == "table" then
-			for name in pairs(keys) do
-				if d[name] then ev[name] = true end
+			for name, field in pairs(PADS.NAMES) do
+				if d[field] then
+					local held = was[name]
+					if not held then
+						ev[name] = true
+						now[name] = { wait = FIRST_REPEAT }
+					else
+						now[name] = held
+						if REPEATS[name] then
+							held.wait = held.wait - (dt or 0)
+							if held.wait <= 0 then
+								held.wait = NEXT_REPEAT
+								ev[name] = true
+							end
+						end
+					end
+				end
 			end
 		end
+		M.pad_held[i] = now
+	end
+	if next(ev) then
+		ev.pad = true
+		M.device = "pad"
 	end
 	return ev
+end
+
+-- keys: NAV_KEYS, or a panel's PANEL_KEYS, each read with a state under `prefix`. ev.pad is
+-- true when a pad pressed something.
+local function read_nav(dt, keys, prefix)
+	keys, prefix = keys or NAV_KEYS, prefix or ""
+	local ev = {}
+	local typed = false
+	for name in pairs(keys) do
+		ev[name] = read_key(name, dt, keys, prefix)
+		typed = typed or ev[name]
+	end
+	if typed then M.device = "keyboard" end
+	for name, on in pairs(PADS.read(dt)) do
+		if on then ev[name] = true end
+	end
+	return ev
+end
+
+-- Whether every button of the pad's open combination is down on pad `pad` (a Pad1 to Pad4 of the
+-- engine's). Unknown button names count as up.
+function PADS.combo_held(pad, combo)
+	for _, name in ipairs(combo) do
+		local ok, i = pcall(pad.button_index, name)
+		if not (ok and i) then return false end
+		local fine, level = pcall(pad.button, i)
+		if not (fine and type(level) == "number" and level > 0.5) then return false end
+	end
+	return true
+end
+
+-- Once a frame, open or closed: true on the frame a pad comes to hold the whole combination.
+function PADS.combo_pressed()
+	local combo = PADS.COMBOS[M.pad_combo]
+	local list = global("Pads")
+	if not combo or type(list) ~= "table" then return false end
+	local fired = false
+	for i, pad in ipairs(list) do
+		local active = pad ~= nil and (not pad.active or select(2, pcall(pad.active)) == true)
+		local down = active and PADS.combo_held(pad, combo) or false
+		if down and not M.combo_down[i] then fired = true end
+		M.combo_down[i] = down
+	end
+	return fired
 end
 
 -- A code field (Page:input with opts.code): the arrow keys, W A S D and a pad's directions add arrows,
@@ -863,6 +970,8 @@ local function read_code_field(f)
 	local ok, i = pcall(kb.button_index, "backspace")
 	if ok and i and kb.pressed(i) == true then table.remove(f.arrows) end
 	f.text = table.concat(f.arrows, " ")
+	-- A pad hands the arrows over with A and cancels with B.
+	if not finished and ev.pad and (ev.select or ev.back) then finished, cancelled = true, ev.back == true end
 	if finished then
 		M.field = nil
 		SOUND.ask(cancelled and "back" or "select")
@@ -881,6 +990,8 @@ local function read_field()
 		if type(f.state.marker) == "number" and f.state.marker > #f.text then f.state.marker = #f.text end
 	end
 	if f.change and f.text ~= before then f.change(f.text) end
+	-- A pad can't type: B leaves the field as Esc does.
+	if not finished and PADS.read(0).back then finished, cancelled = true, true end
 	if finished then
 		M.field = nil
 		SOUND.ask(cancelled and "back" or "select")
@@ -939,7 +1050,56 @@ local function handle_nav(ev)
 	end
 end
 
+-- The page before or after the open one, across the folders in the list's order, a closed folder's
+-- too (it opens), with the keys on the page's rows: a pad's shoulder buttons.
+function PADS.step_section(direction)
+	local list, by_owner = {}, {}
+	for _, root in ipairs(listed_roots()) do
+		by_owner[root.owner] = by_owner[root.owner] or {}
+		table.insert(by_owner[root.owner], root)
+	end
+	for _, owner in ipairs(M.owners) do
+		for _, root in ipairs(by_owner[owner] or {}) do list[#list + 1] = root end
+	end
+	if #list == 0 then return end
+	local at = nil
+	for i, root in ipairs(list) do
+		if root == M.root then at = i end
+	end
+	if not at and M.folder then
+		-- On a folder: the folder's first page, or the page before it.
+		for i, root in ipairs(list) do
+			if root.owner == M.folder and not at then at = direction > 0 and i - 1 or i end
+		end
+	end
+	local target
+	if at then
+		target = list[(at - 1 + direction) % #list + 1]
+	else
+		target = list[direction > 0 and 1 or #list]
+	end
+	SOUND.ask("move")
+	if M.closed[target.owner] then
+		M.closed[target.owner] = nil
+		M.save.folders = true
+	end
+	open_root(target)
+	M.nav = false
+end
+
+-- A number row's Enter types a number, which a pad can't: A does nothing there, left and right step.
+PADS.TYPED = { number = true, slider = true, input = true }
+
 local function handle(ev)
+	if ev.prev or ev.next then return PADS.step_section(ev.prev and -1 or 1) end
+	if ev.pad and ev.select and not M.nav then
+		local frame = M.stack[#M.stack]
+		local it = frame and rows(frame)[frame.selected]
+		if it and PADS.TYPED[it.kind] and not (it.kind == "input" and it.code) then
+			SOUND.ask("invalid")
+			return
+		end
+	end
 	if M.nav then return handle_nav(ev) end
 	local frame = M.stack[#M.stack]
 	local list = rows(frame)
@@ -1376,7 +1536,7 @@ local function draw_keys(frame, list, shown, left, right, bottom, guide)
 	kit:layer(LAYER_MARK)
 	if M.field and M.field.item then
 		-- The row shows what's typed; the foot, the keys that end it.
-		draw_guide(TYPING_GUIDE, left + PAD, guide_y, right - CUT - PAD)
+		draw_guide(M.device == "pad" and (M.field.code and PADS.CODE_GUIDE or PADS.TYPING_GUIDE) or TYPING_GUIDE, left + PAD, guide_y, right - CUT - PAD)
 	elseif M.field then
 		put(fit(M.field.prompt .. ": " .. M.field.text .. "_", width - CUT, SMALL), left + PAD, bottom + 7, SMALL, GOLD)
 	else
@@ -1402,7 +1562,7 @@ local function draw_foot(frame, list, shown, left, right, bottom)
 	if selected and selected.help then
 		draw_help(text_of(selected.owner or frame.owner, selected.help, "help"), W.help_lines(foot), left + PAD, foot_y - SMALL.size - 5, right - left - PAD * 2)
 	end
-	draw_keys(frame, list, shown, left, right, bottom, GUIDE)
+	draw_keys(frame, list, shown, left, right, bottom, M.device == "pad" and PADS.GUIDE or GUIDE)
 
 	-- The grip that resizes the window, along the folded corner.
 	hits.grip = { x = right - GRIP, y = bottom, w = GRIP, h = GRIP }
@@ -1686,6 +1846,7 @@ local function mouse_input(dt)
 	if M.panel_on then m.x, m.y = panel_point(M.panel_on, m.x, m.y) end
 	local moved = M.mouse_x ~= nil and (m.x ~= M.mouse_x or m.y ~= M.mouse_y)
 	M.mouse_x, M.mouse_y = m.x, m.y
+	if moved or m.left or m.right or (m.wheel or 0) ~= 0 then M.device = "keyboard" end
 	if M.closing then
 		if not m.held and not m.right_held then
 			if M.panel_on then M.panel_on:close() else M.close() end
@@ -2172,8 +2333,12 @@ function P.handle_panel(p, ev)
 	local list = rows(frame)
 	settle(frame, list)
 	local it = list[frame.selected]
-	if ev.back then
+	if ev.pad and ev.select and it and PADS.TYPED[it.kind] and not (it.kind == "input" and it.code) then
+		SOUND.ask("invalid")
+	elseif ev.back then
 		go_back(frame, P.close_panel)
+	elseif ev.prev or ev.next then
+		P.step_tab(p, ev.prev and -1 or 1)
 	elseif ev.filter then
 		P.step_tab(p, shift_held() and -1 or 1)
 	elseif ev.up then
@@ -2346,7 +2511,7 @@ function P.draw_panel_foot(p, frame, list, shown, left, right, bottom, mx, my)
 			draw_help(text_of(selected.owner or frame.owner, selected.help, "help"), n, x, y, width)
 		end
 	end
-	draw_keys(frame, list, shown, left, right, bottom, p.guide)
+	draw_keys(frame, list, shown, left, right, bottom, M.device == "pad" and PADS.PANEL_GUIDE or p.guide)
 end
 
 -- The grip, in the corner across from the anchor's, as dots along the fold.
@@ -2597,6 +2762,11 @@ function M.frame()
 	else
 		M.state_name = state_name()
 	end
+	-- A pad's buttons do what the key does (obsidian.keybind "open" in M.install).
+	if PADS.combo_pressed() and not M.panel_on and (M.shown or #listed_roots() > 0) then
+		M.device = "pad"
+		M.toggle()
+	end
 	-- What was asked for since the last frame, a key that opened the window among it.
 	SOUND.flush(global("ENGINE_DT") or 0)
 	if not M.kit or (not M.shown and not M.panel_on and #M.toasts == 0) then return flush_saves() end
@@ -2641,6 +2811,9 @@ end
 -- From main.lua, while this library starts.
 function M.install()
 	runners[SELF] = make_runner(SELF)
+	-- The pad buttons that open the window, from this library's option in Obsidian: "off" for none.
+	local ok, combo = pcall(function() return obsidian.settings and obsidian.settings.get("pad_open") end)
+	if ok and (combo == "off" or PADS.COMBOS[combo]) then M.pad_combo = combo end
 	for owner in tostring(obsidian.storage.get(FOLDERS_KEY) or ""):gmatch("%S+") do M.closed[owner] = true end
 	if type(obsidian.ui) == "table" and type(obsidian.ui.canvas) == "function" then
 		obsidian.ui.frame(DESIGN_W, DESIGN_H)

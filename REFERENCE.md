@@ -1165,6 +1165,8 @@ end)
 
 F6 opens a window over the game: a folder for each mod down the left with that mod's pages in it, and the open page on the right. The title bar names the mod whose page is open. It works with the keys, a pad and the mouse, players can move and resize it, and it opens where it was left. Moving, changing a value, choosing and going back play the game's own menu sounds, quietly. The key is Obsidian API's, so your mod needs none: it opens the window once a page is listed, and players change it in the Keys tab of Obsidian API.
 
+With a controller, both sticks pressed in together open and close the window (the **Open the menu with a controller** option of Obsidian API picks other buttons, or none). The D-pad or the left stick moves through the rows and changes values, A selects, B goes back, Y resets a row, and LB and RB switch to the page before or after, across every mod's folder. The guide at the foot shows the pad's buttons while a pad is in use. A pad can't type, so A does nothing on a number or text row: left and right step a number.
+
 `api.menu.add(title, build, opts)` adds a page to your mod's folder. `title` is text, or a function that answers it, since at boot the game's language isn't known yet. `build(page)` runs each time the page opens. `opts.icon` is one of `obsidian.ui.glyphs()`.
 
 | Row | What it does |
@@ -1451,6 +1453,23 @@ These go to the bot the way `api.gear`, `api.stratagems` and `api.player` give t
 local bravo = api.bots.add({ name = "Bravo", bare = true })
 bravo:give_weapon("primary_weapon", "equipment/wep_assaultrifle_01")
 bravo:call("stratagem_resupply", api.world.ahead(6))
+```
+
+### Helping each other
+
+Bots help the squad the game's own ways, with the inputs a player uses:
+
+- **Getting up.** A downed bot holds interact and presses it now and then until it's up, as a player mashes it. The game counts 30 presses (10 with the perk that shortens it), and lets a downed Helldiver up only while the body is on the screen. `bot:auto_get_up(false)` leaves it down for a teammate.
+- **Helping up.** `bot:revive(unit, on_done)` walks to a downed Helldiver, stands beside the body, turns to it and presses interact once. With no unit, it picks the nearest downed one within 30 meters.
+- **Healing.** `bot:heal_target(unit, on_done)` takes the REP-80 (`equipment/wep_repairtool_01`) out of the bot's slots, walks within range (12 meters, 18 upgraded), faces the target and holds fire until they're at full health, then takes back the weapon it held. With no unit, it picks the most hurt Helldiver within 30 meters. The beam does nothing to a downed Helldiver, so help them up first.
+- **On their own.** `bot:auto_revive(radius)` (15 meters) and `bot:auto_heal(radius)` (20 meters, under 80% health) start these by themselves between other orders, while the bot follows or fights. `false` stops either.
+
+Both answer `true` once started, or `false` and a reason, and `on_done(ok, reason)` hears how it ended. While one runs, the bot's other orders wait, and `bot:stop_helping()` ends it. A bot wearing the heal drone's backpack (`equipment/equipment_drone_heal_backpack_01`) heals whoever stands within 6 meters of the drone with no order at all.
+
+```lua
+local medic = api.bots.add({ name = "Medic" })
+medic:give_weapon("support_weapon", "equipment/wep_repairtool_01")
+medic:follow():fight(25):auto_revive(15):auto_heal(20)
 ```
 
 ### Stratagems by code
@@ -1780,6 +1799,15 @@ Bots: Helldivers this machine plays. A bot is a local co-op player on a pad nobo
 - `bot:using_stratagem()`: The stratagem the bot is calling and the step it's at ("open", "code", "throw"), or false.
 - `bot:cancel_stratagem()`: Stops a call. A beacon already in hand goes back, as a melee press does for a player.
 - `bot:weapons()`: The weapons it holds, as api.gear.weapons_of.
+- `bot:revive(unit, on_done)`: Walks to a downed Helldiver and helps them up: the bot stands by the body, turns to it and presses interact. unit: the downed Helldiver, or nil for the nearest one within 30 metres. Answers true once started, or false and a reason: "no_avatar", "downed" (the bot is downed itself), "busy" (calling a stratagem), "no_one_downed" (no one downed near), "not_downed", "self". on_done(ok, reason) hears how it ended: true once they're up, or false and "dead", "downed", "no_help_up" (presses that did nothing), "timeout" or "cancelled". While it runs, the bot's other orders wait.
+- `bot:heal_target(unit, on_done)`: Heals a hurt Helldiver with the REP-80, as a player does: the bot takes the REP-80 out, walks within range, faces the target and holds fire until they're at full health, then takes back the weapon it held. unit: the Helldiver, or nil for the most hurt one within 30 metres. Answers true once started, or false and a reason: "no_avatar", "downed", "busy", "no_heal_tool" (no REP-80 in the bot's slots), "no_one_hurt" (no one hurt near), "not_hurt", "self". on_done(ok, reason): true at full health, or false and "dead", "downed" (the target went down: help them up first), "no_ammo", "no_switch" (the REP-80 wouldn't come out), "timeout" or "cancelled".
+- `bot:helping()`: What the bot is doing for someone: "revive" or "heal" and the unit, or false.
+- `bot:stop_helping()`
+- `bot:auto_get_up(on)`: Downed, the bot presses interact by itself until up: true by default. false leaves it down for a teammate.
+- `bot:auto_revive(radius)`: Helps up downed Helldivers within radius (15 metres) by itself, between other orders, while it follows or fights. false stops.
+- `bot:auto_heal(radius)`: Heals Helldivers under 80% health within radius (20 metres) by itself with the REP-80, when it carries one. false stops.
+- `bot:auto_helping()`: The radius it helps in by itself: revive's and heal's, or false for each it doesn't.
+- `bot:downed()`: Whether the bot is downed now.
 - `bot:remove()`
 - `api.bots.all()`
 - `api.bots.remove_all()`

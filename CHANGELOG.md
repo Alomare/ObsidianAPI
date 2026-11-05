@@ -7,6 +7,9 @@ New, changed or removed capabilities, one line each, brief and direct. A release
 - New: `api.world.time_scale(scale, { lobby = true })` stops or slows the game with other players in the lobby too, for a mod that does the same on every machine at once.
 - New: `api.player.damage(unit, power, opts)` damages any Helldiver, a teammate on another machine included: the hit goes to the machine that plays the body and lands there. `opts.through_armor`, `opts.statuses` and `opts.owner` shape the hit.
 - New: `api.world.attach_effect` also takes `"fire"`, `"poison"`, `"confuse"` and `"stun"`, the look of the game's burn, poison, confusion and stun.
+- New: bots get up from downed by themselves, pressing interact as a player does (`bot:auto_get_up(false)` leaves one down for a teammate).
+- New: `bot:revive(unit)` walks a bot to a downed Helldiver and helps them up with interact, and `bot:heal_target(unit)` heals a hurt one with the REP-80's beam, then takes back the weapon the bot held. With no unit, each picks the nearest Helldiver who needs it. `bot:auto_revive(radius)` and `bot:auto_heal(radius)` do both by themselves while the bot follows or fights.
+- New: the F6 window works with a controller. Both sticks pressed in open and close it, the D-pad or the left stick moves and changes values, A selects, B goes back, Y resets a row, and LB and RB switch pages. The guide at the foot shows the pad's buttons while a pad is in use, and the **Open the menu with a controller** option picks other buttons or none.
 - Changed: in the F6 window, the mouse drags the edge of the page list to make the list wider or narrower, and the line over the help to give the help more or fewer lines. Both sizes stay within bounds that keep names, rows and help readable, and are remembered with the window's place.
 
 ## 1.32.0

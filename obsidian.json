@@ -63,5 +63,21 @@
         "es": "Abrir el menú"
       }
     }
+  ],
+  "options": [
+    {
+      "id": "pad_open",
+      "type": "choice",
+      "default": "thumbs",
+      "scope": "client",
+      "choices": [
+        { "id": "thumbs", "label": { "en": "Both sticks pressed in (L3 + R3)" } },
+        { "id": "back_right_thumb", "label": { "en": "Back + right stick pressed in (R3)" } },
+        { "id": "shoulders_back", "label": { "en": "LB + RB + Back" } },
+        { "id": "off", "label": { "en": "Off" } }
+      ],
+      "label": { "en": "Open the menu with a controller" },
+      "description": { "en": "The buttons that open and close the F6 menu from a controller, pressed together. In the menu, the D-pad or the left stick moves, A selects, B goes back, Y resets a row, and LB and RB switch pages." }
+    }
   ]
 }

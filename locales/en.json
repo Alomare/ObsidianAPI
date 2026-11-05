@@ -13,5 +13,6 @@
   "menu_key_reset": "Reset",
   "menu_key_confirm": "Confirm",
   "menu_key_cancel": "Cancel",
-  "menu_key_tabs": "Tabs"
+  "menu_key_tabs": "Tabs",
+  "menu_key_sections": "Pages"
 }
