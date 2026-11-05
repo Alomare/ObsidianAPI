@@ -2,7 +2,7 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
-## 1.33.0 (unreleased)
+## 1.33.0
 
 - New: `api.world.time_scale(scale, { lobby = true })` stops or slows the game with other players in the lobby too, for a mod that does the same on every machine at once.
 - New: `api.player.damage(unit, power, opts)` damages any Helldiver, a teammate on another machine included: the hit goes to the machine that plays the body and lands there. `opts.through_armor`, `opts.statuses` and `opts.owner` shape the hit.
