@@ -2,6 +2,11 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.32.0
+
+- New: `api.world.blast(pos, path, opts)` sets off the explosion of an item from `equipment/*` (a grenade, the plasma rifle's shot, a rocket) with that item's own look, sound and damage, as this player's. `opts.scale` multiplies the power, and `opts.spare_players` keeps the damage off Helldivers.
+- New: `api.world.shoot(from, to, opts)` fires a ray the way a weapon's shot goes and answers where it landed and what it hit. `opts.power` damages an enemy it hits, `opts.explosion` adds an item's explosion where it lands (the plasma weapons are shots with an explosion, not projectiles), and `opts.spare_players` lets the shot pass through Helldivers.
+
 ## 1.31.0
 
 - New: `api.world.arc(points, opts)` draws a bolt along a path of points, using the arc weapons' lightning or, with `effect = "tesla"`, the Tesla Tower's. It does no damage and only this player sees it.

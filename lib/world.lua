@@ -500,6 +500,99 @@ function M.explode(pos, power, radius)
 	return true
 end
 
+-- Whether a unit is a Helldiver (a player's avatar or a bot): what spare_players keeps out of a blast.
+local function is_helldiver(unit)
+	local aux = game.global("EntityAux")
+	local ok, yes = pcall(aux.has_component, unit, "character")
+	return ok and yes == true and not aux.has_component(unit, "enemy")
+end
+
+-- fn() with every damage command it queues for a Helldiver dropped: an explosion queues its hits as it
+-- goes off (ExplosionManager.do_explosion), before anything prices them.
+local function sparing_helldivers(fn)
+	local aux = game.global("EntityAux")
+	local queue = aux.queue_command_interface
+	aux.queue_command_interface = function(unit, interface, name, ...)
+		if interface == "damageable" and name == "do_damage" and is_helldiver(unit) then return end
+		return queue(unit, interface, name, ...)
+	end
+	local ok, err = pcall(fn)
+	aux.queue_command_interface = queue
+	if not ok then error(err, 0) end
+end
+
+-- An explosion at a position with the look, sound and damage of an item's own: a grenade, the plasma
+-- rifle's shot, a rocket. path: the item's unit, which has explosive_info in its settings, one of
+-- equipment/* (every mission loads those). It goes through the game's manager as this player's.
+-- opts.scale: its power times this, 0 to 10 (1 when left out); opts.spare_players: no damage to
+-- Helldivers (the push still reaches them). Only this machine sets it off: the damage reaches every
+-- machine's units as the player's own hits do, and the look shows here.
+function M.blast(pos, path, opts)
+	opts = type(opts) == "table" and opts or {}
+	local at = vector(pos)
+	if not at then return false, "bad_type" end
+	if type(path) ~= "string" or not path:find("^equipment/") then return false, "bad_value" end
+	local scale = opts.scale == nil and 1 or opts.scale
+	if not (finite(scale) and scale >= 0 and scale <= 10) then return false, "out_of_range" end
+	local st = game.state()
+	if not (type(st) == "table" and st.explosion_manager and game.in_mission()) then return false, "not_in_mission" end
+	local lsm = game.global("LuaSettingsManager")
+	local ok, settings = pcall(lsm.get_settings_by_unit_path, lsm, path)
+	local base = ok and type(settings) == "table" and settings.explosive_info
+	if type(base) ~= "table" then return false, "no_explosion" end
+	local info = {}
+	for k, v in pairs(base) do info[k] = v end
+	for _, key in ipairs({ "center_power", "blast_power" }) do
+		if type(info[key]) == "number" then info[key] = info[key] * scale end
+	end
+	local unit = game.my_unit()
+	local function go() st.explosion_manager:do_explosion(nil, game.box(at), info, unit, unit) end
+	if opts.spare_players then sparing_helldivers(go) else go() end
+	return true
+end
+
+-- A shot from one point toward another, as a weapon's ray goes: the first thing it meets, up to
+-- opts.range metres (the distance to `to` when left out, 200 at most). opts.power: damage to an enemy it
+-- hits (api.enemies.damage, so never a player); opts.explosion: an item's unit path, for its explosion
+-- where the shot lands (M.blast), as the plasma weapons and rockets do; opts.spare_players: the shot
+-- passes through Helldivers, and the explosion spares them. true, where it landed { x, y, z } and the unit
+-- it hit (nil for the ground), or false and a reason.
+function M.shoot(from, to, opts)
+	opts = type(opts) == "table" and opts or {}
+	local a, b = vector(from), vector(to)
+	if not (a and b) then return false, "bad_type" end
+	local st = game.state()
+	if not (type(st) == "table" and st.world_proxy and game.in_mission()) then return false, "not_in_mission" end
+	local v3 = game.global("Vector3")
+	local length = v3.length(b - a)
+	if length <= 0.0001 then return false, "bad_value" end
+	local range = opts.range == nil and length or opts.range
+	if not (finite(range) and range > 0 and range <= 200) then return false, "out_of_range" end
+	if opts.power ~= nil and not (finite(opts.power) and opts.power >= 0 and opts.power < 1000000) then return false, "out_of_range" end
+	local ok, hits = pcall(game.global("PhysicsWorld").immediate_raycast, st.world_proxy:get_physics_world(), a, v3.normalize(b - a), range,
+		"all", "collision_filter", "damage_ray")
+	if not ok then return false, "not_available" end
+	local actor_unit = game.global("Actor").unit
+	local best, best_unit = nil, nil
+	for _, h in ipairs(type(hits) == "table" and hits or {}) do
+		local got, unit = pcall(actor_unit, h[4])
+		unit = got and unit or nil
+		if not (opts.spare_players and unit and is_helldiver(unit)) and (not best or h[2] < best[2]) then best, best_unit = h, unit end
+	end
+	if not best then return false, "no_target" end
+	local p = best[1]
+	local landed = { x = p.x, y = p.y, z = p.z }
+	if best_unit and opts.power and opts.power > 0 then
+		local enemies = obsidian.module("lib/enemies")
+		pcall(enemies.damage, best_unit, opts.power)
+	end
+	if opts.explosion then
+		local done, why = M.blast(landed, opts.explosion, { spare_players = opts.spare_players })
+		if not done then return false, why end
+	end
+	return true, landed, best_unit
+end
+
 -- The effects a mod may draw, by name. Each is in mission_common, which every mission loads: a
 -- particle effect that isn't loaded crashes the game. arc and tesla are bolts, drawn from one point to
 -- another (the arc weapons' lightning, and the Tesla Tower's); shock and enemy_shock are the crackle the
