@@ -2,6 +2,13 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.31.0
+
+- New: `api.world.arc(points, opts)` draws a bolt along a path of points, using the arc weapons' lightning or, with `effect = "tesla"`, the Tesla Tower's. It does no damage and only this player sees it.
+- New: `api.world.attach_effect(unit, effect, node)` puts the shock crackle (`"shock"` for a Helldiver, `"enemy_shock"` for an enemy) on a unit until `api.world.detach_effect(handle)` takes it off. It's only an effect: no status and no slow.
+- New: `api.enemies.chain(pos, count, first, jump)` lists enemies the way an arc jumps: the nearest within `first` metres of a position, then the nearest new one within `jump` metres of the last.
+- New: `api.world.EFFECTS` names the effects a mod may draw. Each one is in a package every mission loads.
+
 ## 1.30.0
 
 - New: `api.mission.drop(choice)` starts a solo mission from the ship with chosen parts, as a real mission. XP, samples and unlocks count. The campaign is put back as it was at the drop, with no planet progress and no Galactic War or leaderboard report from the mission. `api.mission.practice` still starts a training mission that pays nothing.

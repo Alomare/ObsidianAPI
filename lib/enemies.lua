@@ -248,6 +248,32 @@ function M.near(radius, pos)
 	return found
 end
 
+-- A chain of living enemies, as an arc jumps: the nearest within `first` metres of a position, then
+-- each time the nearest one not yet in the chain within `jump` metres of the last. Up to `count` of
+-- them, in order, and fewer when the chain runs out. pos: a vector or { x, y, z }.
+function M.chain(pos, count, first, jump)
+	local ok, x, y, z = pcall(function() return pos.x, pos.y, pos.z end)
+	if not (ok and type(x) == "number" and type(y) == "number") then return {} end
+	if not (type(count) == "number" and count >= 1 and type(first) == "number" and type(jump) == "number") then return {} end
+	local units, v3 = game.global("Unit"), game.global("Vector3")
+	local at, range, out, taken = v3(x, y, type(z) == "number" and z or 0), first, {}, {}
+	local list = M.list()
+	while #out < math.floor(count) do
+		local best, best_distance = nil, range
+		for _, unit in ipairs(list) do
+			if not taken[unit] then
+				local distance = v3.distance(units.world_position(unit, 0), at)
+				if distance <= best_distance then best, best_distance = unit, distance end
+			end
+		end
+		if not best then break end
+		out[#out + 1], taken[best] = best, true
+		local p = units.world_position(best, 0)
+		at, range = v3(p.x, p.y, p.z), jump
+	end
+	return out
+end
+
 -- A hit from the player, as apply_status sends it, so it reaches the owner and armor counts. statuses:
 -- a list of status templates that go with it, or nil. opts.through_armor: true for a hit no armor stops,
 -- as burns and poison are.

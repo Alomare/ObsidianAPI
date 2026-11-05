@@ -500,6 +500,95 @@ function M.explode(pos, power, radius)
 	return true
 end
 
+-- The effects a mod may draw, by name. Each is in mission_common, which every mission loads: a
+-- particle effect that isn't loaded crashes the game. arc and tesla are bolts, drawn from one point to
+-- another (the arc weapons' lightning, and the Tesla Tower's); shock and enemy_shock are the crackle the
+-- game shows on a shocked Helldiver and a shocked enemy, which run until taken off.
+M.EFFECTS = {
+	arc = "effects/generated/wep_arclightning", tesla = "effects/generated/tesla_lightning",
+	shock = "effects/generated/status_lightning_player", enemy_shock = "effects/generated/status_lightning",
+}
+local BOLTS = { arc = true, tesla = true }
+-- The longest path one arc() draws.
+M.MAX_ARC_POINTS = 16
+
+local function particle_world()
+	local st = game.state()
+	local proxy = type(st) == "table" and st.world_proxy
+	if not (proxy and game.in_mission()) then return nil end
+	local ok, world = pcall(proxy.get_world, proxy)
+	return ok and world or nil
+end
+
+-- A bolt along a path, from each point to the next, as the arc weapons draw theirs. Only this player
+-- sees it, and it does no damage. points: 2 to MAX_ARC_POINTS vectors or { x, y, z }. opts.effect:
+-- "arc" (the default) or "tesla"; opts.size: the bolt's thickness, 0.1 to 5, 1 when left out.
+function M.arc(points, opts)
+	opts = type(opts) == "table" and opts or {}
+	local kind = opts.effect or "arc"
+	if not BOLTS[kind] then return false, "unknown_effect" end
+	if type(points) ~= "table" or #points < 2 or #points > M.MAX_ARC_POINTS then return false, "bad_value" end
+	local size = opts.size == nil and 1 or opts.size
+	if not (finite(size) and size >= 0.1 and size <= 5) then return false, "out_of_range" end
+	local path = {}
+	for i, p in ipairs(points) do
+		path[i] = vector(p)
+		if not (path[i] and finite(path[i].x) and finite(path[i].y) and finite(path[i].z)) then return false, "bad_type" end
+	end
+	local world = particle_world()
+	if not world then return false, "not_in_mission" end
+	local W, V3, name = game.global("World"), game.global("Vector3"), M.EFFECTS[kind]
+	local start, finish = W.find_particles_variable(world, name, "start"), W.find_particles_variable(world, name, "end")
+	local thick = W.find_particles_variable(world, name, "size")
+	for i = 1, #path - 1 do
+		-- Vectors last one frame, so each is made right before the engine reads it.
+		local a = path[i]
+		local id = W.create_particles(world, name, V3(a.x, a.y, a.z))
+		W.set_particles_variable(world, id, start, V3(a.x, a.y, a.z))
+		W.set_particles_variable(world, id, finish, V3(path[i + 1].x, path[i + 1].y, path[i + 1].z))
+		W.set_particles_variable(world, id, thick, V3(size, 0, 0))
+	end
+	return true
+end
+
+-- Effects on units: handle -> { world, particles, unit }.
+local attached, last_handle = {}, 0
+
+-- Puts a running effect on a unit, following it, as the game puts the shock crackle on a body: on the
+-- unit's `node` ("boss", the body's centre, when it has one, else the root). Only this player sees
+-- it. effect: "shock" or "enemy_shock". A handle for detach_effect, or false and a reason.
+function M.attach_effect(unit, effect, node)
+	local name = M.EFFECTS[effect]
+	if not name or BOLTS[effect] then return false, "unknown_effect" end
+	local U = game.global("Unit")
+	local ok, alive = pcall(U.alive, unit)
+	if not (ok and alive) then return false, "no_target" end
+	local world = particle_world()
+	if not world then return false, "not_in_mission" end
+	node = node or "boss"
+	local index = 0
+	if U.has_node(unit, node) then index = U.node(unit, node) elseif node ~= "boss" then return false, "no_node" end
+	local W = game.global("World")
+	local id = W.create_particles(world, name, U.world_position(unit, index))
+	W.link_particles(world, id, unit, index, game.global("Matrix4x4").identity(), "destroy")
+	last_handle = last_handle + 1
+	attached[last_handle] = { world = world, particles = id, unit = unit }
+	return last_handle
+end
+
+-- Takes an effect from attach_effect off. With its unit or its mission gone, the game has already
+-- removed it, and the handle is only forgotten.
+function M.detach_effect(handle)
+	local a = attached[handle]
+	if not a then return false, "no_target" end
+	attached[handle] = nil
+	local ok, alive = pcall(game.global("Unit").alive, a.unit)
+	if ok and alive and particle_world() == a.world then
+		pcall(game.global("World").stop_spawning_particles, a.world, a.particles)
+	end
+	return true
+end
+
 function M.clear_decals()
 	local manager = game.global("SurfaceEffectManager")
 	if not (manager and manager.clear) then return false, "not_in_mission" end
@@ -1154,6 +1243,14 @@ end
 
 function M.tick()
 	local st = game.state()
+	-- Effects whose unit or mission went: the game removed them with it.
+	if next(attached) ~= nil then
+		local U, world = game.global("Unit"), particle_world()
+		for handle, a in pairs(attached) do
+			local ok, alive = pcall(U.alive, a.unit)
+			if not (ok and alive) or a.world ~= world then attached[handle] = nil end
+		end
+	end
 	if held and held.state ~= st then
 		held = nil
 	end
