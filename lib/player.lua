@@ -457,6 +457,162 @@ function M.revive_everyone()
 	return true
 end
 
+-- Damage to any Helldiver. A hit on a Helldiver is worked out on the machine that plays the body, so a
+-- teammate's goes there: through the lobby's member data, under one key of this library's own, and
+-- that machine's copy of the API lands it on its player (M.tick). Each request carries the mission
+-- and a number; a machine's first look at another's requests in a mission only notes where they are,
+-- and a machine starts each mission with an empty list, so nothing from before lands twice or late.
+local DAMAGE_KEY = "obsidian.api:player_damage"
+local DAMAGE_KEPT = 4
+local DAMAGE_SHARED_MAX = 200
+local DAMAGE_EVERY = 0.1 -- seconds between looks at the others' requests
+local damage = { seq = 0, list = {}, mission = nil, seen = {}, wait = 0 }
+
+-- A player's number in the lobby, the same on every machine: the player object's index, or the
+-- place in the game's list of players.
+local function player_number(record, place)
+	local go = record and record.player_go
+	local ok, index = pcall(function() return go:has("index") and go:get("index") or nil end)
+	if ok and type(index) == "number" then return index end
+	return place
+end
+
+local function mission_of(st)
+	return tostring(type(st) == "table" and st.mission_seed or 0)
+end
+
+local function land(unit, power, through, statuses, owner)
+	local live = owner
+	if live ~= nil then
+		local ok, alive = pcall(game.global("Unit").alive, live)
+		if not (ok and alive) then live = nil end
+	end
+	aux().queue_command_interface(unit, "damageable", "do_damage",
+		{ power = power, angle_hit = 0, angle_incidence = 0, owner_unit = live, attacker_unit = live, hit_status_effects = statuses, armorignore = through or nil })
+end
+
+-- The text this machine shares: the mission, then each request kept. The oldest go first when it
+-- runs past what member data holds.
+local function damage_text(mission)
+	while true do
+		local parts = {}
+		for i, d in ipairs(damage.list) do
+			parts[i] = d.seq .. "@" .. d.target .. "@" .. string.format("%.1f", d.power) .. "@" .. (d.through and "a" or "") .. "@" .. table.concat(d.statuses or {}, "+")
+		end
+		local text = mission .. ";" .. table.concat(parts, "|")
+		if #text <= DAMAGE_SHARED_MAX or #damage.list == 0 then return text end
+		table.remove(damage.list, 1)
+	end
+end
+
+local function share_damage(st)
+	local lobby = game.lobby()
+	if not lobby then return false end
+	local ok = pcall(lobby.set_member_data, lobby, DAMAGE_KEY, damage_text(mission_of(st)))
+	return ok
+end
+
+-- The requests in another machine's text: { mission, list = { { seq, target, power, through, statuses } } }.
+local function decode_damage(text)
+	if type(text) ~= "string" then return nil end
+	local mission, rest = text:match("^([^;]*);(.*)$")
+	if not mission then return nil end
+	local out = { mission = mission, list = {} }
+	for entry in rest:gmatch("[^|]+") do
+		local seq, target, power, flags, statuses = entry:match("^(%d+)@(%d+)@([%d.]+)@(%a*)@(.*)$")
+		if seq then
+			local names = {}
+			for name in statuses:gmatch("[^+]+") do names[#names + 1] = name end
+			out.list[#out.list + 1] = { seq = tonumber(seq), target = tonumber(target), power = tonumber(power), through = flags:find("a") ~= nil, statuses = #names > 0 and names or nil }
+		end
+	end
+	return out
+end
+
+-- A hit on any Helldiver, a teammate on another machine included, which lands on the machine that
+-- plays the body a moment later. unit: any player's body. power: as a hit's, 0 to 10000. opts.through_armor: no armor stops it.
+-- opts.statuses: status templates that go with it. opts.owner: the unit the hit comes from, such as
+-- an enemy, for this machine's own players. Answers true once the hit is landed or on its way.
+function M.damage(unit, power, opts)
+	opts = type(opts) == "table" and opts or {}
+	local st = game.state()
+	if not game.in_mission() then return false, "not_in_mission" end
+	if not (type(power) == "number" and power >= 0 and power <= 10000) then return false, "out_of_range" end
+	local templates = game.global("StatusTemplateSettings")
+	for _, name in ipairs(opts.statuses or {}) do
+		if type(name) ~= "string" or not name:match("^[%w_]+$") or not (templates and templates[name]) then return false, "unknown_status" end
+	end
+	local through = opts.through_armor == true
+	for place, p in ipairs(type(st) == "table" and st.players or {}) do
+		local go = p.player_go
+		if go and go:exists() and game.avatar(p) == unit then
+			if go:owned() then
+				land(unit, power, through, opts.statuses, opts.owner)
+				return true
+			end
+			if not game.lobby() then return false, "not_available" end
+			if damage.mission ~= mission_of(st) then damage.mission, damage.list = mission_of(st), {} end
+			damage.seq = damage.seq + 1
+			damage.list[#damage.list + 1] = { seq = damage.seq, target = player_number(p, place), power = power, through = through, statuses = opts.statuses }
+			while #damage.list > DAMAGE_KEPT do table.remove(damage.list, 1) end
+			if not share_damage(st) then return false, "not_available" end
+			return true
+		end
+	end
+	return false, "no_target"
+end
+
+-- Every frame: a new mission starts this machine's list empty, and the other machines' requests for
+-- this machine's players land here.
+function M.tick()
+	local st = game.state()
+	if not game.in_mission() then return end
+	local mission = mission_of(st)
+	if damage.mission ~= mission then
+		damage.mission, damage.list = mission, {}
+		share_damage(st)
+	end
+	damage.wait = damage.wait - (game.global("ENGINE_DT") or 0.016)
+	if damage.wait > 0 then return end
+	damage.wait = DAMAGE_EVERY
+	local lobby = game.lobby()
+	if not lobby then return end
+	local ok, members = pcall(lobby.members, lobby)
+	if not (ok and type(members) == "table") then return end
+	local mine = {}
+	for place, p in ipairs(type(st) == "table" and st.players or {}) do
+		local go = p.player_go
+		if go and go:exists() and go:owned() then
+			local body = game.avatar(p)
+			if body then mine[player_number(p, place)] = body end
+		end
+	end
+	local me = game.global("Network").peer_id()
+	for _, peer in ipairs(members) do
+		if peer ~= me then
+			local got, text = pcall(lobby.member_data, lobby, peer, DAMAGE_KEY)
+			local e = got and decode_damage(text)
+			if e and e.mission == mission then
+				local seen = damage.seen[peer]
+				local top = seen and seen.mission == mission and seen.top or nil
+				local most = top or 0
+				for _, d in ipairs(e.list) do
+					if top and d.seq > top and mine[d.target] and d.power <= 10000 then
+						local fine = true
+						for _, name in ipairs(d.statuses or {}) do
+							local templates = game.global("StatusTemplateSettings")
+							if not (templates and templates[name]) then fine = false end
+						end
+						if fine then land(mine[d.target], d.power, d.through, d.statuses, nil) end
+					end
+					most = math.max(most, d.seq)
+				end
+				damage.seen[peer] = { mission = mission, top = most }
+			end
+		end
+	end
+end
+
 function M.lives()
 	local record = game.me()
 	return record and record.extra_lives

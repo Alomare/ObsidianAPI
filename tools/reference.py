@@ -28,6 +28,7 @@ INTERNAL = {
     "map": {"install", "draw", "reset"},
     "menu": {"install", "frame", "runner", "panel_mouse"},
     "mod_settings": {"install", "tick", "run_chosen"},
+    "player": {"tick"},
     "world": {"install", "tick"},
     "capture": {"tick", "reset", "hold_screen", "find_window", "save_now", "area"},
     "mission": {"on_mission_start_update", "install"},

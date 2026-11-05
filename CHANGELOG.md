@@ -5,6 +5,8 @@ New, changed or removed capabilities, one line each, brief and direct. A release
 ## 1.33.0 (unreleased)
 
 - New: `api.world.time_scale(scale, { lobby = true })` stops or slows the game with other players in the lobby too, for a mod that does the same on every machine at once.
+- New: `api.player.damage(unit, power, opts)` damages any Helldiver, a teammate on another machine included: the hit goes to the machine that plays the body and lands there. `opts.through_armor`, `opts.statuses` and `opts.owner` shape the hit.
+- New: `api.world.attach_effect` also takes `"fire"`, `"poison"`, `"confuse"` and `"stun"`, the look of the game's burn, poison, confusion and stun.
 - Changed: in the F6 window, the mouse drags the edge of the page list to make the list wider or narrower, and the line over the help to give the help more or fewer lines. Both sizes stay within bounds that keep names, rows and help readable, and are remembered with the window's place.
 
 ## 1.32.0

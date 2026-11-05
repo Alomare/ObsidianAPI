@@ -46,6 +46,9 @@ obsidian.on_frame(function()
 	if not ran then obsidian.log("mod_settings: " .. tostring(why)) end
 	pcall(custom.tick)
 	pcall(world.tick)
+	-- Other machines' api.player.damage on this machine's players.
+	ran, why = pcall(player.tick)
+	if not ran then obsidian.log("player damage: " .. tostring(why)) end
 	ran, why = pcall(capture.tick)
 	if not ran then obsidian.log("capture: " .. tostring(why)) end
 	local ok, err = pcall(music.tick)
@@ -152,7 +155,7 @@ return {
 	world = guard(world, { "shading", "flash", "cursor", "to_screen", "ahead", "raycast", "clear_decals", "light", "time_scale", "time_now", "visible",
 		"flashlight", "time_of_day", "sun", "parts_of", "cape_of", "hidden", "detail", "planet_shading", "placement", "part_units", "part_hidden",
 		"arc", "attach_effect", "detach_effect" }),
-	player = guard(player, { "lives" }),
+	player = guard(player, { "lives", "damage" }),
 	gear = guard(gear),
 	stratagems = guard(stratagems),
 	enemies = guard(enemies, { "available", "list", "count", "carried", "room", "info", "nearest", "near", "chain", "max_enemies", "waves" }),

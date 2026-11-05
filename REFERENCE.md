@@ -464,6 +464,7 @@ Everything in this section acts on the player of this machine. Calls that take a
 | `heal_everyone()`, `revive_everyone()` | The same for every player, through each one's own game |
 | `lives()`, `set_lives(n)` | The lobby's reinforcements. The game only counts them with nobody else in the lobby |
 | `knockdown()` | Knocks the player down, as a blast does |
+| `damage(unit, power, opts)` | A hit on any Helldiver, a teammate's included. `opts.through_armor`, `opts.statuses` (status templates) and `opts.owner` (the unit it comes from) shape it |
 | `drop_carried()` | Drops whatever they carry, such as a hard drive |
 | `clear_status(name)` | Takes off a status, by template name or by element such as `"fire"` |
 | `immune(name, on)` | Keeps a status off across respawns, until `on` is `false` |
@@ -473,7 +474,7 @@ Everything in this section acts on the player of this machine. Calls that take a
 api.player.immune("fire", true)
 ```
 
-Health belongs to whoever owns the body, so all of this works on a client too.
+Health belongs to whoever owns the body, so all of this works on a client too. A hit on a Helldiver is worked out on the machine that plays the body, so `damage` on a teammate goes to that machine through the lobby and lands there a moment later, when that machine runs Obsidian API 1.33.0 or later.
 
 ### Getting around
 
@@ -899,7 +900,7 @@ if #path > 1 then api.world.arc(path) end
 
 Drawing shows on this machine only. For other players to see it, send what to draw with `api.lobby.share`, and have the mod draw it on their side. `api.enemies.damage` only hits enemies, so an attack built this way never hurts a player.
 
-`api.world.attach_effect(unit, "shock")` puts the crackle of a shocked Helldiver on a unit, following the body until `api.world.detach_effect(handle)`. Only the effects named in `api.world.EFFECTS` can be drawn: each one is in a package every mission loads, and drawing an effect that isn't loaded crashes the game.
+`api.world.attach_effect(unit, "shock")` puts the crackle of a shocked Helldiver on a unit (`"enemy_shock"`, `"fire"`, `"poison"`, `"confuse"` and `"stun"` are the game's other status looks), following the body until `api.world.detach_effect(handle)`. Only the effects named in `api.world.EFFECTS` can be drawn: each one is in a package every mission loads, and drawing an effect that isn't loaded crashes the game.
 
 `api.world.prop(unit, pos, opts)` places one of the game's units in the level, on this machine only. Nothing goes over the network and no game system knows about it, so it does nothing but be seen, with whatever glow the unit has. `opts.scale` sets its size, 1 as made. It answers a prop:
 
@@ -2114,6 +2115,7 @@ The local player: staying alive, moving, getting around, looking the part. Avata
 - `api.player.respawn()`
 - `api.player.heal_everyone()`: Helping teammates goes through the owner, with the game's own requests.
 - `api.player.revive_everyone()`
+- `api.player.damage(unit, power, opts)`: A hit on any Helldiver, a teammate on another machine included, which lands on the machine that plays the body a moment later. unit: any player's body. power: as a hit's, 0 to 10000. opts.through_armor: no armor stops it. opts.statuses: status templates that go with it. opts.owner: the unit the hit comes from, such as an enemy, for this machine's own players. Answers true once the hit is landed or on its way.
 - `api.player.lives()`
 - `api.player.set_lives(n)`: Only through the game's setter: the value is under the tamper check. Lives count only alone.
 - `api.player.teleport`
@@ -2208,7 +2210,7 @@ Time, camera, HUD, the look of the world, and finding a place in it. The camera 
 - `api.world.EFFECTS`: The effects a mod may draw, by name. Each is in mission_common, which every mission loads: a particle effect that isn't loaded crashes the game. arc and tesla are bolts, drawn from one point to another (the arc weapons' lightning, and the Tesla Tower's); shock and enemy_shock are the crackle the game shows on a shocked Helldiver and a shocked enemy, which run until taken off.
 - `api.world.MAX_ARC_POINTS`: The longest path one arc() draws.
 - `api.world.arc(points, opts)`: A bolt along a path, from each point to the next, as the arc weapons draw theirs. Only this player sees it, and it does no damage. points: 2 to MAX_ARC_POINTS vectors or { x, y, z }. opts.effect: "arc" (the default) or "tesla"; opts.size: the bolt's thickness, 0.1 to 5, 1 when left out.
-- `api.world.attach_effect(unit, effect, node)`: Puts a running effect on a unit, following it, as the game puts the shock crackle on a body: on the unit's `node` ("boss", the body's centre, when it has one, else the root). Only this player sees it. effect: "shock" or "enemy_shock". A handle for detach_effect, or false and a reason.
+- `api.world.attach_effect(unit, effect, node)`: Puts a running effect on a unit, following it, as the game puts the shock crackle on a body: on the unit's `node` ("boss", the body's centre, when it has one, else the root). Only this player sees it. effect: "shock", "enemy_shock", "fire", "poison", "confuse" or "stun". A handle for detach_effect, or false and a reason.
 - `api.world.detach_effect(handle)`: Takes an effect from attach_effect off. With its unit or its mission gone, the game has already removed it, and the handle is only forgotten.
 - `api.world.clear_decals()`
 - `api.world.camera.forward(yaw, pitch)`: The way a yaw and a pitch look, as { x, y, z }.

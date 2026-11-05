@@ -600,6 +600,9 @@ end
 M.EFFECTS = {
 	arc = "effects/generated/wep_arclightning", tesla = "effects/generated/tesla_lightning",
 	shock = "effects/generated/status_lightning_player", enemy_shock = "effects/generated/status_lightning",
+	-- The look of the game's burn, poison, confusion and stun, all in mission_common.
+	fire = "effects/generated/status_fire", poison = "effects/generated/status_poison",
+	confuse = "effects/generated/status_confuse", stun = "effects/generated/status_stun",
 }
 local BOLTS = { arc = true, tesla = true }
 -- The longest path one arc() draws.
@@ -649,7 +652,7 @@ local attached, last_handle = {}, 0
 
 -- Puts a running effect on a unit, following it, as the game puts the shock crackle on a body: on the
 -- unit's `node` ("boss", the body's centre, when it has one, else the root). Only this player sees
--- it. effect: "shock" or "enemy_shock". A handle for detach_effect, or false and a reason.
+-- it. effect: "shock", "enemy_shock", "fire", "poison", "confuse" or "stun". A handle for detach_effect, or false and a reason.
 function M.attach_effect(unit, effect, node)
 	local name = M.EFFECTS[effect]
 	if not name or BOLTS[effect] then return false, "unknown_effect" end
