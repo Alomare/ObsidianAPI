@@ -4,6 +4,7 @@ New, changed or removed capabilities, one line each, brief and direct. A release
 
 ## 1.33.0 (unreleased)
 
+- New: `api.world.time_scale(scale, { lobby = true })` stops or slows the game with other players in the lobby too, for a mod that does the same on every machine at once.
 - Changed: in the F6 window, the mouse drags the edge of the page list to make the list wider or narrower, and the line over the help to give the help more or fewer lines. Both sizes stay within bounds that keep names, rows and help readable, and are remembered with the window's place.
 
 ## 1.32.0

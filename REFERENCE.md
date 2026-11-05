@@ -981,7 +981,7 @@ key:remove()
 
 | Call | What it does |
 |---|---|
-| `time_scale(scale)` | How fast this player's game runs: 0 stops it, 1 is normal, between is slow motion. Only alone in the lobby (`"solo_only"`), and a new screen sets it back to 1 |
+| `time_scale(scale, opts)` | How fast this player's game runs: 0 stops it, 1 is normal, between is slow motion. Only alone in the lobby (`"solo_only"`) unless `opts.lobby` is true, and a new screen sets it back to 1 |
 | `time_now()` | The scale now |
 | `time_of_day(name, towards, blend)` | The mission's look at `"dawn"`, `"day"`, `"dusk"` or `"night"`, with `blend` (0 to 1) of `towards` mixed in. Forest planets also have the `"swamp"` set. `nil` gives the mission's own back |
 | `visible(unit, on)` | Hides a unit, shadow and all, or shows it again |
@@ -2225,7 +2225,7 @@ Time, camera, HUD, the look of the world, and finding a place in it. The camera 
 - `light:settle()`: The unit's scene node at once, as a stopped world doesn't move it. move() and set() do it themselves.
 - `light:move(pos)`
 - `light:remove()`
-- `api.world.time_scale(scale)`: How fast this player's game runs: 0 stops it, 1 is normal speed, anything between is slow motion. Only with nobody else in the lobby, as another player's game would part from this one. A change of screen sets it back to 1.
+- `api.world.time_scale(scale, opts)`: How fast this player's game runs: 0 stops it, 1 is normal speed, anything between is slow motion. Only with nobody else in the lobby, as another player's game would part from this one. A change of screen sets it back to 1. opts.lobby: slow or stop time with other players in the lobby too. The game's time scale is only this machine's (it sets GAME_DT; the network and the game's update still run), so a mod passing it must do the same on every machine at once, or the machines drift apart while it holds.
 - `api.world.time_now()`: 1 unless time_scale changed it.
 - `api.world.AVATAR_PARTS`: What a Helldiver is drawn with. The avatar's own unit is never drawn (customization_component.lua:34): the armour, helmet, cape and boots are units of their own, linked to it, and so are the weapons and the backpack it carries (equipment_component.lua:94).
 - `api.world.parts_of(unit)`: The unit and every unit linked to it that draws as part of it: children, and for a Helldiver the armour parts and what it carries.

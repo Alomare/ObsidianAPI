@@ -943,9 +943,13 @@ local slowed = nil
 -- How fast this player's game runs: 0 stops it, 1 is normal speed, anything between is slow motion. Only
 -- with nobody else in the lobby, as another player's game would part from this one. A change of screen
 -- sets it back to 1.
-function M.time_scale(scale)
+-- opts.lobby: slow or stop time with other players in the lobby too. The game's time scale is only
+-- this machine's (it sets GAME_DT; the network and the game's update still run), so a mod passing it
+-- must do the same on every machine at once, or the machines drift apart while it holds.
+function M.time_scale(scale, opts)
 	if not finite(scale) or scale < 0 or scale > 1 then return false, "out_of_range" end
-	if scale < 1 and not game.alone() then return false, "solo_only" end
+	local lobby = type(opts) == "table" and opts.lobby == true
+	if scale < 1 and not lobby and not game.alone() then return false, "solo_only" end
 	if scale >= 1 then
 		if slowed then
 			rawset(_G, "PAUSED", false)
