@@ -2,6 +2,10 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.33.0 (unreleased)
+
+- Changed: in the F6 window, the mouse drags the edge of the page list to make the list wider or narrower, and the line over the help to give the help more or fewer lines. Both sizes stay within bounds that keep names, rows and help readable, and are remembered with the window's place.
+
 ## 1.32.0
 
 - New: `api.world.blast(pos, path, opts)` sets off the explosion of an item from `equipment/*` (a grenade, the plasma rifle's shot, a rocket) with that item's own look, sound and damage, as this player's. `opts.scale` multiplies the power, and `opts.spare_players` keeps the damage off Helldivers.

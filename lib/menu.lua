@@ -1062,20 +1062,44 @@ local function visible()
 	return left, bottom, right, top
 end
 
--- The window as the player left it, or near the top left corner on first use. Always on screen.
+-- The two lines in the window that the mouse drags: the edge of the page list and the line over the
+-- help. The list keeps room for a short name, the page for the controls on a row, and the foot for one line of
+-- help at the least and at most as much as leaves three rows of the page. In design units.
+M.split = { NAV_MIN = 120, NAV_MAX = 420, PAGE_MIN = 320, HELP_STEP = SMALL.size + 1, ROWS_MIN = 3, GRAB = 4 }
+local W = M.split
+W.FOOT_MIN = FOOT_H - W.HELP_STEP
+
+function W.nav(nav, win_w)
+	return math.max(W.NAV_MIN, math.min(nav, W.NAV_MAX, win_w - W.PAGE_MIN))
+end
+
+function W.foot(foot, win_h)
+	return math.max(W.FOOT_MIN, math.min(foot, win_h - TITLE_H - PAGE_H - 4 - ROW_H * W.ROWS_MIN))
+end
+
+-- The lines of help a foot this high holds: two at the default height, one less or more per line's room.
+function W.help_lines(foot)
+	return math.max(1, HELP_LINES + math.floor((foot - FOOT_H) / W.HELP_STEP))
+end
+
+-- The window as the player left it, or near the top left corner on first use. Always on screen. Kept
+-- as "x top w h nav foot"; a place kept before the list and the foot could be dragged has four.
 local function place_window()
 	local left, bottom, right, top = visible()
 	local win = M.win
 	if not win then
 		local saved = {}
 		for n in tostring(obsidian.storage.get(WINDOW_KEY) or ""):gmatch("%S+") do saved[#saved + 1] = tonumber(n) end
-		win = { x = saved[1] or left + 40, top = saved[2] or top - 40, w = saved[3] or DEFAULT_W, h = saved[4] or DEFAULT_H }
+		win = { x = saved[1] or left + 40, top = saved[2] or top - 40, w = saved[3] or DEFAULT_W, h = saved[4] or DEFAULT_H,
+			nav = saved[5] or NAV_W, foot = saved[6] or FOOT_H }
 		M.win = win
 	end
 	win.w = math.max(MIN_W, math.min(win.w, right - left))
 	win.h = math.max(MIN_H, math.min(win.h, top - bottom))
 	win.x = math.max(left, math.min(win.x, right - win.w))
 	win.top = math.max(bottom + win.h, math.min(win.top, top))
+	win.nav = W.nav(win.nav or NAV_W, win.w)
+	win.foot = W.foot(win.foot or FOOT_H, win.h)
 	return win
 end
 
@@ -1120,35 +1144,42 @@ local function draw_title(win, mx, my)
 	put(fit(title, w - TITLE_H - filter_w - PAD - 8, TITLE), x + PAD, mid(y, TITLE_H, TITLE), TITLE, WHITE)
 end
 
+-- The page list, and the edge beside it that drags to make the list wider or narrower.
 local function draw_nav(win, bottom, mx, my)
 	local kit, hits = M.kit, M.hits
 	local x, top = win.x, win.top - TITLE_H
+	local nav_w = win.nav
 	kit:layer(LAYER_BACK + 1)
-	kit:rect(x, bottom, NAV_W, top - bottom, WELL)
+	kit:rect(x, bottom, nav_w, top - bottom, WELL)
+	hits.nav_edge = { x = x + nav_w - W.GRAB, y = bottom, w = W.GRAB * 2, h = top - bottom }
+	if inside(hits.nav_edge, mx, my) or (M.drag and M.drag.kind == "nav") then
+		kit:layer(LAYER_MARK)
+		kit:rect(x + nav_w - 1, bottom, 2, top - bottom, GREY)
+	end
 	local entries = nav_entries()
 	local at = cursor_at(entries)
 	local row_h = math.min(NAV_ROW, math.floor((top - bottom - 8) / math.max(1, #entries)))
 	hits.nav = {}
 	for i, e in ipairs(entries) do
 		local y = top - 6 - i * row_h
-		local area = { x = x, y = y, w = NAV_W, h = row_h, root = e.root, folder = e.folder }
+		local area = { x = x, y = y, w = nav_w, h = row_h, root = e.root, folder = e.folder }
 		hits.nav[i] = area
 		local on = i == at
 		kit:layer(LAYER_BACK + 2)
 		if on then
-			kit:rect(x, y, NAV_W, row_h, M.nav and FOCUS or SELECTED)
+			kit:rect(x, y, nav_w, row_h, M.nav and FOCUS or SELECTED)
 		elseif inside(area, mx, my) then
-			kit:rect(x, y, NAV_W, row_h, HOVER)
+			kit:rect(x, y, nav_w, row_h, HOVER)
 		end
 		kit:layer(LAYER_MARK)
 		if on then kit:rect(x, y, 3, row_h, GOLD) end
 		if e.folder then
 			kit:poly(arrow_points(M.closed[e.folder] and "right" or "down", x + 18, y + row_h / 2, 4), on and GOLD or FAINT)
-			put(fit(name_of(e.folder), NAV_W - 40, FOLDER), x + 30, mid(y, row_h, FOLDER), FOLDER, on and WHITE or GREY)
+			put(fit(name_of(e.folder), nav_w - 40, FOLDER), x + 30, mid(y, row_h, FOLDER), FOLDER, on and WHITE or GREY)
 		else
 			local left = x + NAV_INDENT
 			kit:glyph(e.root.icon or "page", left + 14, y + (row_h - 15) / 2, 15, on and GOLD or GREY)
-			put(fit(text_of(e.root.owner, e.root.title, "title"), NAV_W - 50 - NAV_INDENT, BODY), left + 39, mid(y, row_h, BODY), BODY, on and WHITE or GREY)
+			put(fit(text_of(e.root.owner, e.root.title, "title"), nav_w - 50 - NAV_INDENT, BODY), left + 39, mid(y, row_h, BODY), BODY, on and WHITE or GREY)
 		end
 	end
 end
@@ -1357,15 +1388,19 @@ local function draw_keys(frame, list, shown, left, right, bottom, guide)
 	end
 end
 
+-- The foot: the selected row's help over the key guide. The line over it drags, as a panel's does.
 local function draw_foot(frame, list, shown, left, right, bottom)
 	local kit, hits = M.kit, M.hits
-	local foot_y = bottom + FOOT_H
+	local foot = M.win.foot
+	local foot_y = bottom + foot
+	hits.divider = { x = left, y = foot_y - 5, w = right - left, h = 8 }
+	local lit = inside(hits.divider, M.mouse_x or -1, M.mouse_y or -1) or (M.drag and M.drag.kind == "window_foot")
 	kit:layer(LAYER_BACK + 2)
-	kit:rect(left, foot_y, right - left, 1, DIVIDER)
+	kit:rect(left, foot_y, right - left, lit and 2 or 1, lit and GREY or DIVIDER)
 	local selected = list[frame.selected]
 	kit:layer(LAYER_MARK)
 	if selected and selected.help then
-		draw_help(text_of(selected.owner or frame.owner, selected.help, "help"), HELP_LINES, left + PAD, foot_y - SMALL.size - 5, right - left - PAD * 2)
+		draw_help(text_of(selected.owner or frame.owner, selected.help, "help"), W.help_lines(foot), left + PAD, foot_y - SMALL.size - 5, right - left - PAD * 2)
 	end
 	draw_keys(frame, list, shown, left, right, bottom, GUIDE)
 
@@ -1437,7 +1472,7 @@ end
 
 local function draw_page(win, bottom, mx, my)
 	local kit, hits = M.kit, M.hits
-	local left, right, top = win.x + NAV_W, win.x + win.w, win.top - TITLE_H
+	local left, right, top = win.x + win.nav, win.x + win.w, win.top - TITLE_H
 	local frame = M.stack[#M.stack]
 	local list = rows(frame)
 	settle(frame, list)
@@ -1461,7 +1496,7 @@ local function draw_page(win, bottom, mx, my)
 	kit:layer(LAYER_BACK + 2)
 	kit:rect(left, head_y, right - left, 1, DIVIDER)
 
-	local view = head_y - (bottom + FOOT_H) - 4
+	local view = head_y - (bottom + win.foot) - 4
 	local shown = math.max(1, math.floor(view / ROW_H))
 	if frame.follow then
 		if frame.selected < frame.top then frame.top = frame.selected end
@@ -1603,6 +1638,10 @@ local function press(frame, x, y)
 		scroll_to(frame, y)
 	elseif inside(hits.title, x, y) then
 		M.drag = { kind = "move", x = x - M.win.x, y = y - M.win.top }
+	elseif inside(hits.nav_edge, x, y) then
+		M.drag = { kind = "nav", x = x, nav = M.win.nav }
+	elseif inside(hits.divider, x, y) then
+		M.drag = { kind = "window_foot", y = y, foot = M.win.foot }
 	else
 		for _, area in ipairs(hits.nav) do
 			if inside(area, x, y) then
@@ -1622,13 +1661,17 @@ end
 local function follow_drag(frame, drag, m)
 	if not m.held then
 		M.drag = nil
-		if drag.kind == "move" or drag.kind == "size" then M.save.window = true end
+		if drag.kind == "move" or drag.kind == "size" or drag.kind == "nav" or drag.kind == "window_foot" then M.save.window = true end
 	elseif drag.kind == "slider" then
 		slide_to(drag, m.x)
 	elseif drag.kind == "move" then
 		M.win.x, M.win.top = m.x - drag.x, m.y - drag.y
 	elseif drag.kind == "size" then
 		M.win.w, M.win.h = m.x - drag.x, drag.y - m.y
+	elseif drag.kind == "nav" then
+		M.win.nav = W.nav(drag.nav + m.x - drag.x, M.win.w)
+	elseif drag.kind == "window_foot" then
+		M.win.foot = W.foot(drag.foot + m.y - drag.y, M.win.h)
 	else
 		scroll_to(frame, m.y)
 	end
@@ -2524,7 +2567,8 @@ end
 -- library's code is the code running.
 local function flush_saves()
 	if M.save.window and M.win then
-		obsidian.storage.set(WINDOW_KEY, string.format("%.14g %.14g %.14g %.14g", M.win.x, M.win.top, M.win.w, M.win.h))
+		local win = M.win
+		obsidian.storage.set(WINDOW_KEY, string.format("%.14g %.14g %.14g %.14g %.14g %.14g", win.x, win.top, win.w, win.h, win.nav or NAV_W, win.foot or FOOT_H))
 	end
 	if M.save.folders then
 		local list = {}
