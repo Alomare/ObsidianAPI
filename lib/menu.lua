@@ -2055,8 +2055,13 @@ function Panel:under_mouse()
 	return inside({ x = self.box.x, y = self.box.top - self.box.h, w = self.box.w, h = self.box.h }, M.mouse_x, M.mouse_y)
 end
 
--- Whether the panel is taking the keys for itself now: typing into a row.
-function Panel:typing() return M.panel_on == self and M.field ~= nil end
+-- Whether the panel is taking the keys for itself now: typing into a row. Also answers "number" while a
+-- number is typed, which takes digits, the point and the minus only, and "text" otherwise, so a mod can
+-- keep reading the letter keys while a number is typed.
+function Panel:typing()
+	if M.panel_on ~= self or M.field == nil then return false end
+	return true, M.field.numeric and "number" or "text"
+end
 
 -- A panel, closed. spec: title (text or a function); tabs ({ { title = ..., build = function(page) end,
 -- icon = ... }, ... }), where an icon (a name of obsidian.ui.glyphs(), an icon of the game's HUD, or

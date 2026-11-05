@@ -2,6 +2,10 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.29.2
+
+- Changed: `panel:typing()` also answers `"number"` while a number is typed into a row, and `"text"` for other rows. A number entry takes no letters, so a mod can keep reading the letter keys.
+
 ## 1.29.1
 
 - Changed: client mods can call `api.world.to_screen`, `api.world.placement`, `api.world.part_units` and `api.world.part_hidden`, which only read. They answered `false, "needs_session"` before, so Better HUD's enemy health bars, damage numbers and reload and ammo circles drew nothing unless a session mod was deployed and the lobby cleared.
