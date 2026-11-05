@@ -443,23 +443,112 @@ function M.seed(choice)
 		math.floor(choice.difficulty), layout * 10000000)
 end
 
--- Starts a solo practice mission from the ship with chosen parts. As in the game's own training
--- menu, it pays no XP or samples and touches no campaign. Proving ground types need a second seed,
--- so they aren't offered.
--- choice: as for seed: { time, environment, enemy, kind, difficulty, look, layout }.
-function M.practice(choice)
+-- What a mission's end changes in the shared campaign: the save's campaign keys and the war reports
+-- waiting in it, and the player's leaderboard rows and boss influence. The account (XP, samples,
+-- unlocks, lifetime stats) isn't here, so it counts.
+local CAMPAIGN = { "current_planet", "available_planets", "last_planet", "boss_planets", "dropzone_position",
+	"next_mission_seed", "mission_stats", "mission_stats_to_upload", "completed_planets" }
+local BOARDS = { "boss_influence", "leaderboard_stats", "leaderboard_stats_to_upload",
+	"leaderboard_provinggrounds_stats", "leaderboard_provinggrounds_stats_to_upload" }
+
+-- The drop under way: its seed and the copies from before it.
+local drop, hooked = nil, false
+
+local function copy(v)
+	if type(v) ~= "table" then return v end
+	local out = {}
+	for k, x in pairs(v) do out[k] = copy(x) end
+	return out
+end
+
+-- Copies of those keys now. The game changes the save's tables in place, so they're copied.
+local function keep()
+	local save = game.global("SaveManager")
+	local user = game.global("UserManager"):get_user_id()
+	local kept = { user = user, common = {}, own = {} }
+	for _, key in ipairs(CAMPAIGN) do kept.common[key] = copy(save:get(key)) end
+	for _, key in ipairs(BOARDS) do kept.own[key] = copy(save:user_get(key, user)) end
+	return kept
+end
+
+local function put_back(kept)
+	local save = game.global("SaveManager")
+	for _, key in ipairs(CAMPAIGN) do save:set(key, copy(kept.common[key])) end
+	for _, key in ipairs(BOARDS) do save:user_set(key, copy(kept.own[key]), kept.user) end
+end
+
+local function is_drop(seed)
+	return drop ~= nil and seed ~= nil and seed == drop.seed
+end
+
+local function start(choice, training)
 	if not game.on_ship() then return false, "not_on_ship" end
 	local save, menu = game.global("SaveManager"), game.state()
 	if #menu:get_active_players() > 1 then return false, "solo_only" end
 	local seed, why = M.seed(choice)
 	if not seed then return false, why end
-	save:set("dropzone_position", nil)
-	menu.state_machine:change_state("transition", {
-		wanted_state = "mission_start", is_training = true, mission_seed = seed, planet_name = tostring(seed),
-		active_players = menu:get_active_players(), reserved_slots = {},
+	local params = {
+		wanted_state = "mission_start", is_training = training, mission_seed = seed, planet_name = tostring(seed),
+		active_players = menu:get_active_players(), reserved_slots = {}, is_last_mission = false,
 		game_id = math.create_weak_unique_identifier(), host_name = game.global("UserManager"):get_name(),
-	})
+	}
+	if not training then
+		local ok, host = pcall(function() return game.global("NetworkGlobal").lobby:lobby_host() end)
+		if ok then params.initial_host = host end
+		drop = { seed = seed, kept = keep() }
+	end
+	-- A drop zone picked on a campaign planet would be read for this map.
+	save:set("dropzone_position", nil)
+	menu.state_machine:change_state("transition", params)
 	return true
+end
+
+-- Starts a solo practice mission from the ship with chosen parts. As in the game's own training
+-- menu, it pays no XP or samples and touches no campaign. Proving ground types need a second seed,
+-- so they aren't offered.
+-- choice: as for seed: { time, environment, enemy, kind, difficulty, look, layout }.
+function M.practice(choice)
+	return start(choice, true)
+end
+
+-- Starts a solo mission from the ship with chosen parts, as a real mission: it pays XP and samples
+-- and counts toward the account like any drop. The campaign is left as it was at the drop, win or
+-- loss: no planet or mission done, no planet stats, no event or boss progress, and no Galactic War or
+-- leaderboard report from it. Proving ground types aren't offered.
+-- choice: as for seed: { time, environment, enemy, kind, difficulty, look, layout }.
+function M.drop(choice)
+	return start(choice, false)
+end
+
+-- The mission end reads the save's current planet for everything it does to the campaign, so for a
+-- drop it sees none, and whatever it changes anyway goes back to the drop's copies. Installed by the
+-- library at load, so the hooks are its own.
+function M.install()
+	if hooked then return end
+	hooked = true
+	obsidian.hook("StateMissionEnd", "on_enter", function(original, self, params, ...)
+		if not (type(params) == "table" and is_drop(params.mission_seed)) then return original(self, params, ...) end
+		params.is_last_mission = false
+		game.global("SaveManager"):set("current_planet", nil)
+		local ok, err = pcall(original, self, params, ...)
+		put_back(drop.kept)
+		if not ok then error(err, 0) end
+	end)
+	obsidian.hook("StateMissionEnd", "save_stats", function(original, self, ...)
+		if not is_drop(self.mission_seed) then return original(self, ...) end
+		self.current_planet, self.current_enemy_index, self.current_planet_index = nil, nil, nil
+		local ok, err = pcall(original, self, ...)
+		put_back(drop.kept)
+		if not ok then error(err, 0) end
+	end)
+	-- Back on the ship, also after a mission left early, before the ship reads the save.
+	obsidian.hook("StateMenu", "on_enter", function(original, self, ...)
+		if drop then
+			put_back(drop.kept)
+			drop = nil
+		end
+		return original(self, ...)
+	end)
 end
 
 return M

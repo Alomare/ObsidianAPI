@@ -75,6 +75,8 @@ mod_settings.install()
 menu.install()
 -- A camera a mod takes (api.world.camera.take), in any lobby: only this player sees it.
 world.install()
+-- A drop from api.mission.drop leaves the campaign alone at the mission's end, whoever started it.
+mission.install()
 
 -- Where a hit is worked out: what it costs (scaled only while api.combat.scale's effects are on, which
 -- an uncleared lobby takes off), and which player of this machine landed it, for api.combat.on_hit in

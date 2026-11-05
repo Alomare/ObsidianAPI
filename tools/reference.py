@@ -30,7 +30,7 @@ INTERNAL = {
     "mod_settings": {"install", "tick", "run_chosen"},
     "world": {"install", "tick"},
     "capture": {"tick", "reset", "hold_screen", "find_window", "save_now", "area"},
-    "mission": {"on_mission_start_update"},
+    "mission": {"on_mission_start_update", "install"},
     "music": {"tick", "after_machine_enter"},
     "stratagems": {"find", "call_unowned", "define", "custom"},
 }

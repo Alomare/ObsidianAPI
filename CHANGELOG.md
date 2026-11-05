@@ -2,6 +2,10 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.30.0
+
+- New: `api.mission.drop(choice)` starts a solo mission from the ship with chosen parts, as a real mission. XP, samples and unlocks count. The campaign is put back as it was at the drop, with no planet progress and no Galactic War or leaderboard report from the mission. `api.mission.practice` still starts a training mission that pays nothing.
+
 ## 1.29.2
 
 - Changed: `panel:typing()` also answers `"number"` while a number is typed into a row, and `"text"` for other rows. A number entry takes no letters, so a mod can keep reading the letter keys.
