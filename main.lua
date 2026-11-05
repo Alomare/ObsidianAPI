@@ -155,7 +155,7 @@ return {
 	world = guard(world, { "shading", "flash", "cursor", "to_screen", "ahead", "raycast", "clear_decals", "light", "time_scale", "time_now", "visible",
 		"flashlight", "time_of_day", "sun", "parts_of", "cape_of", "hidden", "detail", "planet_shading", "placement", "part_units", "part_hidden",
 		"arc", "attach_effect", "detach_effect" }),
-	player = guard(player, { "lives", "damage" }),
+	player = guard(player, { "lives" }),
 	gear = guard(gear),
 	stratagems = guard(stratagems),
 	enemies = guard(enemies, { "available", "list", "count", "carried", "room", "info", "nearest", "near", "chain", "max_enemies", "waves" }),
