@@ -33,6 +33,9 @@ local VECTOR_FILTERS = { FilterVirtualAxis = true }
 -- runs in against this file's.
 local PRESS_FRAMES = 2
 
+-- Seconds after a bot picks up a weapon or a backpack before it picks up another (see allow_interact).
+local PICKUP_COOLDOWN = 20
+
 local function blank_input()
 	local numbers, flags, vectors = {}, {}, {}
 	local settings = game.global("ControllerSettings")
@@ -94,10 +97,13 @@ local function free_pad(st)
 	end
 end
 
+-- The input table is built again each frame (see drive): orders keeps what the bot holds until told
+-- otherwise, presses what it presses for a few frames.
 local function new_bot(kind, name)
 	local input, vectors = blank_input()
-	local b = setmetatable({ kind = kind, name = name, state = game.state(), input = input, vectors = vectors, axes = { move = { 0, 0 }, aim = { 0, 0 } }, presses = {}, goals = {},
-		get_up = true, mash = 0, scan = 0 }, Bot)
+	local b = setmetatable({ kind = kind, name = name, state = game.state(), input = input, vectors = vectors,
+		axes = { move = { 0, 0 }, aim = { 0, 0 } }, presses = {}, goals = {}, orders = { fire = false, sprint = false },
+		get_up = true, stuck = { time = 0, x = 0, y = 0, side = 1, side_time = 0 }, pickup_cd = PICKUP_COOLDOWN, pickup_until = 0 }, Bot)
 	M.list[#M.list + 1] = b
 	return b
 end
@@ -160,7 +166,7 @@ local function add_bare(st, name, pos)
 	return b
 end
 
--- A new bot. opts: name (shown over its head and in the HUD), bare (true for a unit with no record,
+-- A new bot. opts: name (shown over the bot's head and in the HUD), bare (true for a unit with no record,
 -- false to refuse one when every record is taken), position (for a bare bot; next to the player by
 -- default). The host or a player alone only: a client's local players join through the host.
 function M.add(opts)
@@ -179,7 +185,7 @@ function M.add(opts)
 	return add_bare(st, name, opts.position)
 end
 
--- The bot's unit while it's alive: a player bot has none in its hellpod or while dead.
+-- The bot's unit while alive: a player bot has none in the hellpod or while dead.
 function Bot:unit()
 	if self.kind == "player" then
 		local go = self.record and self.record.player_go
@@ -203,7 +209,7 @@ local function direction(dir)
 	return x, y
 end
 
--- Where to walk, as a world direction; its length is the speed, up to 1. nil stops.
+-- Where to walk, as a world direction; the length is the speed, up to 1. nil stops.
 function Bot:move(dir)
 	self.goals.follow, self.goals.go_to = nil, nil
 	self.axes.move[1], self.axes.move[2] = direction(dir)
@@ -242,10 +248,10 @@ function Bot:aim(dir)
 	return self
 end
 
--- Holds the trigger until fire(false).
+-- Holds the trigger until fire(false). A fight order decides the trigger while there is one.
 function Bot:fire(on)
+	self.orders.fire = on and true or false
 	self.input.fire_button = on and 1 or 0
-	self.fire_kept = nil
 	return self
 end
 
@@ -254,6 +260,7 @@ function Bot:firing()
 end
 
 function Bot:sprint(on)
+	self.orders.sprint = on and true or false
 	self.input.sprint_button = on and 1 or 0
 	self.input.sprint_pressed = on and true or false
 	return self
@@ -323,7 +330,7 @@ function Bot:give_perk(name) return with_unit(self, gear, "give_perk", 1, name) 
 function Bot:remove_perk() return with_unit(self, gear, "remove_perk", 0) end
 function Bot:refill() return with_unit(self, gear, "refill", 0) end
 function Bot:give_stratagem(name) return with_unit(self, stratagems, "give", 1, name) end
--- A real call-in of the bot's, at its upgrade level, as api.stratagems.call.
+-- A real call-in of the bot's, at the bot's upgrade level, as api.stratagems.call.
 function Bot:call(name, pos, delay) return with_unit(self, stratagems, "call", 3, name, pos, delay) end
 -- Up from downed and at full health, as api.player.heal.
 function Bot:heal() return with_unit(self, player, "heal", 0) end
@@ -375,11 +382,11 @@ end
 
 -- Enters the code of a stratagem the bot holds and throws the beacon toward pos. Answers true once
 -- started, or false and a reason: "no_avatar", "no_position", "not_available" (no such stratagem),
--- "not_held" (not in its slots), "cooling_down", "no_uses", "busy" (already calling one). on_done(ok,
+-- "not_held" (not in the bot's slots), "cooling_down", "no_uses", "busy" (already calling one). on_done(ok,
 -- reason) hears how it ended: true once the beacon is thrown, or false and "jammed" (a no-stratagem
 -- zone), "refused" (the game wouldn't call it), "wrong_code", "interrupted" (downed, knocked down, or
 -- a vehicle seat), "cancelled", "no_avatar" or "timeout". While it runs the bot stands, faces pos and
--- holds fire, and its other orders wait.
+-- holds fire, and the other orders wait.
 function Bot:use_stratagem(name, pos, on_done)
 	if self.job then return false, "busy" end
 	local unit = self:unit()
@@ -427,10 +434,10 @@ local function finish(b, ok, why)
 	end
 end
 
--- One frame of a call, after think: it writes over the input table, and leaves the orders as they are.
-local function stratagem_step(b, unit, t)
+-- One frame of a call, after think: it writes over this frame's input table and sticks (f), and leaves
+-- the orders as they are.
+local function stratagem_step(b, unit, t, f, dt)
 	local job = b.job
-	local dt = rawget(_G, "ENGINE_DT") or 0.016
 	job.time, job.total = job.time + dt, job.total + dt
 	local cs = game.master(unit, "character") or {}
 	if cs.stratagems_queue then stratagems.bot_queues[cs.stratagems_queue] = true end
@@ -439,12 +446,12 @@ local function stratagem_step(b, unit, t)
 
 	t.fire_button, t.throw, t.stratagems_button, t.stratagems_pressed = 0, 0, 0, false
 	for _, d in ipairs(ARROWS) do t["stratagem_" .. d] = false end
-	t.melee = false
-	b.axes.move[1], b.axes.move[2] = 0, 0
+	t.melee, t.interact, t.interact_button = false, false, 0
+	f.mx, f.my = 0, 0
 	local units = game.global("Unit")
 	local here = units.world_position(unit, 0)
 	local dx, dy = job.pos.x - here.x, job.pos.y - here.y
-	b.axes.aim[1], b.axes.aim[2] = direction({ x = dx, y = dy })
+	f.ax, f.ay = direction({ x = dx, y = dy })
 	local function hold_menu() t.stratagems_button, t.stratagems_pressed = 1, true end
 
 	if job.cancel then
@@ -540,28 +547,44 @@ end
 -- the REP-80's heal beam.
 --
 -- A downed Helldiver gets up after 30 presses of interact (10 with the perk that shortens it), and the
--- count goes back to 0 after a second with none. The keyboard's held key counts one press each 0.12 s.
--- The game lets a downed player up only while the body is on the screen: off it, the count stops one
--- short (CharacterComponent.update_masters).
+-- count goes back to 0 after a second with none. The keyboard's held key counts one press each 0.12 s,
+-- and while it's held the downed states count nothing else. The game lets a downed player up only
+-- while the body is on the screen: off it, the count stops one short (CharacterComponent.update_masters).
 -- Helping up: a standing Helldiver's interact looks for something to use in a short capsule 0.6 metres
 -- ahead of the body, and a downed Helldiver is one; the press plays the help-up and the downed player
--- gets up at 75 hitpoints (InteractableCharacterComponent, InteractorComponent).
+-- gets up at 75 hitpoints (InteractableCharacterComponent, InteractorComponent). The press goes to the
+-- one thing the interactor picked ahead of the body, the highest priority and then the nearest, and an
+-- item lying by the body can be that thing. Interact is read on foot (CharacterStateIdle, Walk, Aim,
+-- AimWalk, Sprint, Reload), and CharacterStateInteract uses a press again while it runs.
 -- The REP-80 heals while fire is held: it locks onto a healable unit within 30 degrees of where the
 -- wielder faces and within range (12 metres, 18 upgraded), along a line of sight, and stays on it while
 -- the target stays within range and 30 degrees (HealbeamComponent). The heal does nothing to a downed
 -- Helldiver (HealthComponent "do_heal"), so a downed one needs a help up first.
+-- A weapon taken out (the inventory's forced wield) while the body is downed, knocked down or in
+-- another animation leaves it in a pose with no animation, so a bot changes weapons only standing calm.
 local REACH = 0.9          -- metres from a downed body to stand before pressing interact
+local NEAR_ENOUGH = 1.5    -- metres from which it presses anyway after a second of getting no closer
 local PRESS_WAIT = 1.5     -- seconds after a press for the help-up to play
 local REVIVE_TRIES = 4     -- presses before "no_help_up"
+local PICK_TIME = 3        -- seconds facing the body for the interactor to pick it before "no_help_up"
 local REVIVE_TIME = 20     -- seconds before a help up gives up
 local HEAL_TIME = 30       -- seconds before a heal gives up
 local SWITCH_TRIES = 4     -- times the bot takes out the REP-80 before "no_switch"
 local SWITCH_GAP = 0.5
-local MASH_EVERY = 6       -- frames between presses while getting up, beside the held key
+local REWIELD_TIME = 10    -- seconds the weapon to take back after a heal waits for the bot to stand calm
 local SCAN_EVERY = 0.3     -- seconds between looks for someone to help
 local NEAREST = 30         -- metres revive() and heal_target() look within, given no unit
 local AUTO_HEAL_BELOW = 0.8 -- the share of health under which auto_heal starts on someone
+local HELPER_NEAR = 1.6    -- metres: a downed bot with a teammate standing this close lies still
+local THREAT = 10          -- metres: on the way to help, a fighting bot shoots enemies this close
 local HEAL_SLOTS = { "support_weapon", "primary_weapon", "sidearm_weapon" }
+local CALM = { "CharacterStateIdle", "CharacterStateWalk", "CharacterStateAim", "CharacterStateAimWalk", "CharacterStateSprint" }
+-- A bot in one of these isn't free to help anyone: a seat, a carried objective, a use, the extraction.
+local OCCUPIED = { "CharacterStateSeated", "CharacterStateCarry", "CharacterStateInteract", "CharacterStateInteractObjective",
+	"CharacterStateExtract", "CharacterStateTeleport", "CharacterStateCutscene", "CharacterStateDialogue", "CharacterStateSleep",
+	"CharacterStateDead", "CharacterStateMap" }
+-- What a pickup swaps: taking one drops what the bot held in that slot, right there.
+local PICKUPS = { weapon_pickup = true, backpack_pickup = true }
 
 local function health(unit)
 	local aux = game.global("EntityAux")
@@ -606,6 +629,25 @@ local function faces(unit, dx, dy, cos_min)
 	return len < 0.3 or (f.x * dx + f.y * dy) / len > cos_min
 end
 
+-- The character's state, or nil when the game gives none to read (a body with no character master).
+local function state_of(unit)
+	local cs = game.master(unit, "character")
+	if not (cs and cs.current_state ~= nil and game.global("CharacterStateIdle") ~= nil) then return nil end
+	return cs
+end
+
+-- Standing calm, where a press of interact or a weapon taken out does what a player's does. True when
+-- the game gives no state to read.
+local function calm(unit)
+	local cs = state_of(unit)
+	return cs == nil or in_state(cs, unpack(CALM))
+end
+
+local function occupied(unit)
+	local cs = state_of(unit)
+	return cs ~= nil and in_state(cs, unpack(OCCUPIED))
+end
+
 -- Every Helldiver in the mission but `except`: players (bots on records among them), then bare bots.
 local function squad(except)
 	local out, seen = {}, {}
@@ -631,6 +673,14 @@ local function nearest(unit, radius, wanted)
 		end
 	end
 	return best
+end
+
+-- The bot already helping a Helldiver in the way kind says ("revive" or "heal"), other than except.
+local function helper_of(target, kind, except)
+	for _, b in ipairs(M.list) do
+		if b ~= except and b.task and b.task.kind == kind and b.task.unit == target then return b end
+	end
+	return nil
 end
 
 -- The REP-80 among the bot's weapons: the slot, the weapon and the heal beam's state.
@@ -669,9 +719,8 @@ local function end_task(b, ok, why)
 	local task = b.task
 	b.task = nil
 	if not task then return end
-	-- A heal goes back to the weapon the bot held before it.
-	local unit = b:unit()
-	if task.before and unit then wield(unit, task.before) end
+	-- A heal goes back to the weapon the bot held before it, once the bot stands calm (rewield_step).
+	if task.before then b.rewield = { slot = task.before, time = 0 } end
 	if type(task.on_done) == "function" then
 		local fine, err = pcall(task.on_done, ok, why)
 		if not fine then obsidian.log("bots: on_done: " .. tostring(err)) end
@@ -680,37 +729,46 @@ end
 
 local function start_task(b, kind, target, on_done, auto)
 	if b.task then end_task(b, false, "cancelled") end
-	b.task = { kind = kind, unit = target, on_done = on_done, auto = auto, time = 0, wait = 0, tries = 0, turn = 0 }
+	-- A weapon still to take back from an earlier heal is the one this task goes back to.
+	local before = b.rewield and b.rewield.slot or nil
+	b.rewield = nil
+	b.task = { kind = kind, unit = target, on_done = on_done, auto = auto, time = 0, wait = 0, tries = 0, turn = 0,
+		near = 0, pick = 0, before = before }
 	return true
 end
 
 -- Walks to a downed Helldiver and helps them up: the bot stands by the body, turns to it and presses
--- interact. unit: the downed Helldiver, or nil for the nearest one within 30 metres. Answers true once
--- started, or false and a reason: "no_avatar", "downed" (the bot is downed itself), "busy" (calling a
--- stratagem), "no_one_downed" (no one downed near), "not_downed", "self". on_done(ok, reason) hears how it
--- ended: true once they're up, or false and "dead", "downed", "no_help_up" (presses that did nothing),
--- "timeout" or "cancelled". While it runs, the bot's other orders wait.
+-- interact. unit: the downed Helldiver, or nil for the nearest one within 30 metres that no other bot is
+-- helping. Answers true once started, or false and a reason: "no_avatar", "downed" (the bot is downed
+-- itself), "busy" (calling a stratagem), "no_one_downed" (no one downed near), "already_helped" (another
+-- bot is on the way to each one), "not_downed", "self". on_done(ok, reason) hears how it ended: true once
+-- they're up, or false and "dead", "downed", "no_help_up" (presses that did nothing), "timeout" or
+-- "cancelled". While it runs, the bot's other orders wait, but a bot that fights shoots back at
+-- enemies close by on the way.
 function Bot:revive(unit, on_done)
 	local me = self:unit()
 	if not me then return false, "no_avatar" end
 	if self.job then return false, "busy" end
 	if is_downed(me) then return false, "downed" end
 	if unit == nil then
-		unit = nearest(me, NEAREST, is_downed)
-		if not unit then return false, "no_one_downed" end
+		unit = nearest(me, NEAREST, function(u) return is_downed(u) and not helper_of(u, "revive", self) end)
+		if not unit then
+			if nearest(me, NEAREST, is_downed) then return false, "already_helped" end
+			return false, "no_one_downed"
+		end
 	end
 	if unit == me then return false, "self" end
 	if not (alive(unit) and is_downed(unit)) then return false, "not_downed" end
 	return start_task(self, "revive", unit, on_done, false)
 end
 
--- Heals a hurt Helldiver with the REP-80, as a player does: the bot takes the REP-80 out, walks within
--- range, faces the target and holds fire until they're at full health, then takes back the weapon it
--- held. unit: the Helldiver, or nil for the most hurt one within 30 metres. Answers true once started,
--- or false and a reason: "no_avatar", "downed", "busy", "no_heal_tool" (no REP-80 in the bot's slots),
--- "no_one_hurt" (no one hurt near), "not_hurt", "self". on_done(ok, reason): true at full health, or false
--- and "dead", "downed" (the target went down: help them up first), "no_ammo", "no_switch" (the REP-80
--- wouldn't come out), "timeout" or "cancelled".
+-- Heals a hurt Helldiver with the REP-80, as a player does: the bot walks within range, takes the REP-80
+-- out, faces the target and holds fire until they're at full health, then takes back the weapon it
+-- held. unit: the Helldiver, or nil for the most hurt one within 30 metres that no other bot is healing.
+-- Answers true once started, or false and a reason: "no_avatar", "downed", "busy", "no_heal_tool" (no
+-- REP-80 in the bot's slots), "no_one_hurt" (no one hurt near), "already_helped", "not_hurt", "self".
+-- on_done(ok, reason): true at full health, or false and "dead", "downed" (the target went down: help
+-- them up first), "no_ammo", "no_switch" (the REP-80 wouldn't come out), "timeout" or "cancelled".
 function Bot:heal_target(unit, on_done)
 	local me = self:unit()
 	if not me then return false, "no_avatar" end
@@ -718,16 +776,20 @@ function Bot:heal_target(unit, on_done)
 	if is_downed(me) then return false, "downed" end
 	if not heal_tool(me) then return false, "no_heal_tool" end
 	if unit == nil then
-		local worst, share = nil, 1
+		local worst, share, taken = nil, 1, false
 		for _, other in ipairs(squad(me)) do
 			local h = health(other)
 			local _, _, d = flat(me, other)
 			if d <= NEAREST and is_hurt(other) then
-				local s = h.hitpoints / h.max_hitpoints
-				if s < share then worst, share = other, s end
+				if helper_of(other, "heal", self) then
+					taken = true
+				else
+					local s = h.hitpoints / h.max_hitpoints
+					if s < share then worst, share = other, s end
+				end
 			end
 		end
-		if not worst then return false, "no_one_hurt" end
+		if not worst then return false, taken and "already_helped" or "no_one_hurt" end
 		unit = worst
 	end
 	if unit == me then return false, "self" end
@@ -747,15 +809,16 @@ function Bot:stop_helping()
 	return true
 end
 
--- Downed, the bot presses interact by itself until up: true by default. false leaves it down
--- for a teammate.
+-- Downed, the bot holds interact by itself until up: true by default. false leaves it down for a
+-- teammate, fighting from the ground with what it holds.
 function Bot:auto_get_up(on)
 	self.get_up = on ~= false
 	return self
 end
 
 -- Helps up downed Helldivers within radius (15 metres) by itself, between other orders, while it
--- follows or fights. false stops.
+-- follows or fights. Of the bots that do, only the free one nearest to a downed Helldiver goes. false
+-- stops.
 function Bot:auto_revive(radius)
 	if radius == false then
 		self.goals.auto_revive = nil
@@ -766,7 +829,7 @@ function Bot:auto_revive(radius)
 end
 
 -- Heals Helldivers under 80% health within radius (20 metres) by itself with the REP-80, when it
--- carries one. false stops.
+-- carries one. One bot heals each Helldiver, the nearest free one. false stops.
 function Bot:auto_heal(radius)
 	if radius == false then
 		self.goals.auto_heal = nil
@@ -787,59 +850,155 @@ function Bot:downed()
 	return unit ~= nil and is_downed(unit)
 end
 
--- Starts a help up or a heal for someone within the radii, when the bot is free.
-local function look_around(b, unit, dt)
-	b.scan = b.scan - dt
-	if b.scan > 0 or b.task or b.job then return end
-	b.scan = SCAN_EVERY
-	if is_downed(unit) then return end
-	local revive_r, heal_r = b.goals.auto_revive, b.goals.auto_heal
-	if revive_r then
-		local target = nearest(unit, revive_r, is_downed)
-		if target then return start_task(b, "revive", target, nil, true) end
+-- After a bot picks up a weapon or a backpack, it picks up neither for this many seconds (20 by
+-- default). Taking one drops what the bot held in that slot right there, so a bot that keeps pressing
+-- interact would pick the dropped one up again, and so on. 0 or false lets it pick up at any time.
+function Bot:pickup_cooldown(seconds)
+	if seconds == false or seconds == nil then seconds = 0 end
+	if type(seconds) ~= "number" or seconds ~= seconds or seconds < 0 then return self end
+	self.pickup_cd = seconds
+	if seconds == 0 then self.pickup_until = 0 end
+	return self
+end
+
+-- Seconds left before the bot can pick up a weapon or a backpack again: 0 when it can now.
+function Bot:next_pickup()
+	return math.max(0, (self.pickup_until or 0) - (M.clock or 0))
+end
+
+M.clock = 0
+
+local function bot_of(unit)
+	if unit == nil then return nil end
+	for _, b in ipairs(M.list) do
+		if not b.removed and b:unit() == unit then return b end
 	end
-	if heal_r and heal_tool(unit) then
-		local target = nearest(unit, heal_r, function(u) return is_hurt(u, AUTO_HEAL_BELOW) end)
-		if target then return start_task(b, "heal", target, nil, true) end
+	return nil
+end
+
+-- Whether a press of interact by this unit goes ahead (CharacterComponent.handle_interact). A bot
+-- helping someone up uses nothing but the body, and after a pickup that swaps (a weapon, a backpack)
+-- a bot picks up no other for the pickup cooldown. Players are never stopped.
+function M.allow_interact(unit)
+	local b = bot_of(unit)
+	if not b then return true end
+	local ia = game.master(unit, "interactor")
+	local target, comp = ia and ia.interactable_unit, ia and ia.interactable_component
+	if b.task and b.task.kind == "revive" and target ~= nil and target ~= b.task.unit then return false end
+	if comp and PICKUPS[comp] then
+		if (b.pickup_until or 0) > M.clock then return false end
+		if (b.pickup_cd or 0) > 0 then b.pickup_until = M.clock + b.pickup_cd end
+	end
+	return true
+end
+
+-- Who helps whom, every SCAN_EVERY seconds: each downed Helldiver gets the one free bot nearest to them
+-- among the bots that help up by themselves and have them within their radius, then each hurt one the
+-- nearest free bot with a REP-80, the most hurt first. A Helldiver a bot already helps gets no second
+-- one. A bot is free when it calls no stratagem, helps no one, stands (not downed) and isn't in a seat,
+-- carrying, using something or extracting.
+local function assign(dt)
+	M.scan = (M.scan or 0) - dt
+	if M.scan > 0 then return end
+	M.scan = SCAN_EVERY
+	local free = {}
+	for _, b in ipairs(M.list) do
+		local unit = b:unit()
+		if unit and (b.goals.auto_revive or b.goals.auto_heal) and not b.task and not b.job
+			and not is_downed(unit) and not occupied(unit) then
+			free[#free + 1] = { bot = b, unit = unit }
+		end
+	end
+	if #free == 0 then return end
+	local function take(target, radius_of)
+		local best, best_d, best_i = nil, nil, nil
+		for i, c in ipairs(free) do
+			local r = radius_of(c)
+			if r and c.unit ~= target then
+				local _, _, d = flat(c.unit, target)
+				if d <= r and (best_d == nil or d < best_d) then best, best_d, best_i = c, d, i end
+			end
+		end
+		if best then table.remove(free, best_i) end
+		return best
+	end
+	local everyone = squad(nil)
+	for _, target in ipairs(everyone) do
+		if #free == 0 then return end
+		if is_downed(target) and not helper_of(target, "revive") then
+			local c = take(target, function(c) return c.bot.goals.auto_revive end)
+			if c then start_task(c.bot, "revive", target, nil, true) end
+		end
+	end
+	local hurt = {}
+	for _, target in ipairs(everyone) do
+		if is_hurt(target, AUTO_HEAL_BELOW) and not helper_of(target, "heal") then
+			local h = health(target)
+			hurt[#hurt + 1] = { unit = target, share = h.hitpoints / h.max_hitpoints }
+		end
+	end
+	table.sort(hurt, function(a, b) return a.share < b.share end)
+	for _, entry in ipairs(hurt) do
+		if #free == 0 then return end
+		local c = take(entry.unit, function(c) return c.bot.goals.auto_heal and heal_tool(c.unit) and c.bot.goals.auto_heal end)
+		if c then start_task(c.bot, "heal", entry.unit, nil, true) end
 	end
 end
 
--- One frame of a help up or a heal: it writes the sticks into b.axes and the buttons into the input
--- table, over what think left there.
-local function task_step(b, unit, t, dt)
+-- One frame of a help up or a heal: it writes this frame's sticks (f) and buttons (t), over what the
+-- orders left there.
+local function task_step(b, unit, t, f, dt)
 	local task = b.task
 	task.time, task.wait = task.time + dt, task.wait - dt
 	local target = task.unit
-	t.fire_button = 0
-	b.axes.move[1], b.axes.move[2], b.axes.aim[1], b.axes.aim[2] = 0, 0, 0, 0
 	if not alive(target) then return end_task(b, false, "dead") end
 	local h = health(target)
 	if h and h.is_dead then return end_task(b, false, "dead") end
 	if is_downed(unit) then return end_task(b, false, "downed") end
 	local dx, dy, d = flat(unit, target)
-	local function walk() b.axes.move[1], b.axes.move[2] = direction({ x = dx, y = dy }) end
+	local function walk() f.mx, f.my = direction({ x = dx, y = dy }) end
 	-- Full length: a short stick reads as none inside the dead zone.
 	local function face()
-		if d > 0.01 then b.axes.aim[1], b.axes.aim[2] = dx / d, dy / d end
+		if d > 0.01 then f.ax, f.ay = dx / d, dy / d end
+	end
+	-- On the way, a bot that fights shoots back at enemies close by; otherwise it faces where it walks.
+	local function on_the_way()
+		if not (b.fight_target and b.fight_near) then
+			t.fire_button = 0
+			f.ax, f.ay = 0, 0
+		end
 	end
 
 	if task.kind == "revive" then
 		if not is_downed(target) then return end_task(b, true) end
 		if task.time > REVIVE_TIME then return end_task(b, false, "timeout") end
-		if d > REACH then
+		-- Close, and no closer for a second (bodies push each other apart): near enough to press.
+		task.near = d <= NEAR_ENOUGH and task.near + dt or 0
+		if d > REACH and task.near < 1 then
 			walk()
-			task.turn = 0
+			task.turn, task.pick = 0, 0
+			if d > NEAR_ENOUGH + 1 then on_the_way() else t.fire_button, f.ax, f.ay = 0, 0, 0 end
 			return
 		end
+		t.fire_button = 0
 		face()
 		task.turn = task.turn + dt
-		if task.wait <= 0 and (faces(unit, dx, dy, 0.8) or task.turn > 0.5) then
-			if task.tries >= REVIVE_TRIES then return end_task(b, false, "no_help_up") end
-			task.tries = task.tries + 1
-			task.wait = PRESS_WAIT
-			press(b, "interact")
-			t.interact = true
+		if task.wait > 0 or not calm(unit) then return end
+		if not (faces(unit, dx, dy, 0.8) or task.turn > 0.5) then return end
+		-- The press goes to what the interactor picked: the body, not an item lying by it.
+		local ia = game.master(unit, "interactor")
+		if ia and ia.interactable_unit ~= nil and ia.interactable_unit ~= target then
+			task.pick = task.pick + dt
+			if task.pick > PICK_TIME then return end_task(b, false, "no_help_up") end
+			-- A step toward the body moves the capsule onto it.
+			if d > 0.01 then f.mx, f.my = dx / d * 0.6, dy / d * 0.6 end
+			return
 		end
+		if task.tries >= REVIVE_TRIES then return end_task(b, false, "no_help_up") end
+		task.tries = task.tries + 1
+		task.wait = PRESS_WAIT
+		press(b, "interact")
+		t.interact = true
 		return
 	end
 
@@ -849,9 +1008,18 @@ local function task_step(b, unit, t, dt)
 	if task.time > HEAL_TIME then return end_task(b, false, "timeout") end
 	local slot, tool, beam = heal_tool(unit)
 	if not slot then return end_task(b, false, "no_heal_tool") end
+	local info = beam.weapon_info or {}
+	local range = tonumber(info.range) or 12
 	local inv = game.master(unit, "inventory")
 	if inv.current_weapon ~= tool then
-		if task.wait <= 0 then
+		-- Into range with what it holds, then the REP-80 out, standing calm.
+		if d > range then
+			walk()
+			on_the_way()
+			return
+		end
+		t.fire_button, f.ax, f.ay = 0, 0, 0
+		if task.wait <= 0 and calm(unit) then
 			if task.tries >= SWITCH_TRIES then return end_task(b, false, "no_switch") end
 			if task.before == nil then task.before = current_slot(unit) or false end
 			task.tries = task.tries + 1
@@ -860,32 +1028,189 @@ local function task_step(b, unit, t, dt)
 		end
 		return
 	end
+	t.fire_button = 0
 	if beam.rounds ~= nil and beam.rounds <= 0 then
 		if (beam.num_mags or 0) <= 0 then return end_task(b, false, "no_ammo") end
-		press(b, "reload_pressed")
-		t.reload_pressed = true
+		f.ax, f.ay = 0, 0
+		if calm(unit) and not b.presses.reload_pressed then
+			press(b, "reload_pressed")
+			t.reload_pressed = true
+		end
 		return
 	end
-	local info = beam.weapon_info or {}
-	local range = tonumber(info.range) or 12
 	if d > range * 0.75 then walk() end
 	face()
 	if d <= range and faces(unit, dx, dy, math.cos(math.rad(25))) then t.fire_button = 1 end
 end
 
--- Downed, presses interact as a player mashes it, beside the held key the keyboard has, and lies still:
--- aiming moves a downed body to a state that doesn't read interact.
-local function get_up_step(b, unit, t)
-	t.interact_button = 0
-	if not (b.get_up and is_downed(unit)) then
-		b.mash = 0
+-- A standing Helldiver, other than the unit itself, within HELPER_NEAR of it.
+local function teammate_close(unit)
+	for _, other in ipairs(squad(unit)) do
+		if not is_downed(other) then
+			local _, _, d = flat(unit, other)
+			if d <= HELPER_NEAR then return true end
+		end
+	end
+	return false
+end
+
+-- Downed, the bot lies still: a crawl, which walking orders would start, moves the body away from a
+-- teammate coming to help and swaps the downed animations back and forth. Getting up by itself, it
+-- holds interact as the keyboard's key does and doesn't aim: aiming moves a downed body to a state that
+-- counts no presses. A bot on the way to help it up comes to a body that lies still for it. Left down
+-- for a teammate, it fights from the ground with what it holds until one stands close.
+local function downed_step(b, unit, t, f)
+	f.mx, f.my = 0, 0
+	local coming = helper_of(unit, "revive", b)
+	if b.get_up and not (coming and teammate_close(unit)) then
+		t.interact_button = 1
+		t.fire_button, f.ax, f.ay = 0, 0, 0
+	elseif not b.get_up and not teammate_close(unit) then
+		return
+	else
+		t.fire_button, f.ax, f.ay = 0, 0, 0
+	end
+end
+
+-- The weapon to take back after a heal, once the bot stands calm; given up after REWIELD_TIME.
+local function rewield_step(b, unit, dt)
+	local r = b.rewield
+	r.time = r.time + dt
+	if r.time > REWIELD_TIME or current_slot(unit) == r.slot then
+		b.rewield = nil
 		return
 	end
-	t.interact_button = 1
-	b.mash = b.mash + 1
-	if b.mash % MASH_EVERY == 0 then t.interact = true end
+	if not is_downed(unit) and calm(unit) then
+		wield(unit, r.slot)
+		b.rewield = nil
+	end
+end
+
+-- Fighting: the nearest enemy in reach that a straight line from the bot reaches, looked for again each
+-- LOOK_EVERY seconds, with the trigger held only while no Helldiver stands in the line of fire, since
+-- friendly fire is always on. With no clear line to any, the bot faces the nearest and holds fire. An
+-- empty magazine is reloaded.
+local LOOK_EVERY = 0.25
+local LINE_CHECKS = 4      -- enemies tried for a clear line, nearest first
+local LINE_WIDTH = 1.1     -- metres either side of the line of fire where a Helldiver blocks it
+local RELOAD_GAP = 1       -- seconds between reloads it presses
+
+-- Whether a weapon's ray from the bot's chest reaches the enemy before anything else: the game's damage
+-- ray filter, the bot's own body skipped. True when the game gives no physics to ask.
+local function line_clear(unit, enemy)
+	local st = game.state()
+	local pw = type(st) == "table" and st.world_proxy and st.world_proxy.get_physics_world and st.world_proxy:get_physics_world()
+	local physics, actor_unit, v3 = game.global("PhysicsWorld"), game.global("Actor"), game.global("Vector3")
+	if not (pw and physics and physics.immediate_raycast and actor_unit and v3) then return true end
+	local units = game.global("Unit")
+	local p, q = units.world_position(unit, 0), units.world_position(enemy, 0)
+	local from, to = v3(p.x, p.y, p.z + 1.3), v3(q.x, q.y, q.z + 1)
+	local length = v3.length(to - from)
+	if length < 0.5 then return true end
+	local ok, hits = pcall(physics.immediate_raycast, pw, from, v3.normalize(to - from), length, "all", "collision_filter", "damage_ray")
+	if not ok or type(hits) ~= "table" then return true end
+	local first, first_unit = nil, nil
+	for _, h in ipairs(hits) do
+		local got, u = pcall(actor_unit.unit, h[4])
+		u = got and u or nil
+		if u ~= unit and (first == nil or h[2] < first) then first, first_unit = h[2], u end
+	end
+	if first == nil or first_unit == enemy then return true end
+	return first >= length - 0.75
+end
+
+-- No Helldiver but the bot between it and the point, within LINE_WIDTH of the line.
+local function no_one_in_the_way(unit, here, x, y)
+	local dx, dy = x - here.x, y - here.y
+	local len = math.sqrt(dx * dx + dy * dy)
+	if len < 0.01 then return true end
+	local ux, uy = dx / len, dy / len
+	local units = game.global("Unit")
+	for _, other in ipairs(squad(unit)) do
+		local o = units.world_position(other, 0)
+		local ox, oy = o.x - here.x, o.y - here.y
+		local along = ox * ux + oy * uy
+		if along > 0.3 and along < len + 0.5 then
+			local side = math.abs(ox * uy - oy * ux)
+			if side < LINE_WIDTH then return false end
+		end
+	end
+	return true
+end
+
+local function weapon_state(weapon)
+	local aux = game.global("EntityAux")
+	if not (alive(weapon) and aux and aux.state_master_interface) then return nil end
+	local ok, ws = pcall(aux.state_master_interface, weapon, "weapon")
+	return ok and type(ws) == "table" and ws or nil
+end
+
+local function fight_step(b, unit, here, t, dt)
+	local fight = b.goals.fight
+	b.look = (b.look or 0) - dt
+	if b.look <= 0 or (b.fight_target and not alive(b.fight_target)) then
+		b.look = LOOK_EVERY
+		b.fight_target, b.fight_face = nil, nil
+		local found = enemies.near(fight.radius, here)
+		for i = 1, math.min(#found, LINE_CHECKS) do
+			if line_clear(unit, found[i]) then
+				b.fight_target = found[i]
+				break
+			end
+		end
+		b.fight_face = b.fight_target or found[1]
+	end
+	local units = game.global("Unit")
+	local face = b.fight_face
+	if face and not alive(face) then face, b.fight_face = nil, nil end
+	b.fight_near = false
 	t.fire_button = 0
-	b.axes.aim[1], b.axes.aim[2] = 0, 0
+	if face then
+		local p = units.world_position(face, 0)
+		b.axes.aim[1], b.axes.aim[2] = direction({ x = p.x - here.x, y = p.y - here.y })
+		if b.fight_target == face then
+			local dx, dy = p.x - here.x, p.y - here.y
+			b.fight_near = dx * dx + dy * dy <= THREAT * THREAT
+			if no_one_in_the_way(unit, here, p.x, p.y) then t.fire_button = 1 end
+		end
+	end
+	-- An empty magazine, the way a player reloads it.
+	b.reload_wait = (b.reload_wait or 0) - dt
+	local inv = game.master(unit, "inventory")
+	local ws = inv and weapon_state(inv.current_weapon)
+	if ws and ws.reloadable and not ws.assisted_reload and ws.rounds == 0 and (ws.num_mags or 0) > 0 and b.reload_wait <= 0 then
+		b.reload_wait = RELOAD_GAP
+		press(b, "reload_pressed")
+	end
+end
+
+-- Walking into a wall: with the stick held and the body nowhere near where it was a moment ago, the
+-- bot steps aside for a moment, one side and then the other, before going on.
+local STUCK_TIME, STUCK_MOVE, SIDESTEP_TIME, SIDESTEP_TURN = 1, 0.3, 0.6, math.rad(75)
+
+local function unstick(b, here, mx, my, dt)
+	local s = b.stuck
+	if mx * mx + my * my < 0.25 then
+		s.time, s.x, s.y, s.side_time = 0, here.x, here.y, 0
+		return mx, my
+	end
+	if s.side_time > 0 then
+		s.side_time = s.side_time - dt
+		local a = SIDESTEP_TURN * s.side
+		local c, si = math.cos(a), math.sin(a)
+		return mx * c - my * si, mx * si + my * c
+	end
+	if s.time == 0 then s.x, s.y = here.x, here.y end
+	s.time = s.time + dt
+	if s.time >= STUCK_TIME then
+		local dx, dy = here.x - s.x, here.y - s.y
+		if dx * dx + dy * dy < STUCK_MOVE * STUCK_MOVE then
+			s.side = -s.side
+			s.side_time = SIDESTEP_TIME
+		end
+		s.time, s.x, s.y = 0, here.x, here.y
+	end
+	return mx, my
 end
 
 function Bot:remove()
@@ -908,6 +1233,7 @@ function Bot:remove()
 		self.task = nil
 		if type(task.on_done) == "function" then pcall(task.on_done, false, "cancelled") end
 	end
+	self.rewield = nil
 	for i, b in ipairs(M.list) do
 		if b == self then
 			table.remove(M.list, i)
@@ -936,7 +1262,9 @@ local function to_stick(x, y)
 	return x * c - y * s, x * s + y * c
 end
 
-local function think(b, unit)
+-- The orders: walking to a point or after a unit, facing a point, fighting. They write the orders'
+-- sticks (b.axes) and the trigger.
+local function think(b, unit, t, dt)
 	local units = game.global("Unit")
 	local here = units.world_position(unit, 0)
 	local go_to = b.goals.go_to
@@ -968,70 +1296,66 @@ local function think(b, unit)
 			end
 		end
 	end
-	local fight = b.goals.fight
-	if fight then
-		local found = enemies.near(fight.radius, here)
-		local target = found[1]
-		if target then
-			local p = units.world_position(target, 0)
-			b.axes.aim[1], b.axes.aim[2] = direction({ x = p.x - here.x, y = p.y - here.y })
-			b.input.fire_button = 1
-		else
-			b.input.fire_button = 0
-		end
+	if b.goals.fight then
+		fight_step(b, unit, here, t, dt)
+	else
+		b.fight_target, b.fight_face, b.fight_near = nil, nil, false
 	end
+	return here
 end
 
--- Hands each bot's character its input table, with this frame's vectors, and runs follow and
--- fight. The game's input component reads input_data when its player has focus.
-local function drive(b, unit)
+-- Hands each bot's character its input table, with this frame's vectors. The game's input component
+-- reads input_data when its player has focus. The table is built again from rest each frame: the
+-- orders' holds (fire, sprint), the presses still running, then the orders, then a stratagem call, a
+-- help or the downed rules over them. A press or a held button of a call or a help that ended can't
+-- stay held: a press of interact left held is the game's interact on every frame, which picks an item
+-- up, swaps it back, and so on, and plays one interaction over another on a body getting up.
+local function drive(b, unit, dt)
 	local input = game.master(unit, "input")
 	if not input then return end
 	if b.kind == "bare" then
 		if not b.pad then return end
 		input.pad_number = b.pad
 	end
-	local dt = rawget(_G, "ENGINE_DT") or 0.016
 	local t = b.input
-	-- Fire a task or getting up let go last frame is the orders' again.
-	if b.fire_kept ~= nil then
-		t.fire_button, b.fire_kept = b.fire_kept, nil
+	-- Every button and press back at rest, whichever code wrote it; the vectors come new below.
+	for k, v in pairs(t) do
+		if type(v) == "number" then
+			t[k] = 0
+		elseif type(v) == "boolean" then
+			t[k] = false
+		end
 	end
-	think(b, unit)
-	-- A stratagem call, a task and getting up hold the sticks for their frames, so the orders' own come
-	-- back after them.
-	local move, aim = { b.axes.move[1], b.axes.move[2] }, { b.axes.aim[1], b.axes.aim[2] }
-	local fire = t.fire_button
+	t.is_active = true
+	if b.orders.fire then t.fire_button = 1 end
+	if b.orders.sprint then t.sprint_button, t.sprint_pressed = 1, true end
 	for field, left in pairs(b.presses) do
-		t[field] = left > 0
-		b.presses[field] = left > 0 and left - 1 or nil
+		if left > 0 then t[field] = true end
+		b.presses[field] = left > 1 and left - 1 or nil
 	end
 	if b.throw_frames then
-		t.throw = b.throw_frames > 1 and 1 or 0
+		if b.throw_frames > 1 then t.throw = 1 end
 		b.throw_frames = b.throw_frames > 1 and b.throw_frames - 1 or nil
 	end
-	local calling = b.job ~= nil
-	if not calling then
-		look_around(b, unit, dt)
-		if b.task then task_step(b, unit, t, dt) end
-		get_up_step(b, unit, t)
-		if b.task or b.mash > 0 then
-			calling = true
-			if t.fire_button ~= fire then b.fire_kept = fire end
-		end
+	local here = think(b, unit, t, dt)
+	-- This frame's sticks: the orders' own, which a call or a help writes over for this frame only.
+	local f = { mx = b.axes.move[1], my = b.axes.move[2], ax = b.axes.aim[1], ay = b.axes.aim[2] }
+	if b.job then
+		stratagem_step(b, unit, t, f, dt)
 	else
-		t.interact_button = 0
-		stratagem_step(b, unit, t)
+		if b.task then task_step(b, unit, t, f, dt) end
+		if is_downed(unit) then
+			downed_step(b, unit, t, f)
+		elseif b.rewield and not b.task then
+			rewield_step(b, unit, dt)
+		end
 	end
+	f.mx, f.my = unstick(b, here, f.mx, f.my, dt)
 	for field in pairs(b.vectors) do t[field] = v3(0, 0, 0) end
-	local mx, my = to_stick(b.axes.move[1], b.axes.move[2])
+	local mx, my = to_stick(f.mx, f.my)
 	t.move = v3(mx, my, 0)
-	local ax, ay = to_stick(b.axes.aim[1], b.axes.aim[2])
+	local ax, ay = to_stick(f.ax, f.ay)
 	t.aim = v3(ax, ay, 0)
-	if calling then
-		b.axes.move[1], b.axes.move[2] = move[1], move[2]
-		b.axes.aim[1], b.axes.aim[2] = aim[1], aim[2]
-	end
 	input.input_data = t
 	input.has_focus = true
 end
@@ -1055,13 +1379,22 @@ end
 
 -- Right before the game's input component reads its players' input.
 function M.drive_all()
+	local dt = rawget(_G, "ENGINE_DT") or 0.016
+	M.clock = M.clock + dt
+	local ok, err = pcall(assign, dt)
+	if not ok and not M.assign_failed then
+		M.assign_failed = true
+		obsidian.log("bots: helping: " .. tostring(err))
+	end
 	for _, b in ipairs(M.all()) do
 		local unit = b:unit()
 		if unit then
-			drive(b, unit)
+			drive(b, unit, dt)
 		else
 			if b.job then finish(b, false, "no_avatar") end
 			if b.task then end_task(b, false, "no_avatar") end
+			b.rewield = nil
+			b.fight_target, b.fight_face = nil, nil
 		end
 	end
 end
@@ -1123,6 +1456,13 @@ function M.install()
 			end
 		end
 		return original(...)
+	end)
+	obsidian.hook("CharacterComponent", "handle_interact", function(original, self, unit, ...)
+		if #M.list > 0 then
+			local ok, allowed = pcall(M.allow_interact, unit)
+			if ok and allowed == false then return end
+		end
+		return original(self, unit, ...)
 	end)
 end
 

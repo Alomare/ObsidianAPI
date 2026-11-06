@@ -2,6 +2,17 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## Next
+
+- Changed: no press or button of a bot outlasts the order, call or help that used it. A press of interact left held after a bot got up made the bot pick an item up, drop it and pick it up again without end, and broke into the get-up.
+- Changed: a downed bot lies still instead of crawling where the orders lead, holds interact without extra presses, and waits while another bot comes to help it up. Left down for a teammate, it stops fighting from the ground once one stands close.
+- Changed: of the bots that help by themselves, only the free one nearest to a downed or hurt Helldiver goes. `revive()` and `heal_target()` with no unit pick someone no other bot is helping, or answer `"already_helped"`.
+- Changed: a bot changes weapons only standing calm. A heal walks into range before the REP-80 comes out, and the weapon held before comes back once the bot stands, never while downed or knocked down.
+- Changed: on the way to help, a fighting bot shoots back at enemies within 10 metres, and presses interact on a downed body only once the game picks the body, never an item lying by it.
+- Changed: `fight` holds fire while a Helldiver stands in the line of fire, picks an enemy a straight line reaches before one behind a wall, and reloads an empty magazine.
+- Changed: a bot that walks into something and gets nowhere for a second steps aside and goes on.
+- New: `bot:pickup_cooldown(seconds)` and `bot:next_pickup()`. After picking up a weapon or a backpack, a bot picks up neither for 20 seconds, so it can't swap the same two back and forth.
+
 ## 1.33.1
 
 - New: `api.world.time_scale(scale, { lobby = true })` stops or slows the game with other players in the lobby too, for a mod that does the same on every machine at once.

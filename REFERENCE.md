@@ -1422,7 +1422,7 @@ Bots leave before a mission's results, so they never reach the end screens or an
 | `go_to(pos, distance)` | Walks to a position and stops within `distance` (1.5 metres). The order ends when it gets there |
 | `hold()` | Stays where it stands |
 | `aim_at(pos)` | Faces a position, while it has nothing to fight. `nil` lets it face where it walks |
-| `fight(radius)` | Aims at and shoots the nearest enemy within `radius` (25 metres), every frame. `fight(false)` stops |
+| `fight(radius)` | Aims at and shoots the nearest enemy within `radius` (25 metres) that a straight line from the bot reaches, holds fire while a Helldiver stands in the line of fire, and reloads an empty magazine. `fight(false)` stops |
 | `fighting()` | The radius it fights in, or `false` |
 
 A new order to walk replaces the last one: `go_to` ends `follow`, and `hold` ends both. Orders return the bot, so they chain:
@@ -1431,7 +1431,9 @@ A new order to walk replaces the last one: `go_to` ends `follow`, and `hold` end
 alpha:go_to(api.world.cursor()):aim_at(api.world.ahead(30))
 ```
 
-Bots walk straight at their goal with no pathfinding, so a rock in the way stops them. The game also keeps local players inside the screen, so a player bot stops at the edge of the view.
+Bots walk straight at their goal with no pathfinding. A bot that walks into something and gets nowhere for a second steps aside, one side and then the other, and goes on: that gets it around a crate or a rock, not out of a dead end. The game also keeps local players inside the screen, so a player bot stops at the edge of the view.
+
+Friendly fire is always on in Helldivers, so a fighting bot never fires with a Helldiver in the line of fire, and looks for an enemy it can reach with a straight line before anything behind a wall.
 
 ### Gear and help
 
@@ -1459,12 +1461,16 @@ bravo:call("stratagem_resupply", api.world.ahead(6))
 
 Bots help the squad the game's own ways, with the inputs a player uses:
 
-- **Getting up.** A downed bot holds interact and presses it now and then until it's up, as a player mashes it. The game counts 30 presses (10 with the perk that shortens it), and lets a downed Helldiver up only while the body is on the screen. `bot:auto_get_up(false)` leaves it down for a teammate.
-- **Helping up.** `bot:revive(unit, on_done)` walks to a downed Helldiver, stands beside the body, turns to it and presses interact once. With no unit, it picks the nearest downed one within 30 meters.
-- **Healing.** `bot:heal_target(unit, on_done)` takes the REP-80 (`equipment/wep_repairtool_01`) out of the bot's slots, walks within range (12 meters, 18 upgraded), faces the target and holds fire until they're at full health, then takes back the weapon it held. With no unit, it picks the most hurt Helldiver within 30 meters. The beam does nothing to a downed Helldiver, so help them up first.
-- **On their own.** `bot:auto_revive(radius)` (15 meters) and `bot:auto_heal(radius)` (20 meters, under 80% health) start these by themselves between other orders, while the bot follows or fights. `false` stops either.
+- **Getting up.** A downed bot lies still and holds interact until it's up, the way the keyboard's key counts presses. The game counts 30 presses (10 with the perk that shortens it), and lets a downed Helldiver up only while the body is on the screen. `bot:auto_get_up(false)` leaves it down for a teammate: it fights from the ground with what it holds, and lies still once a teammate stands close enough to help. A downed bot also lies still while another bot helps it up.
+- **Helping up.** `bot:revive(unit, on_done)` walks to a downed Helldiver, stands beside the body, turns to it and presses interact once the game has picked the body as the thing to use, never an item lying by it. With no unit, it picks the nearest downed one within 30 meters that no other bot is helping.
+- **Healing.** `bot:heal_target(unit, on_done)` walks within range (12 meters, 18 upgraded) with the weapon it holds, takes the REP-80 (`equipment/wep_repairtool_01`) out of the bot's slots, faces the target and holds fire until they're at full health, then takes back the weapon it held. With no unit, it picks the most hurt Helldiver within 30 meters that no other bot is healing. The beam does nothing to a downed Helldiver, so help them up first.
+- **On their own.** `bot:auto_revive(radius)` (15 meters) and `bot:auto_heal(radius)` (20 meters, under 80% health) start these by themselves between other orders, while the bot follows or fights. `false` stops either. Only one bot goes to each Helldiver: the free one nearest to them. A bot is free when it calls no stratagem, helps no one, isn't downed and isn't in a vehicle seat, carrying an objective, using something or extracting.
 
-Both answer `true` once started, or `false` and a reason, and `on_done(ok, reason)` hears how it ended. While one runs, the bot's other orders wait, and `bot:stop_helping()` ends it. A bot wearing the heal drone's backpack (`equipment/equipment_drone_heal_backpack_01`) heals whoever stands within 6 meters of the drone with no order at all.
+Both answer `true` once started, or `false` and a reason, and `on_done(ok, reason)` hears how it ended. With no unit and another bot already on the way to everyone who needs it, the reason is `"already_helped"`. While one runs, the bot's other orders wait, though a bot that fights shoots back on the way at enemies within 10 meters, and `bot:stop_helping()` ends it. A bot changes weapons only while it stands calm (not downed, knocked down, throwing or in another animation), since a weapon taken out in the middle of one leaves the body in a pose with no animation. A bot wearing the heal drone's backpack (`equipment/equipment_drone_heal_backpack_01`) heals whoever stands within 6 meters of the drone with no order at all.
+
+### Picking things up
+
+Picking up a weapon or a backpack drops what the bot held in that slot right where it stands, so a bot that keeps pressing interact would take the dropped one back, and so on. After a bot picks one up, it picks up neither for 20 seconds. `bot:pickup_cooldown(seconds)` changes that (0 turns it off), and `bot:next_pickup()` answers the seconds left. Ammo and other items are never held back. Every press and button a bot's order or help uses lasts only as long as that order needs it, so none stays held after the order ends.
 
 ```lua
 local medic = api.bots.add({ name = "Medic" })
@@ -1765,15 +1771,15 @@ Sound. All of it is local: other players hear their own game.
 
 Bots: Helldivers this machine plays. A bot is a local co-op player on a pad nobody holds, joined the way the host joins a second controller, so it has everything a player has: a HUD slot, a name, revives, reinforcements. Its character reads an input table this file owns and refills each frame. With every player record taken, a bot can be a bare Helldiver instead: a unit with no record, no HUD and no respawn, for a body to fight beside or shoot at. The input code skips a character with no pad, and its filter commands look the pad up in the pad manager, so a pad number the game doesn't have is an error there. A bare bot takes a pad of the game's that no player and no controller uses, and stands still when there's none left. The input table copies the pad mapping in ControllerSettings, so each field has the type the game's input code compares it as: an axis is a vector, a button a number from 0 to 1, a press or a filter a boolean. A wrong type is an error inside the game's update, outside any pcall. Vectors last one frame in this engine, so the table holds plain numbers and gets new vectors right before the input component reads it, from a hook on its update: vectors made in the frame callback are a frame old by then, and read as NaN.
 
-- `api.bots.add(opts)`: A new bot. opts: name (shown over its head and in the HUD), bare (true for a unit with no record, false to refuse one when every record is taken), position (for a bare bot; next to the player by default). The host or a player alone only: a client's local players join through the host.
-- `bot:unit()`: The bot's unit while it's alive: a player bot has none in its hellpod or while dead.
+- `api.bots.add(opts)`: A new bot. opts: name (shown over the bot's head and in the HUD), bare (true for a unit with no record, false to refuse one when every record is taken), position (for a bare bot; next to the player by default). The host or a player alone only: a client's local players join through the host.
+- `bot:unit()`: The bot's unit while alive: a player bot has none in the hellpod or while dead.
 - `bot:alive()`
-- `bot:move(dir)`: Where to walk, as a world direction; its length is the speed, up to 1. nil stops.
+- `bot:move(dir)`: Where to walk, as a world direction; the length is the speed, up to 1. nil stops.
 - `bot:go_to(pos, distance)`: Walk to a position and stop within distance (1.5 metres) of it. nil stops.
 - `bot:hold()`: Stay where it stands: no following and no walking.
 - `bot:aim_at(pos)`: Face a position, each frame, while fight has no target. nil stops.
 - `bot:aim(dir)`: Where to face and shoot, as a world direction. nil lets it face where it walks.
-- `bot:fire(on)`: Holds the trigger until fire(false).
+- `bot:fire(on)`: Holds the trigger until fire(false). A fight order decides the trigger while there is one.
 - `bot:firing()`
 - `bot:sprint(on)`
 - `bot:reload()`
@@ -1791,23 +1797,25 @@ Bots: Helldivers this machine plays. A bot is a local co-op player on a pad nobo
 - `bot:remove_perk()`
 - `bot:refill()`
 - `bot:give_stratagem(name)`
-- `bot:call(name, pos, delay)`: A real call-in of the bot's, at its upgrade level, as api.stratagems.call.
+- `bot:call(name, pos, delay)`: A real call-in of the bot's, at the bot's upgrade level, as api.stratagems.call.
 - `bot:heal()`: Up from downed and at full health, as api.player.heal.
 - `bot:teleport(pos)`
 - `bot:stratagems()`: The stratagems in the bot's slots: { name, id, uses_left, cooldown, ready } each. uses_left is nil for one with no limit, and cooldown the seconds left before it can be called again.
-- `bot:use_stratagem(name, pos, on_done)`: Enters the code of a stratagem the bot holds and throws the beacon toward pos. Answers true once started, or false and a reason: "no_avatar", "no_position", "not_available" (no such stratagem), "not_held" (not in its slots), "cooling_down", "no_uses", "busy" (already calling one). on_done(ok, reason) hears how it ended: true once the beacon is thrown, or false and "jammed" (a no-stratagem zone), "refused" (the game wouldn't call it), "wrong_code", "interrupted" (downed, knocked down, or a vehicle seat), "cancelled", "no_avatar" or "timeout". While it runs the bot stands, faces pos and holds fire, and its other orders wait.
+- `bot:use_stratagem(name, pos, on_done)`: Enters the code of a stratagem the bot holds and throws the beacon toward pos. Answers true once started, or false and a reason: "no_avatar", "no_position", "not_available" (no such stratagem), "not_held" (not in the bot's slots), "cooling_down", "no_uses", "busy" (already calling one). on_done(ok, reason) hears how it ended: true once the beacon is thrown, or false and "jammed" (a no-stratagem zone), "refused" (the game wouldn't call it), "wrong_code", "interrupted" (downed, knocked down, or a vehicle seat), "cancelled", "no_avatar" or "timeout". While it runs the bot stands, faces pos and holds fire, and the other orders wait.
 - `bot:using_stratagem()`: The stratagem the bot is calling and the step it's at ("open", "code", "throw"), or false.
 - `bot:cancel_stratagem()`: Stops a call. A beacon already in hand goes back, as a melee press does for a player.
 - `bot:weapons()`: The weapons it holds, as api.gear.weapons_of.
-- `bot:revive(unit, on_done)`: Walks to a downed Helldiver and helps them up: the bot stands by the body, turns to it and presses interact. unit: the downed Helldiver, or nil for the nearest one within 30 metres. Answers true once started, or false and a reason: "no_avatar", "downed" (the bot is downed itself), "busy" (calling a stratagem), "no_one_downed" (no one downed near), "not_downed", "self". on_done(ok, reason) hears how it ended: true once they're up, or false and "dead", "downed", "no_help_up" (presses that did nothing), "timeout" or "cancelled". While it runs, the bot's other orders wait.
-- `bot:heal_target(unit, on_done)`: Heals a hurt Helldiver with the REP-80, as a player does: the bot takes the REP-80 out, walks within range, faces the target and holds fire until they're at full health, then takes back the weapon it held. unit: the Helldiver, or nil for the most hurt one within 30 metres. Answers true once started, or false and a reason: "no_avatar", "downed", "busy", "no_heal_tool" (no REP-80 in the bot's slots), "no_one_hurt" (no one hurt near), "not_hurt", "self". on_done(ok, reason): true at full health, or false and "dead", "downed" (the target went down: help them up first), "no_ammo", "no_switch" (the REP-80 wouldn't come out), "timeout" or "cancelled".
+- `bot:revive(unit, on_done)`: Walks to a downed Helldiver and helps them up: the bot stands by the body, turns to it and presses interact. unit: the downed Helldiver, or nil for the nearest one within 30 metres that no other bot is helping. Answers true once started, or false and a reason: "no_avatar", "downed" (the bot is downed itself), "busy" (calling a stratagem), "no_one_downed" (no one downed near), "already_helped" (another bot is on the way to each one), "not_downed", "self". on_done(ok, reason) hears how it ended: true once they're up, or false and "dead", "downed", "no_help_up" (presses that did nothing), "timeout" or "cancelled". While it runs, the bot's other orders wait, but a bot that fights shoots back at enemies close by on the way.
+- `bot:heal_target(unit, on_done)`: Heals a hurt Helldiver with the REP-80, as a player does: the bot walks within range, takes the REP-80 out, faces the target and holds fire until they're at full health, then takes back the weapon it held. unit: the Helldiver, or nil for the most hurt one within 30 metres that no other bot is healing. Answers true once started, or false and a reason: "no_avatar", "downed", "busy", "no_heal_tool" (no REP-80 in the bot's slots), "no_one_hurt" (no one hurt near), "already_helped", "not_hurt", "self". on_done(ok, reason): true at full health, or false and "dead", "downed" (the target went down: help them up first), "no_ammo", "no_switch" (the REP-80 wouldn't come out), "timeout" or "cancelled".
 - `bot:helping()`: What the bot is doing for someone: "revive" or "heal" and the unit, or false.
 - `bot:stop_helping()`
-- `bot:auto_get_up(on)`: Downed, the bot presses interact by itself until up: true by default. false leaves it down for a teammate.
-- `bot:auto_revive(radius)`: Helps up downed Helldivers within radius (15 metres) by itself, between other orders, while it follows or fights. false stops.
-- `bot:auto_heal(radius)`: Heals Helldivers under 80% health within radius (20 metres) by itself with the REP-80, when it carries one. false stops.
+- `bot:auto_get_up(on)`: Downed, the bot holds interact by itself until up: true by default. false leaves it down for a teammate, fighting from the ground with what it holds.
+- `bot:auto_revive(radius)`: Helps up downed Helldivers within radius (15 metres) by itself, between other orders, while it follows or fights. Of the bots that do, only the free one nearest to a downed Helldiver goes. false stops.
+- `bot:auto_heal(radius)`: Heals Helldivers under 80% health within radius (20 metres) by itself with the REP-80, when it carries one. One bot heals each Helldiver, the nearest free one. false stops.
 - `bot:auto_helping()`: The radius it helps in by itself: revive's and heal's, or false for each it doesn't.
 - `bot:downed()`: Whether the bot is downed now.
+- `bot:pickup_cooldown(seconds)`: After a bot picks up a weapon or a backpack, it picks up neither for this many seconds (20 by default). Taking one drops what the bot held in that slot right there, so a bot that keeps pressing interact would pick the dropped one up again, and so on. 0 or false lets it pick up at any time.
+- `bot:next_pickup()`: Seconds left before the bot can pick up a weapon or a backpack again: 0 when it can now.
 - `bot:remove()`
 - `api.bots.all()`
 - `api.bots.remove_all()`
