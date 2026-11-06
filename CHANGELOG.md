@@ -2,6 +2,21 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.36.0
+
+- New: `bot:wield(slot)` takes out the weapon in a chosen slot, and `bot:wielding()` answers the slot in hand. A bot that heals with the REP-80 takes back the weapon it held, with no swaps in between.
+- New: `bot:use_weapon(slot, target, opts, on_done)` takes out one weapon, fires it at one target and takes back the weapon from before: an EAT or a recoilless rifle for a heavy enemy while the bot fights with the rifle. `bot:using_weapon()` and `bot:cancel_weapon()` go with it.
+- New: `bot:fight(radius, opts)` takes `weapon` (the slot to fight with), `only` (a function that picks the enemies to shoot) and `secondary` (fire a vehicle seat's second gun too).
+- New: `bot:sees(unit)` and `bot:enemies_in_sight(radius, only)` tell which enemies a straight line from the bot reaches. `api.enemies.info` gives `armor_min`, `armor_max` and `large`.
+- New: bots get into vehicles: `bot:enter_vehicle(vehicle, seat, on_done)` walks to a seat's door and gets in, `bot:leave_vehicle()` gets out, and `bot:ride_along(true)` follows the player into the vehicle and out again. In a seat, `fight` works the seat's guns and walking orders drive. `bot:seat()`, `bot:boarding()` and `bot:fire_secondary(on)` go with them.
+- New: `api.vehicles.near`, `nearest`, `kind`, `seats` and `seat_of` list vehicles, exosuits and turrets, and who sits where.
+- New: `bot:auto_heal(radius, opts)` takes `below`, the share of health under which the bot starts healing someone (0.8). `retry` sets how long it waits before trying someone again, for `auto_revive` too.
+- New: `bot:refill_backpack()`, and `api.gear.refill_backpack(unit)` for any player on this machine.
+- Changed: a bot's launcher with an assisted reload, such as the recoilless rifle, reloads by itself while the bot wears the backpack for it.
+- Changed: a fighting bot pulls and lets go of the trigger for a semi-automatic weapon, which fires once per pull.
+- Fixed: `bot:switch()` held the switch button, which the game reads as a hold that swaps the sidearm and the support weapon back and forth. It now taps it.
+- Changed: the F6 key's label in the Keys tab reads **Open in-game overlay menu**, and a manager that shows a controller column puts the **Open the menu with a controller** choice in the same row.
+
 ## 1.35.0
 
 - New: `bot:throw_at(pos, on_done)` throws a grenade at a point as a player does: the bot faces it, charges the throw to the distance and lets go. `bot:throwing()` and `bot:cancel_throw()` go with it.

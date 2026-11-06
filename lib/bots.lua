@@ -19,15 +19,22 @@ local gear = obsidian.module("lib/gear")
 local stratagems = obsidian.module("lib/stratagems")
 local player = obsidian.module("lib/player")
 local enemies = obsidian.module("lib/enemies")
+local vehicles = obsidian.module("lib/vehicles")
 
 local M = { list = {} }
 
 local HELLDIVER = "characters/helldiver_private_01/helldiver_private_01"
 
--- What the input code reads besides the pad mapping: a vehicle seat reads these two, and the downed
--- states a held interact key, which only the keyboard maps (interact_button).
+-- What the input code reads besides the pad mapping: the keyboard's vehicle buttons, which a pad's
+-- triggers stand for, and the downed states' held interact key (interact_button), which only the
+-- keyboard maps. switch_weapon_up is the pad's release of the switch button.
 local EXTRA_NUMBERS = { "fire_button_primary_vehicle", "fire_button_secondary_vehicle", "interact_button" }
+local EXTRA_FLAGS = { "switch_weapon_up" }
 local VECTOR_FILTERS = { FilterVirtualAxis = true }
+
+-- Weapon slots by the game's names, and the short names a mod may use.
+local SLOTS = { primary_weapon = "primary_weapon", sidearm_weapon = "sidearm_weapon", support_weapon = "support_weapon",
+	primary = "primary_weapon", sidearm = "sidearm_weapon", support = "support_weapon" }
 
 -- Pressing a button holds it for this many frames, so the game's update sees it whichever order it
 -- runs in against this file's.
@@ -60,6 +67,9 @@ local function blank_input()
 	end
 	for _, n in ipairs(EXTRA_NUMBERS) do numbers[n] = true end
 	local t = { is_active = true }
+	for _, n in ipairs(EXTRA_FLAGS) do
+		if not (numbers[n] or vectors[n]) then flags[n] = true end
+	end
 	for n in pairs(numbers) do t[n] = 0 end
 	for n in pairs(flags) do t[n] = false end
 	return t, vectors
@@ -102,7 +112,7 @@ end
 local function new_bot(kind, name)
 	local input, vectors = blank_input()
 	local b = setmetatable({ kind = kind, name = name, state = game.state(), input = input, vectors = vectors,
-		axes = { move = { 0, 0 }, aim = { 0, 0 } }, presses = {}, goals = {}, orders = { fire = false, sprint = false },
+		axes = { move = { 0, 0 }, aim = { 0, 0 } }, presses = {}, goals = {}, orders = { fire = false, fire2 = false, sprint = false },
 		get_up = true, stuck = { time = 0, x = 0, y = 0, side = 1, side_time = 0 }, pickup_cd = PICKUP_COOLDOWN, pickup_until = 0 }, Bot)
 	M.list[#M.list + 1] = b
 	return b
@@ -283,9 +293,15 @@ function Bot:throw()
 	return self
 end
 
--- The next weapon, as the pad's switch button does.
+-- The pad's switch button tapped: the primary weapon and the support weapon take turns, and the
+-- sidearm goes back to the primary. wield(slot) takes out a chosen one.
+-- The game's input reads a press with no release within 0.2 seconds as the button held, which takes
+-- out the sidearm, and from the sidearm the support weapon (InputComponent.update_masters,
+-- "toggle_sidearm"): a press alone swaps between those two without end. The press and the release go
+-- in the same frame, which the game reads as a tap ("toggle_weapon").
 function Bot:switch()
-	press(self, "switch_weapon_down")
+	if self.input.switch_weapon_down == nil or self.input.switch_weapon_up == nil then return self end
+	self.presses.switch_weapon_down, self.presses.switch_weapon_up = 1, 1
 	return self
 end
 
@@ -301,14 +317,29 @@ function Bot:fighting()
 	return self.goals.fight and self.goals.fight.radius or false
 end
 
--- Aim at and shoot the nearest enemy within radius (25 metres), each frame. false stops.
-function Bot:fight(radius)
+-- Aim at and shoot the nearest enemy within radius (25 metres), each frame. false stops. opts, all
+-- optional: weapon, a slot ("primary", "sidearm", "support" or the game's "primary_weapon" and so on) the
+-- bot takes out and fights with, coming back to it after anything else it takes out; only, a function
+-- given an enemy unit that answers true for the enemies to shoot (the rest are left alone); secondary,
+-- true to fire a vehicle seat's second weapon along with the first (the tank's machine gun, an exosuit's
+-- left arm or grenades).
+function Bot:fight(radius, opts)
 	if radius == false then
 		self.goals.fight = nil
 		self:fire(false)
 	else
-		self.goals.fight = { radius = radius or 25 }
+		opts = type(opts) == "table" and opts or {}
+		self.goals.fight = { radius = radius or 25, weapon = SLOTS[opts.weapon], only = type(opts.only) == "function" and opts.only or nil,
+			secondary = opts.secondary == true }
 	end
+	return self
+end
+
+-- In a vehicle seat, holds the second trigger until fire_secondary(false): the tank's machine gun, an
+-- exosuit's left arm, the first exosuit's grenades. On foot that button throws a grenade, so it does
+-- nothing there.
+function Bot:fire_secondary(on)
+	self.orders.fire2 = on and true or false
 	return self
 end
 
@@ -329,6 +360,8 @@ function Bot:give_backpack(path, upgrade) return with_unit(self, gear, "give_bac
 function Bot:give_perk(name) return with_unit(self, gear, "give_perk", 1, name) end
 function Bot:remove_perk() return with_unit(self, gear, "remove_perk", 0) end
 function Bot:refill() return with_unit(self, gear, "refill", 0) end
+-- The backpack's uses back to full, as api.gear.refill_backpack: the recoilless rifle's rockets, for one.
+function Bot:refill_backpack() return with_unit(self, gear, "refill_backpack", 0) end
 function Bot:give_stratagem(name) return with_unit(self, stratagems, "give", 1, name) end
 -- A real call-in of the bot's, at the bot's upgrade level, as api.stratagems.call.
 function Bot:call(name, pos, delay) return with_unit(self, stratagems, "call", 3, name, pos, delay) end
@@ -414,7 +447,7 @@ end
 
 -- The stratagem the bot is calling and the step it's at ("open", "code", "throw"), or false.
 function Bot:using_stratagem()
-	if not self.job or self.job.kind == "grenade" then return false end
+	if not self.job or self.job.kind ~= nil then return false end
 	return self.job.name, self.job.phase
 end
 
@@ -574,7 +607,8 @@ local SWITCH_GAP = 0.5
 local REWIELD_TIME = 10    -- seconds the weapon to take back after a heal waits for the bot to stand calm
 local SCAN_EVERY = 0.3     -- seconds between looks for someone to help
 local NEAREST = 30         -- metres revive() and heal_target() look within, given no unit
-local AUTO_HEAL_BELOW = 0.8 -- the share of health under which auto_heal starts on someone
+local AUTO_HEAL_BELOW = 0.8 -- the share of health under which auto_heal starts on someone, by default
+local AUTO_RETRY = 5       -- seconds after a help it started by itself failed before it tries that Helldiver again
 local HELPER_NEAR = 1.6    -- metres: a downed bot with a teammate standing this close lies still
 local THREAT = 10          -- metres: on the way to help, a fighting bot shoots enemies this close
 local HEAL_SLOTS = { "support_weapon", "primary_weapon", "sidearm_weapon" }
@@ -618,15 +652,28 @@ local function flat(a, b)
 	return dx, dy, math.sqrt(dx * dx + dy * dy)
 end
 
+-- Where a unit's nose points on the ground, as a direction of length 1, or nil when the game gives no
+-- rotation to read. The engine's type() calls a vector "vector3", so it's read by its fields.
+local function forward_of(unit)
+	local units, quat = game.global("Unit"), game.global("Quaternion")
+	if not (units.world_rotation and quat and quat.forward) then return nil end
+	local ok, x, y = pcall(function()
+		local f = quat.forward(units.world_rotation(unit, 0))
+		return f.x, f.y
+	end)
+	if not ok or type(x) ~= "number" or type(y) ~= "number" then return nil end
+	local len = math.sqrt(x * x + y * y)
+	if len < 1e-3 then return nil end
+	return x / len, y / len
+end
+
 -- Whether the body faces along dx, dy within the angle whose cosine is cos_min. True when the game
 -- gives no rotation to read.
 local function faces(unit, dx, dy, cos_min)
-	local units, quat = game.global("Unit"), game.global("Quaternion")
-	if not (units.world_rotation and quat and quat.forward) then return true end
-	local ok, f = pcall(function() return quat.forward(units.world_rotation(unit, 0)) end)
-	if not ok or type(f) ~= "table" then return true end
+	local fx, fy = forward_of(unit)
+	if not fx then return true end
 	local len = math.sqrt(dx * dx + dy * dy)
-	return len < 0.3 or (f.x * dx + f.y * dy) / len > cos_min
+	return len < 0.3 or (fx * dx + fy * dy) / len > cos_min
 end
 
 -- The character's state, or nil when the game gives none to read (a body with no character master).
@@ -697,6 +744,13 @@ local function heal_tool(unit)
 	return nil
 end
 
+-- A REP-80 with something to heal with: rounds in it or a spare to reload.
+local function heal_ready(unit)
+	local _, _, beam = heal_tool(unit)
+	if not beam then return false end
+	return beam.rounds == nil or beam.rounds > 0 or (beam.num_mags or 0) > 0
+end
+
 -- Takes out the weapon in a slot as the game does for a carried objective. A slot with no weapon is an
 -- assert in the game, so it's checked first.
 local function wield(unit, slot)
@@ -715,12 +769,51 @@ local function current_slot(unit)
 	return nil
 end
 
+-- Takes out the weapon in a slot: "primary_weapon", "sidearm_weapon" or "support_weapon", or "primary",
+-- "sidearm" or "support". The weapon comes out once the bot stands calm, within 10 seconds, and a help
+-- or a use_weapon that starts meanwhile comes back to it afterwards. Answers true, or false and a reason:
+-- "bad_slot", "no_avatar", "no_weapon" (nothing in that slot).
+function Bot:wield(slot)
+	local name = SLOTS[slot]
+	if not name then return false, "bad_slot" end
+	local unit = self:unit()
+	if not unit then return false, "no_avatar" end
+	local inv = game.master(unit, "inventory")
+	if not (inv and alive(inv[name])) then return false, "no_weapon" end
+	if self.task then
+		self.task.after = name
+	elseif self.job and self.job.kind == "weapon" then
+		self.job.after = name
+	elseif inv.current_weapon == inv[name] then
+		self.rewield = nil
+	else
+		self.rewield = { slot = name, time = 0 }
+	end
+	return true
+end
+
+-- The slot of the weapon in the bot's hands ("primary_weapon", "sidearm_weapon" or "support_weapon"),
+-- or nil.
+function Bot:wielding()
+	local unit = self:unit()
+	return unit and current_slot(unit) or nil
+end
+
 local function end_task(b, ok, why)
 	local task = b.task
 	b.task = nil
 	if not task then return end
-	-- A heal goes back to the weapon the bot held before it, once the bot stands calm (rewield_step).
-	if task.before then b.rewield = { slot = task.before, time = 0 } end
+	-- A heal goes back to the weapon the bot held before it, or to the one wield asked for meanwhile, once
+	-- the bot stands calm (rewield_step).
+	local back = task.after or task.before
+	if back then b.rewield = { slot = back, time = 0 } end
+	-- A help the bot started by itself that came to nothing waits before it tries that Helldiver again:
+	-- an empty REP-80 or a target out of reach would otherwise take the REP-80 out and put it away
+	-- again every few frames.
+	if task.auto and not ok and task.unit ~= nil then
+		b.blocked = b.blocked or setmetatable({}, { __mode = "k" })
+		b.blocked[task.unit] = M.clock + (b.retry or AUTO_RETRY)
+	end
 	if type(task.on_done) == "function" then
 		local fine, err = pcall(task.on_done, ok, why)
 		if not fine then obsidian.log("bots: on_done: " .. tostring(err)) end
@@ -729,9 +822,13 @@ end
 
 local function start_task(b, kind, target, on_done, auto)
 	if b.task then end_task(b, false, "cancelled") end
-	-- A weapon still to take back from an earlier heal is the one this task goes back to.
-	local before = b.rewield and b.rewield.slot or nil
-	b.rewield = nil
+	-- A weapon still to take back from an earlier heal is the one this task goes back to. Getting into a
+	-- vehicle changes no weapon, so a weapon waiting stays waiting.
+	local before = nil
+	if kind ~= "vehicle" then
+		before = b.rewield and b.rewield.slot or nil
+		b.rewield = nil
+	end
 	b.task = { kind = kind, unit = target, on_done = on_done, auto = auto, time = 0, wait = 0, tries = 0, turn = 0,
 		near = 0, pick = 0, before = before }
 	return true
@@ -740,8 +837,9 @@ end
 -- Walks to a downed Helldiver and helps them up: the bot stands by the body, turns to it and presses
 -- interact. unit: the downed Helldiver, or nil for the nearest one within 30 metres that no other bot is
 -- helping. Answers true once started, or false and a reason: "no_avatar", "downed" (the bot is downed
--- itself), "busy" (calling a stratagem), "no_one_downed" (no one downed near), "already_helped" (another
--- bot is on the way to each one), "not_downed", "self". on_done(ok, reason) hears how it ended: true once
+-- itself), "seated" (in a vehicle seat), "busy" (calling a stratagem, throwing or using a weapon),
+-- "no_one_downed" (no one downed near), "already_helped" (another bot is on the way to each one),
+-- "not_downed", "self". on_done(ok, reason) hears how it ended: true once
 -- they're up, or false and "dead", "downed", "no_help_up" (presses that did nothing), "timeout" or
 -- "cancelled". While it runs, the bot's other orders wait, but a bot that fights shoots back at
 -- enemies close by on the way.
@@ -750,6 +848,7 @@ function Bot:revive(unit, on_done)
 	if not me then return false, "no_avatar" end
 	if self.job then return false, "busy" end
 	if is_downed(me) then return false, "downed" end
+	if vehicles.seat_of(me) then return false, "seated" end
 	if unit == nil then
 		unit = nearest(me, NEAREST, function(u) return is_downed(u) and not helper_of(u, "revive", self) end)
 		if not unit then
@@ -765,7 +864,7 @@ end
 -- Heals a hurt Helldiver with the REP-80, as a player does: the bot walks within range, takes the REP-80
 -- out, faces the target and holds fire until they're at full health, then takes back the weapon it
 -- held. unit: the Helldiver, or nil for the most hurt one within 30 metres that no other bot is healing.
--- Answers true once started, or false and a reason: "no_avatar", "downed", "busy", "no_heal_tool" (no
+-- Answers true once started, or false and a reason: "no_avatar", "downed", "seated", "busy", "no_heal_tool" (no
 -- REP-80 in the bot's slots), "no_one_hurt" (no one hurt near), "already_helped", "not_hurt", "self".
 -- on_done(ok, reason): true at full health, or false and "dead", "downed" (the target went down: help
 -- them up first), "no_ammo", "no_switch" (the REP-80 wouldn't come out), "timeout" or "cancelled".
@@ -774,6 +873,7 @@ function Bot:heal_target(unit, on_done)
 	if not me then return false, "no_avatar" end
 	if self.job then return false, "busy" end
 	if is_downed(me) then return false, "downed" end
+	if vehicles.seat_of(me) then return false, "seated" end
 	if not heal_tool(me) then return false, "no_heal_tool" end
 	if unit == nil then
 		local worst, share, taken = nil, 1, false
@@ -804,9 +904,138 @@ function Bot:helping()
 end
 
 function Bot:stop_helping()
-	if not self.task then return false end
+	if not self.task or self.task.kind == "vehicle" then return false end
 	end_task(self, false, "cancelled")
 	return true
+end
+
+-- Vehicles. A Helldiver gets in when the game's interactor sends a use of the seat to the vehicle's owner,
+-- which seats them if the seat is on and free (InteractorComponent.update_masters, SeatComponent "interact").
+-- A press of interact picks the seat the body touches, from the right side (an exosuit only from behind);
+-- a bot walks to the seat's door and asks for its seat by the interactor's "force_interaction", which
+-- skips the picking and nothing else. Seated, interact asks the owner to let the Helldiver out
+-- (CharacterStateSeated). A seat's guns turn to the aim stick and fire on the trigger, or on the second
+-- trigger when the gun says so (StationaryWeaponComponent: fire_input_field "throw"). The driver of an
+-- exosuit walks on the move stick and faces the aim stick; the APC and the bike speed up on the trigger,
+-- slow on the second trigger and steer on the move stick; the tank destroyer drives a track on each stick
+-- (VehicleComponent.update_masters).
+local ENTER_REACH = 2.5    -- metres from a seat's door to stand before asking for the seat
+local ENTER_WAIT = 3       -- seconds for the game to seat the bot after it asks
+local ENTER_TRIES = 3      -- asks before "refused"
+local ENTER_TIME = 30      -- seconds before an enter_vehicle gives up
+local LEAVE_GAP = 1        -- seconds between presses of interact to get out
+local LEAVE_TIME = 8       -- seconds of pressing before leave_vehicle gives up
+local RIDE_EVERY = 0.5     -- seconds between looks at the seat of the Helldiver a bot rides along with
+local RIDE_RETRY = 5       -- seconds after a ride along failed to get in before it tries again
+
+-- The bot already on its way to a seat, other than except.
+local function heading_to(vehicle, index, except)
+	for _, b in ipairs(M.list) do
+		if b ~= except and b.task and b.task.kind == "vehicle" and b.task.unit == vehicle and b.task.seat == index then return b end
+	end
+	return nil
+end
+
+-- The first free seat nobody is on the way to: one that doesn't steer, then the one that does.
+local function free_seat(vehicle, except)
+	local steering
+	for _, s in ipairs(vehicles.seats(vehicle)) do
+		if s.free and not heading_to(vehicle, s.index, except) then
+			if not s.drives then return s.index end
+			steering = steering or s.index
+		end
+	end
+	return steering
+end
+
+-- Where a Helldiver stands to get into a seat: the seat's door node, or the vehicle itself.
+local function door(vehicle, index)
+	local units = game.global("Unit")
+	local seat = vehicles.seat_settings(vehicle, index)
+	if seat and seat.enter_node and units.node then
+		local ok, pos = pcall(function() return units.world_position(vehicle, units.node(vehicle, seat.enter_node)) end)
+		if ok and pos then return pos end
+	end
+	return units.world_position(vehicle, 0)
+end
+
+-- Asks the vehicle's owner for a seat, through the bot's interactor.
+local function board(unit, vehicle, index)
+	local seat = vehicles.seat_settings(vehicle, index)
+	local units = game.global("Unit")
+	if not (seat and seat.actor and units.actor) then return false end
+	local ok, actor = pcall(units.actor, vehicle, seat.actor)
+	if not ok or actor == nil then return false end
+	return game.command(unit, "interactor", "force_interaction", { interactable_unit = vehicle, interactable_component = "seat", interactable_actor = actor })
+end
+
+-- Gets into a vehicle seat as a player does: the bot walks to the seat's door, stands and gets in. vehicle:
+-- a unit from api.vehicles.near or api.vehicles.nearest. seat: the seat's index (api.vehicles.seats), or nil
+-- for the first free seat no other bot is on the way to, a seat that doesn't steer before the one that
+-- does. Answers true once started, or false and a reason: "no_avatar", "busy" (calling a stratagem,
+-- throwing or using a weapon), "downed", "seated" (in a seat already: leave_vehicle first), "no_vehicle"
+-- (a unit with no seats), "no_seat" (no such seat, or none free), "taken". on_done(ok, reason): true once
+-- seated, or false and "taken" (someone else got in), "destroyed", "no_vehicle", "refused" (the game
+-- wouldn't seat the bot), "downed", "timeout", "cancelled" or "no_avatar". While it runs the bot's other
+-- orders wait, but a bot that fights shoots back at enemies close by on the way.
+function Bot:enter_vehicle(vehicle, seat, on_done)
+	if type(seat) == "function" and on_done == nil then seat, on_done = nil, seat end
+	local me = self:unit()
+	if not me then return false, "no_avatar" end
+	if self.job then return false, "busy" end
+	if is_downed(me) then return false, "downed" end
+	if vehicles.seat_of(me) then return false, "seated" end
+	local seats = vehicles.seats(vehicle)
+	if #seats == 0 then return false, "no_vehicle" end
+	if seat == nil then
+		seat = free_seat(vehicle, self)
+		if not seat then return false, "no_seat" end
+	elseif not seats[seat] then
+		return false, "no_seat"
+	elseif not seats[seat].free or heading_to(vehicle, seat, self) then
+		return false, "taken"
+	end
+	self.leaving = nil
+	start_task(self, "vehicle", vehicle, on_done, false)
+	self.task.seat = seat
+	return true
+end
+
+-- Gets out of the seat it sits in, with the interact press a player gets out with, again each second
+-- until out (a seat lets no one out in its first moment). Answers true, or false and "no_avatar" or
+-- "not_seated".
+function Bot:leave_vehicle()
+	local unit = self:unit()
+	if not unit then return false, "no_avatar" end
+	if self.task and self.task.kind == "vehicle" then end_task(self, false, "cancelled") end
+	if not vehicles.seat_of(unit) then return false, "not_seated" end
+	self.leaving = { time = 0, wait = 0 }
+	return true
+end
+
+-- The vehicle the bot sits in and the seat's index, or nil.
+function Bot:seat()
+	local unit = self:unit()
+	if not unit then return nil end
+	return vehicles.seat_of(unit)
+end
+
+-- The vehicle and seat the bot is on its way to (enter_vehicle), or false.
+function Bot:boarding()
+	if not (self.task and self.task.kind == "vehicle") then return false end
+	return self.task.unit, self.task.seat
+end
+
+-- Rides along with a Helldiver: when they sit in a vehicle with a seat free that doesn't steer, the bot
+-- gets in (enter_vehicle), and once they're out it gets out of that vehicle too. on: true for the unit the
+-- bot follows (the player when it follows no one), a unit, or false to stop (the default).
+function Bot:ride_along(on)
+	if on == false or on == nil then
+		self.ride = nil
+	else
+		self.ride = { unit = on ~= true and on or nil, wait = 0, retry = 0 }
+	end
+	return self
 end
 
 -- Downed, the bot holds interact by itself until up: true by default. false leaves it down for a
@@ -816,25 +1045,38 @@ function Bot:auto_get_up(on)
 	return self
 end
 
+-- opts.retry of auto_revive and auto_heal: the seconds a help the bot started by itself and that came to
+-- nothing waits before the bot tries that Helldiver again.
+local function set_retry(b, opts)
+	local retry = type(opts) == "table" and tonumber(opts.retry)
+	if retry and retry >= 0 then b.retry = retry end
+end
+
 -- Helps up downed Helldivers within radius (15 metres) by itself, between other orders, while it
 -- follows or fights. Of the bots that do, only the free one nearest to a downed Helldiver goes. false
--- stops.
-function Bot:auto_revive(radius)
+-- stops. opts.retry: seconds before it tries again someone it failed to help up (5).
+function Bot:auto_revive(radius, opts)
 	if radius == false then
 		self.goals.auto_revive = nil
 	else
 		self.goals.auto_revive = radius or 15
+		set_retry(self, opts)
 	end
 	return self
 end
 
--- Heals Helldivers under 80% health within radius (20 metres) by itself with the REP-80, when it
--- carries one. One bot heals each Helldiver, the nearest free one. false stops.
-function Bot:auto_heal(radius)
+-- Heals hurt Helldivers within radius (20 metres) by itself with the REP-80, when it carries one with
+-- ammo, then takes back the weapon it held. One bot heals each Helldiver, the nearest free one. false
+-- stops. opts.below: the share of health under which it starts on someone, from 0 to 1 (0.8, so under 80%
+-- health). opts.retry: seconds before it tries again someone a heal failed on (5).
+function Bot:auto_heal(radius, opts)
 	if radius == false then
 		self.goals.auto_heal = nil
 	else
 		self.goals.auto_heal = radius or 20
+		local below = type(opts) == "table" and tonumber(opts.below)
+		if below and below > 0 and below <= 1 then self.goals.heal_below = below end
+		set_retry(self, opts)
 	end
 	return self
 end
@@ -905,7 +1147,7 @@ local function assign(dt)
 	for _, b in ipairs(M.list) do
 		local unit = b:unit()
 		if unit and (b.goals.auto_revive or b.goals.auto_heal) and not b.task and not b.job
-			and not is_downed(unit) and not occupied(unit) then
+			and not is_downed(unit) and not occupied(unit) and not vehicles.seat_of(unit) then
 			free[#free + 1] = { bot = b, unit = unit }
 		end
 	end
@@ -914,7 +1156,8 @@ local function assign(dt)
 		local best, best_d, best_i = nil, nil, nil
 		for i, c in ipairs(free) do
 			local r = radius_of(c)
-			if r and c.unit ~= target then
+			local wait = c.bot.blocked and c.bot.blocked[target]
+			if r and c.unit ~= target and not (wait and wait > M.clock) then
 				local _, _, d = flat(c.unit, target)
 				if d <= r and (best_d == nil or d < best_d) then best, best_d, best_i = c, d, i end
 			end
@@ -932,7 +1175,7 @@ local function assign(dt)
 	end
 	local hurt = {}
 	for _, target in ipairs(everyone) do
-		if is_hurt(target, AUTO_HEAL_BELOW) and not helper_of(target, "heal") then
+		if is_hurt(target) and not helper_of(target, "heal") then
 			local h = health(target)
 			hurt[#hurt + 1] = { unit = target, share = h.hitpoints / h.max_hitpoints }
 		end
@@ -940,9 +1183,43 @@ local function assign(dt)
 	table.sort(hurt, function(a, b) return a.share < b.share end)
 	for _, entry in ipairs(hurt) do
 		if #free == 0 then return end
-		local c = take(entry.unit, function(c) return c.bot.goals.auto_heal and heal_tool(c.unit) and c.bot.goals.auto_heal end)
+		local c = take(entry.unit, function(c)
+			local goals = c.bot.goals
+			if goals.auto_heal and entry.share < (goals.heal_below or AUTO_HEAL_BELOW) and heal_ready(c.unit) then return goals.auto_heal end
+		end)
 		if c then start_task(c.bot, "heal", entry.unit, nil, true) end
 	end
+end
+
+-- One frame of getting into a vehicle: walking to the seat's door, then asking for the seat standing
+-- calm, again after ENTER_WAIT while the bot isn't seated.
+local function vehicle_step(b, unit, t, f, dt)
+	local task = b.task
+	local v = task.unit
+	if not alive(v) then return end_task(b, false, "no_vehicle") end
+	local h = health(v)
+	if h and h.is_dead then return end_task(b, false, "destroyed") end
+	local now = vehicles.seat_of(unit)
+	if now == v then return end_task(b, true) end
+	if now then return end_task(b, false, "seated") end
+	if is_downed(unit) then return end_task(b, false, "downed") end
+	if task.time > ENTER_TIME then return end_task(b, false, "timeout") end
+	local seat = vehicles.seats(v)[task.seat]
+	if not seat then return end_task(b, false, "no_vehicle") end
+	if seat.unit ~= nil and seat.unit ~= unit then return end_task(b, false, "taken") end
+	local here, there = game.global("Unit").world_position(unit, 0), door(v, task.seat)
+	local dx, dy = there.x - here.x, there.y - here.y
+	local d = math.sqrt(dx * dx + dy * dy)
+	if d > ENTER_REACH and task.tries == 0 then
+		f.mx, f.my = direction({ x = dx, y = dy })
+		if not (b.fight_target and b.fight_near) then t.fire_button, f.ax, f.ay = 0, 0, 0 end
+		return
+	end
+	t.fire_button, f.mx, f.my, f.ax, f.ay = 0, 0, 0, 0, 0
+	if task.wait > 0 or not calm(unit) then return end
+	if task.tries >= ENTER_TRIES then return end_task(b, false, "refused") end
+	task.tries, task.wait = task.tries + 1, ENTER_WAIT
+	if not board(unit, v, task.seat) then return end_task(b, false, "refused") end
 end
 
 -- One frame of a help up or a heal: it writes this frame's sticks (f) and buttons (t), over what the
@@ -950,6 +1227,7 @@ end
 local function task_step(b, unit, t, f, dt)
 	local task = b.task
 	task.time, task.wait = task.time + dt, task.wait - dt
+	if task.kind == "vehicle" then return vehicle_step(b, unit, t, f, dt) end
 	local target = task.unit
 	if not alive(target) then return end_task(b, false, "dead") end
 	local h = health(target)
@@ -1097,8 +1375,9 @@ local RELOAD_GAP = 1       -- seconds between reloads it presses
 local RELOAD_HOLD = 0.3    -- seconds the trigger is let go around a reload it presses
 
 -- Whether a weapon's ray from the bot's chest reaches the enemy before anything else: the game's damage
--- ray filter, the bot's own body skipped. True when the game gives no physics to ask.
-local function line_clear(unit, enemy)
+-- ray filter, the bot's own body skipped, and in a seat the vehicle and its guns (skip). True when the
+-- game gives no physics to ask.
+local function line_clear(unit, enemy, skip)
 	local st = game.state()
 	local pw = type(st) == "table" and st.world_proxy and st.world_proxy.get_physics_world and st.world_proxy:get_physics_world()
 	local physics, actor_unit, v3 = game.global("PhysicsWorld"), game.global("Actor"), game.global("Vector3")
@@ -1114,26 +1393,29 @@ local function line_clear(unit, enemy)
 	for _, h in ipairs(hits) do
 		local got, u = pcall(actor_unit.unit, h[4])
 		u = got and u or nil
-		if u ~= unit and (first == nil or h[2] < first) then first, first_unit = h[2], u end
+		if u ~= unit and not (skip and u ~= nil and skip[u]) and (first == nil or h[2] < first) then first, first_unit = h[2], u end
 	end
 	if first == nil or first_unit == enemy then return true end
 	return first >= length - 0.75
 end
 
--- No Helldiver but the bot between it and the point, within LINE_WIDTH of the line.
-local function no_one_in_the_way(unit, here, x, y)
+-- No Helldiver but the bot between it and the point, within LINE_WIDTH of the line. Those sitting in the
+-- bot's own vehicle (vehicle) sit beside its guns, not in front of them.
+local function no_one_in_the_way(unit, here, x, y, vehicle)
 	local dx, dy = x - here.x, y - here.y
 	local len = math.sqrt(dx * dx + dy * dy)
 	if len < 0.01 then return true end
 	local ux, uy = dx / len, dy / len
 	local units = game.global("Unit")
 	for _, other in ipairs(squad(unit)) do
-		local o = units.world_position(other, 0)
-		local ox, oy = o.x - here.x, o.y - here.y
-		local along = ox * ux + oy * uy
-		if along > 0.3 and along < len + 0.5 then
-			local side = math.abs(ox * uy - oy * ux)
-			if side < LINE_WIDTH then return false end
+		if not (vehicle and vehicles.seat_of(other) == vehicle) then
+			local o = units.world_position(other, 0)
+			local ox, oy = o.x - here.x, o.y - here.y
+			local along = ox * ux + oy * uy
+			if along > 0.3 and along < len + 0.5 then
+				local side = math.abs(ox * uy - oy * ux)
+				if side < LINE_WIDTH then return false end
+			end
 		end
 	end
 	return true
@@ -1146,15 +1428,73 @@ local function weapon_state(weapon)
 	return ok and type(ws) == "table" and ws or nil
 end
 
+-- Whether a mod's only(enemy) picks the enemy. An error in it picks none, once in the log.
+local function picks(b, only, enemy)
+	local ok, yes = pcall(only, enemy)
+	if not ok then
+		if not b.only_failed then
+			b.only_failed = true
+			obsidian.log("bots: only: " .. tostring(yes))
+		end
+		return false
+	end
+	return yes and true or false
+end
+
+-- The trigger pulled as a player pulls it for the weapon in hand (t.fire_button). The game fires a
+-- weapon that isn't fully automatic once as the trigger goes down (CharacterStateAimFire.on_enter), so a
+-- held trigger fires it once: the bot pulls and lets go, PULL_FRAMES each. A weapon that fires on release
+-- (the mortar) is held to half its charge and let go. In a seat the guns fire while it's held.
+local PULL_FRAMES = 2
+
+local function pull(b, unit, t)
+	if b.in_seat then
+		t.fire_button = 1
+		return
+	end
+	local inv = game.master(unit, "inventory")
+	local ws = inv and weapon_state(inv.current_weapon)
+	b.pull = (b.pull or 0) + 1
+	if ws and ws.fire_on_release then
+		if (b.release or 0) > 0 then
+			b.release = b.release - 1
+			t.fire_button = 0
+		elseif (tonumber(ws.shot_charge_timer) or 0) >= ((tonumber(ws.min_charge_time) or 0) + (tonumber(ws.max_charge_time) or 1)) / 2 then
+			b.release = PULL_FRAMES + 1
+			t.fire_button = 0
+		else
+			t.fire_button = 1
+		end
+	elseif ws and ws.fully_automatic == false then
+		t.fire_button = (b.pull % (PULL_FRAMES * 2)) < PULL_FRAMES and 1 or 0
+	else
+		t.fire_button = 1
+	end
+end
+
+-- What fight shoots at: the enemies within its radius that its only() picks, nearest first.
+local function targets(b, fight, here)
+	local found = enemies.near(fight.radius, here)
+	if not fight.only then return found end
+	local out = {}
+	for _, e in ipairs(found) do
+		if picks(b, fight.only, e) then out[#out + 1] = e end
+	end
+	return out
+end
+
+-- In a seat with no gun (the APC's or the bike's driver, a passenger seat with none), the sticks and the
+-- triggers drive or do nothing, so fight leaves them alone.
 local function fight_step(b, unit, here, t, dt)
 	local fight = b.goals.fight
+	local seat = b.in_seat
 	b.look = (b.look or 0) - dt
 	if b.look <= 0 or (b.fight_target and not alive(b.fight_target)) then
 		b.look = LOOK_EVERY
 		b.fight_target, b.fight_face = nil, nil
-		local found = enemies.near(fight.radius, here)
+		local found = targets(b, fight, here)
 		for i = 1, math.min(#found, LINE_CHECKS) do
-			if line_clear(unit, found[i]) then
+			if line_clear(unit, found[i], seat and seat.parts) then
 				b.fight_target = found[i]
 				break
 			end
@@ -1165,6 +1505,7 @@ local function fight_step(b, unit, here, t, dt)
 	local face = b.fight_face
 	if face and not alive(face) then face, b.fight_face = nil, nil end
 	b.fight_near = false
+	if seat and not seat.armed then return end
 	t.fire_button = 0
 	if face then
 		local p = units.world_position(face, 0)
@@ -1172,30 +1513,76 @@ local function fight_step(b, unit, here, t, dt)
 		if b.fight_target == face then
 			local dx, dy = p.x - here.x, p.y - here.y
 			b.fight_near = dx * dx + dy * dy <= THREAT * THREAT
-			if no_one_in_the_way(unit, here, p.x, p.y) then t.fire_button = 1 end
+			if no_one_in_the_way(unit, here, p.x, p.y, seat and seat.vehicle) then
+				if not seat or seat.primary then pull(b, unit, t) end
+				if seat and seat.secondary and fight.secondary then t.throw = 1 end
+			end
 		end
 	end
 end
 
+-- The weapon fight keeps in hand (fight's opts.weapon): taken out standing calm, while nothing else
+-- needs another weapon out, a second apart at most.
+local KEEP_GAP = 1
+
+local function keep_weapon(b, unit, dt)
+	local slot = b.goals.fight and b.goals.fight.weapon
+	if not slot or b.task or b.job or b.rewield or b.in_seat then return end
+	b.keep_wait = (b.keep_wait or 0) - dt
+	if b.keep_wait > 0 then return end
+	local inv = game.master(unit, "inventory")
+	if not (inv and alive(inv[slot])) or inv.current_weapon == inv[slot] then return end
+	if is_downed(unit) or not calm(unit) then return end
+	b.keep_wait = KEEP_GAP
+	wield(unit, slot)
+end
+
+-- Whether a straight line from the bot's chest reaches the unit before anything else does: a wall, a
+-- rock, another body. In a seat, the bot's own vehicle and its guns don't count. True when the game gives
+-- no physics to ask.
+function Bot:sees(target)
+	local unit = self:unit()
+	if not (unit and alive(target)) then return false end
+	return line_clear(unit, target, self.in_seat and self.in_seat.parts)
+end
+
+-- Living enemies within radius (25 metres) that the bot sees, nearest first. only: a function given an
+-- enemy unit that answers true for the ones to count, or nil for all. Each enemy costs a ray, so a mod
+-- that looks every second or so rather than every frame spends little.
+function Bot:enemies_in_sight(radius, only)
+	local unit = self:unit()
+	if not unit then return {} end
+	local here = game.global("Unit").world_position(unit, 0)
+	local out = {}
+	for _, e in ipairs(enemies.near(radius or 25, here)) do
+		if (type(only) ~= "function" or picks(self, only, e)) and line_clear(unit, e, self.in_seat and self.in_seat.parts) then out[#out + 1] = e end
+	end
+	return out
+end
+
 -- Whether a weapon's state wants the reload a player would press: a magazine empty with a spare one
--- left, or a laser overheated with a radiator left. A laser's heat runs from 0 to 1, and the game marks
--- it reloadable only at full heat with a radiator in stock (BeamweaponComponent.update_masters); a
--- firearm is always reloadable, and its rounds tell. An assisted reload is a teammate's to do.
+-- left, a laser overheated with a radiator left, or an empty launcher the wielder's own backpack loads. A
+-- laser's heat runs from 0 to 1, and the game marks it reloadable only at full heat with a radiator in
+-- stock (BeamweaponComponent.update_masters); a firearm is always reloadable, and its rounds tell. A
+-- launcher with an assisted reload (the recoilless rifle, the missile launcher) is reloadable alone while
+-- its wielder wears the backpack it needs with a rocket left, and the game then keeps that backpack in
+-- backpack_for_reload (LauncherComponent.update_masters); without it, the reload is a teammate's to do.
 function M.wants_reload(ws)
-	if type(ws) ~= "table" or ws.is_reloading or ws.assisted_reload or ws.reloadable ~= true then return false end
+	if type(ws) ~= "table" or ws.is_reloading or ws.reloadable ~= true then return false end
+	if ws.assisted_reload then return ws.backpack_for_reload ~= nil and ws.rounds == 0 end
 	if type(ws.heat) == "number" and ws.magazine_capacity == nil then return true end
 	return ws.rounds == 0 and (ws.num_mags or 0) > 0
 end
 
 -- Reloading by itself (auto_reload, on by default): with the trigger let go for a moment, so the reload
--- isn't lost to a state that fires.
+-- isn't lost to a state that fires. In a seat the bot's own weapons are put away, so it waits.
 local function reload_step(b, unit, t, dt)
 	b.reload_wait = (b.reload_wait or 0) - dt
 	if (b.reload_hold or 0) > 0 then
 		b.reload_hold = b.reload_hold - dt
 		t.fire_button = 0
 	end
-	if b.reloads == false or b.reload_wait > 0 then return end
+	if b.reloads == false or b.reload_wait > 0 or b.in_seat then return end
 	local inv = game.master(unit, "inventory")
 	if M.wants_reload(inv and weapon_state(inv.current_weapon)) then
 		b.reload_wait, b.reload_hold = RELOAD_GAP, RELOAD_HOLD
@@ -1279,6 +1666,138 @@ function Bot:cancel_throw()
 	return true
 end
 
+-- One weapon used on one target (use_weapon). A shot shows on the weapon's state: rounds going down, or
+-- the wait for the next shot (fire_timer) going up, which still happens with infinite ammo, where the
+-- rounds stay put (FirearmComponent, LauncherComponent). The EAT goes from the slot once its rocket is out.
+local USE_TIME = 10        -- seconds before a use_weapon gives up
+local AIM_COS = math.cos(math.rad(8)) -- how near the target the bot faces before it pulls the trigger
+local EMPTY_TIME = 1.5     -- seconds an empty weapon with no reload waits before "no_ammo"
+
+local function finish_use(b, ok, why)
+	local job = b.job
+	if job and not job.keep then
+		local back = job.after or job.before
+		if back and back ~= job.slot then b.rewield = { slot = back, time = 0 } end
+	elseif job and job.after then
+		b.rewield = { slot = job.after, time = 0 }
+	end
+	finish(b, ok, why)
+end
+
+local function weapon_step(b, unit, t, f, dt)
+	local job = b.job
+	job.total, job.wait = job.total + dt, job.wait - dt
+	t.fire_button, t.throw, t.interact, t.interact_button = 0, 0, false, 0
+	f.mx, f.my = 0, 0
+	if job.cancel then return finish_use(b, false, "cancelled") end
+	if is_downed(unit) then return finish_use(b, false, "downed") end
+	if vehicles.seat_of(unit) then return finish_use(b, false, "seated") end
+	local inv = game.master(unit, "inventory")
+	if not inv then return finish_use(b, false, "no_avatar") end
+	local weapon = inv[job.slot]
+	-- Gone from the slot after the trigger was pulled: thrown away spent, as the EAT is.
+	if weapon ~= job.weapon or not alive(weapon) then
+		if job.pulled then return finish_use(b, true, "spent") end
+		return finish_use(b, false, "no_weapon")
+	end
+	local target = job.unit
+	local h = alive(target) and health(target)
+	if not alive(target) or (h and h.is_dead) then return finish_use(b, true, "killed") end
+	if job.total > job.limit then return finish_use(b, false, "timeout") end
+	local dx, dy, d = flat(unit, target)
+	if d > 0.01 then f.ax, f.ay = dx / d, dy / d end
+	if inv.current_weapon ~= weapon then
+		if job.wait <= 0 and calm(unit) then
+			if job.tries >= SWITCH_TRIES then return finish_use(b, false, "no_switch") end
+			job.tries, job.wait = job.tries + 1, SWITCH_GAP
+			wield(unit, job.slot)
+		end
+		return
+	end
+	local ws = weapon_state(weapon)
+	if ws then
+		local rounds, timer = tonumber(ws.rounds), tonumber(ws.fire_timer)
+		local shot = 0
+		if job.pulled and rounds and job.rounds and rounds < job.rounds then shot = job.rounds - rounds end
+		if job.pulled and shot == 0 and timer and job.timer and timer > job.timer + 1e-4 then shot = 1 end
+		job.rounds, job.timer = rounds, timer
+		if shot > 0 then
+			job.fired = job.fired + shot
+			if job.fired >= job.shots then return finish_use(b, true, "shots") end
+		end
+		if ws.is_reloading then
+			job.empty = 0
+			return
+		end
+		if rounds == 0 then
+			job.empty = (job.empty or 0) + dt
+			if not M.wants_reload(ws) and job.empty > EMPTY_TIME then return finish_use(b, false, "no_ammo") end
+			return
+		end
+		job.empty = 0
+	end
+	if (b.reload_hold or 0) > 0 then return end
+	local here = game.global("Unit").world_position(unit, 0)
+	local there = game.global("Unit").world_position(target, 0)
+	if faces(unit, dx, dy, AIM_COS) and line_clear(unit, target) and no_one_in_the_way(unit, here, there.x, there.y) then
+		pull(b, unit, t)
+		if t.fire_button > 0 then job.pulled = true end
+	end
+end
+
+-- Takes out the weapon in a slot and fires it at a unit, then takes back the weapon the bot held before:
+-- an EAT or a recoilless rifle for one heavy enemy, while fight keeps to the rifle. slot: "primary",
+-- "sidearm", "support" or the game's "primary_weapon" and so on. opts, all optional: shots, how many shots
+-- before it's done (1; math.huge keeps firing until the target dies); time, seconds before it gives up
+-- (10); keep, true to keep the weapon out afterwards. on_done may come in place of opts. The bot stands
+-- still, faces the target and pulls the trigger only facing it, along a clear line and with no Helldiver in
+-- the way; it reloads as auto_reload does. Answers true once started, or false and a reason: "bad_slot",
+-- "no_avatar", "busy" (calling a stratagem, throwing, using a weapon, or helping someone: stop_helping
+-- first), "downed", "seated", "no_weapon" (nothing in that slot), "no_target". on_done(ok, reason): true
+-- and "shots" (all fired), "killed" (the target died) or "spent" (the weapon went from the slot after
+-- firing, as the EAT does), or false and "no_switch" (the weapon wouldn't come out), "no_ammo",
+-- "no_weapon", "timeout", "downed", "seated", "cancelled" or "no_avatar".
+function Bot:use_weapon(slot, target, opts, on_done)
+	if type(opts) == "function" and on_done == nil then opts, on_done = nil, opts end
+	local name = SLOTS[slot]
+	if not name then return false, "bad_slot" end
+	local unit = self:unit()
+	if not unit then return false, "no_avatar" end
+	if self.job or self.task then return false, "busy" end
+	if is_downed(unit) then return false, "downed" end
+	if vehicles.seat_of(unit) then return false, "seated" end
+	local inv = game.master(unit, "inventory")
+	local weapon = inv and inv[name]
+	if not alive(weapon) then return false, "no_weapon" end
+	if not alive(target) then return false, "no_target" end
+	local h = health(target)
+	if h and h.is_dead then return false, "no_target" end
+	opts = type(opts) == "table" and opts or {}
+	local shots = tonumber(opts.shots) or 1
+	if shots ~= shots or shots < 1 then shots = 1 end
+	local limit = tonumber(opts.time) or USE_TIME
+	if limit ~= limit or limit <= 0 then limit = USE_TIME end
+	-- A weapon still to take out from an earlier order is the one to come back to.
+	local before = self.rewield and self.rewield.slot or current_slot(unit)
+	self.rewield = nil
+	self.job = { kind = "weapon", slot = name, weapon = weapon, unit = target, shots = shots, fired = 0, total = 0, limit = limit,
+		keep = opts.keep == true, before = before, on_done = on_done, tries = 0, wait = 0 }
+	return true
+end
+
+-- The slot and the target of the weapon the bot is using (use_weapon), or false.
+function Bot:using_weapon()
+	if not (self.job and self.job.kind == "weapon") then return false end
+	return self.job.slot, self.job.unit
+end
+
+-- Stops a use_weapon. The weapon from before comes back, as when it ends.
+function Bot:cancel_weapon()
+	if not (self.job and self.job.kind == "weapon") then return false end
+	self.job.cancel = true
+	return true
+end
+
 -- Reloads by itself, as a player would: an empty magazine with a spare left, or an overheated laser with
 -- a radiator left. true by default; false leaves reloads to the orders (reload()).
 function Bot:auto_reload(on)
@@ -1335,7 +1854,7 @@ function Bot:remove()
 		self.task = nil
 		if type(task.on_done) == "function" then pcall(task.on_done, false, "cancelled") end
 	end
-	self.rewield = nil
+	self.rewield, self.leaving, self.ride, self.in_seat = nil, nil, nil, nil
 	for i, b in ipairs(M.list) do
 		if b == self then
 			table.remove(M.list, i)
@@ -1406,6 +1925,114 @@ local function think(b, unit, t, dt)
 	return here
 end
 
+-- What the seat the bot sits in does, worked out once per seat: whether its guns fire on the trigger
+-- (primary) or the second trigger (secondary), whether it steers wheels or tracks, and the units a line
+-- of fire from it passes through (the vehicle and every gun on it).
+local function seat_view(b, unit)
+	local v, index = vehicles.seat_of(unit)
+	if not v then
+		b.in_seat = nil
+		return nil
+	end
+	local s = b.in_seat
+	if s and s.vehicle == v and s.index == index then return s end
+	s = { vehicle = v, index = index, kind = vehicles.kind(v), parts = { [v] = true }, primary = false, secondary = false, drives = false }
+	for _, seat in ipairs(vehicles.seats(v)) do
+		for _, w in ipairs(seat.weapons) do s.parts[w.unit] = true end
+		if seat.index == index then
+			s.drives = seat.drives
+			for _, w in ipairs(seat.weapons) do
+				if w.trigger == "secondary" then s.secondary = true else s.primary = true end
+			end
+		end
+	end
+	s.armed = s.primary or s.secondary
+	s.steers = s.drives and (s.kind == "apc" or s.kind == "bike" or s.kind == "tank")
+	b.in_seat = s
+	return s
+end
+
+-- Driving wheels and tracks the way the orders walk (f.mx, f.my, a world direction): the angle from the
+-- vehicle's nose to that way sets the steering, as a pad's driver steers. The vehicle reads the sticks as
+-- they are on the pad, before the camera turns them, so these go to the sticks unturned (f.stick).
+local STEER_ANGLE = math.rad(45) -- the angle off the nose at which the steering is full
+
+local function steer(b, t, f)
+	local seat = b.in_seat
+	local wx, wy = f.mx, f.my
+	local speed = math.min(1, math.sqrt(wx * wx + wy * wy))
+	f.mx, f.my, f.ax, f.ay, f.stick = 0, 0, 0, 0, true
+	t.fire_button, t.throw = 0, 0
+	if speed <= 0.01 then return end
+	local fx, fy = forward_of(seat.vehicle)
+	if not fx then fx, fy = 0, 1 end
+	-- Above 0, the way to go is to the left of the nose.
+	local angle = math.atan2(fx * wy - fy * wx, fx * wx + fy * wy)
+	local turn = math.max(-1, math.min(1, angle / STEER_ANGLE))
+	local ahead = math.cos(angle)
+	if seat.kind == "tank" then
+		-- A track on each stick, left on the move stick and right on the aim stick: the same on both goes
+		-- straight, apart turns, and a way behind turns on the spot.
+		local go = speed * math.max(0, ahead)
+		f.my = math.max(-1, math.min(1, go - turn * speed))
+		f.ay = math.max(-1, math.min(1, go + turn * speed))
+	else
+		-- The trigger speeds up and the move stick's x steers, right for right. Wheels turn only while they
+		-- roll, so a way behind is a wide turn at half speed.
+		t.fire_button = speed * math.max(0.5, ahead)
+		f.mx = -turn
+	end
+end
+
+-- Getting out (leave_vehicle): interact pressed, again each LEAVE_GAP, until the bot is out.
+local function leave_step(b, unit, t, dt)
+	local l = b.leaving
+	if not vehicles.seat_of(unit) then
+		b.leaving = nil
+		return
+	end
+	l.time, l.wait = l.time + dt, l.wait - dt
+	if l.time > LEAVE_TIME then
+		b.leaving = nil
+		return
+	end
+	if l.wait <= 0 then
+		l.wait = LEAVE_GAP
+		press(b, "interact")
+		t.interact = true
+	end
+end
+
+-- Riding along (ride_along): into the leader's vehicle while a seat that doesn't steer is free, and out
+-- of the vehicle it rode in once the leader is out of it.
+local function ride_step(b, unit, dt)
+	local r = b.ride
+	r.wait = r.wait - dt
+	if r.wait > 0 then return end
+	r.wait = RIDE_EVERY
+	local follow = b.goals.follow
+	local leader = r.unit or (follow and follow.unit) or game.my_unit()
+	local theirs = alive(leader) and vehicles.seat_of(leader) or nil
+	local mine = vehicles.seat_of(unit)
+	if mine then
+		if mine == r.vehicle and theirs ~= mine and not b.leaving then b:leave_vehicle() end
+		return
+	end
+	if not theirs or b.task or b.job or is_downed(unit) or r.retry > M.clock then return end
+	local seat
+	for _, s in ipairs(vehicles.seats(theirs)) do
+		if s.free and not s.drives and not heading_to(theirs, s.index, b) then
+			seat = s.index
+			break
+		end
+	end
+	if not seat then return end
+	local ok = b:enter_vehicle(theirs, seat, function(done)
+		if not done then r.retry = M.clock + RIDE_RETRY end
+	end)
+	if ok then r.vehicle = theirs else r.retry = M.clock + RIDE_RETRY end
+end
+
 -- Hands each bot's character its input table, with this frame's vectors. The game's input component
 -- reads input_data when its player has focus. The table is built again from rest each frame: the
 -- orders' holds (fire, sprint), the presses still running, then the orders, then a stratagem call, a
@@ -1429,7 +2056,9 @@ local function drive(b, unit, dt)
 		end
 	end
 	t.is_active = true
+	local seat = seat_view(b, unit)
 	if b.orders.fire then t.fire_button = 1 end
+	if b.orders.fire2 and seat then t.throw = 1 end
 	if b.orders.sprint then t.sprint_button, t.sprint_pressed = 1, true end
 	for field, left in pairs(b.presses) do
 		if left > 0 then t[field] = true end
@@ -1439,6 +2068,7 @@ local function drive(b, unit, dt)
 		if b.throw_frames > 1 then t.throw = 1 end
 		b.throw_frames = b.throw_frames > 1 and b.throw_frames - 1 or nil
 	end
+	if b.ride then ride_step(b, unit, dt) end
 	local here = think(b, unit, t, dt)
 	reload_step(b, unit, t, dt)
 	-- A throw, the bot's own (throw) or an order's: fire held sends the grenade at once at the bot's feet,
@@ -1449,21 +2079,34 @@ local function drive(b, unit, dt)
 	local f = { mx = b.axes.move[1], my = b.axes.move[2], ax = b.axes.aim[1], ay = b.axes.aim[2] }
 	if b.job and b.job.kind == "grenade" then
 		grenade_step(b, unit, t, f, dt)
+	elseif b.job and b.job.kind == "weapon" then
+		weapon_step(b, unit, t, f, dt)
 	elseif b.job then
 		stratagem_step(b, unit, t, f, dt)
 	else
 		if b.task then task_step(b, unit, t, f, dt) end
+		if b.leaving then leave_step(b, unit, t, dt) end
 		if is_downed(unit) then
 			downed_step(b, unit, t, f)
 		elseif b.rewield and not b.task then
 			rewield_step(b, unit, dt)
+		else
+			keep_weapon(b, unit, dt)
 		end
 	end
-	f.mx, f.my = unstick(b, here, f.mx, f.my, dt)
+	if seat then
+		-- In a seat that steers, the orders' walking drives the vehicle.
+		if seat.steers then steer(b, t, f) end
+	else
+		f.mx, f.my = unstick(b, here, f.mx, f.my, dt)
+	end
 	for field in pairs(b.vectors) do t[field] = v3(0, 0, 0) end
-	local mx, my = to_stick(f.mx, f.my)
+	local mx, my, ax, ay = f.mx, f.my, f.ax, f.ay
+	if not f.stick then
+		mx, my = to_stick(mx, my)
+		ax, ay = to_stick(ax, ay)
+	end
 	t.move = v3(mx, my, 0)
-	local ax, ay = to_stick(f.ax, f.ay)
 	t.aim = v3(ax, ay, 0)
 	input.input_data = t
 	input.has_focus = true
@@ -1502,7 +2145,7 @@ function M.drive_all()
 		else
 			if b.job then finish(b, false, "no_avatar") end
 			if b.task then end_task(b, false, "no_avatar") end
-			b.rewield = nil
+			b.rewield, b.leaving, b.in_seat = nil, nil, nil
 			b.fight_target, b.fight_face = nil, nil
 		end
 	end

@@ -37,6 +37,7 @@ local COMMANDS = {
 	show_on_map = set("show"),
 	equipment = set("wielder wield"),
 	drone_station = set("set_force_dock"),
+	interactor = set("force_interaction"),
 }
 
 -- The state object and its name, in every game state once the game has booted.

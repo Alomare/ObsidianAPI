@@ -176,15 +176,22 @@ local function alive_enemy(unit)
 	return health and not health.is_dead and health or nil
 end
 
--- What the game knows about one enemy: { key, name, faction, boss, hitpoints, max_hitpoints, owned }.
--- The catalog fields are nil for a unit it doesn't list.
+-- What the game knows about one enemy: { key, name, faction, boss, hitpoints, max_hitpoints, owned,
+-- armor_min, armor_max, large }. armor_min and armor_max are the game's armor numbers for the enemy: a
+-- weapon's hit gets through by its power against them (api.gear.weapons_of lists a weapon's power).
+-- large is the game's own mark for its biggest enemies (the Tank, the Impaler, the IFV among them). The
+-- catalog fields are nil for a unit it doesn't list.
 function M.info(unit)
 	local health = alive_enemy(unit)
 	if not health then return nil end
 	local path = game.global("Unit").get_data(unit, "unit_path")
 	local enemy = path and catalog.enemy(path) or {}
+	local ls = game.global("LoadoutSettings")
+	local ok, settings = pcall(function() return ls.get_upgraded_settings(unit) end)
+	local hi = ok and type(settings) == "table" and type(settings.health_info) == "table" and settings.health_info or {}
 	return { key = enemy.key, name = enemy.name, faction = enemy.faction, boss = enemy.boss,
-		hitpoints = health.hitpoints, max_hitpoints = health.max_hitpoints, owned = aux().owned(unit) }
+		hitpoints = health.hitpoints, max_hitpoints = health.max_hitpoints, owned = aux().owned(unit),
+		armor_min = tonumber(health.armor_min) or hi.armor_min, armor_max = tonumber(health.armor_max) or hi.armor_max, large = hi.large == true }
 end
 
 -- The closest living enemy to a position, or to the player, and how far it is.

@@ -335,8 +335,9 @@ function M.tick()
 	end
 end
 
-function M.refill_backpack()
-	local unit, why = my_unit()
+-- The backpack's uses back to full. unit: a player on this machine, the main one by default.
+function M.refill_backpack(unit)
+	local unit, why = my_unit(unit)
 	if not unit then return false, why end
 	local inv = inventory(unit)
 	local pack = inv and inv.backpack

@@ -559,6 +559,10 @@ Drones dock while their player sits in a vehicle, and go when the player dies.
 | `driving()` | `true` while they drive it |
 | `driven()` | The vehicle they're driving, once it's theirs (a moment after getting in) |
 | `repair()`, `refill()` | Repairs it, or refills its weapons |
+| `near(pos, radius)`, `nearest(pos, radius)` | Vehicles, exosuits and mannable turrets within `radius` (10 metres) of a position or the player, nearest first, or the nearest one |
+| `kind(v)` | `"exosuit"`, `"apc"`, `"bike"`, `"tank"` or `"turret"` |
+| `seats(v)` | The seats: `{ index, name, drives, unit, free, weapons }` each, where `weapons` lists the guns that seat fires and the trigger each one is on |
+| `seat_of(unit)` | The vehicle a Helldiver sits in and the seat's index, or nil |
 
 The effects `vehicle_speed`, `vehicle_turn`, `vehicle_armor`, `vehicle_god` and `vehicle_rockets` reach the vehicle the player drives, and let go when they get out. A passenger's game can't change it.
 
@@ -1422,7 +1426,7 @@ Bots leave before a mission's results, so they never reach the end screens or an
 | `go_to(pos, distance)` | Walks to a position and stops within `distance` (1.5 metres). The order ends when it gets there |
 | `hold()` | Stays where it stands |
 | `aim_at(pos)` | Faces a position, while it has nothing to fight. `nil` lets it face where it walks |
-| `fight(radius)` | Aims at and shoots the nearest enemy within `radius` (25 metres) that a straight line from the bot reaches, and holds fire while a Helldiver stands in the line of fire. `fight(false)` stops |
+| `fight(radius, opts)` | Aims at and shoots the nearest enemy within `radius` (25 metres) that a straight line from the bot reaches, and holds fire while a Helldiver stands in the line of fire. `fight(false)` stops. `opts` is below, in [Weapons](#weapons) |
 | `fighting()` | The radius it fights in, or `false` |
 
 A new order to walk replaces the last one: `go_to` ends `follow`, and `hold` ends both. Orders return the bot, so they chain:
@@ -1464,7 +1468,7 @@ Bots help the squad the game's own ways, with the inputs a player uses:
 - **Getting up.** A downed bot lies still and holds interact until it's up, the way the keyboard's key counts presses. The game counts 30 presses (10 with the perk that shortens it), and lets a downed Helldiver up only while the body is on the screen. `bot:auto_get_up(false)` leaves it down for a teammate: it fights from the ground with what it holds, and lies still once a teammate stands close enough to help. A downed bot also lies still while another bot helps it up.
 - **Helping up.** `bot:revive(unit, on_done)` walks to a downed Helldiver, stands beside the body, turns to it and presses interact once the game has picked the body as the thing to use, never an item lying by it. With no unit, it picks the nearest downed one within 30 meters that no other bot is helping.
 - **Healing.** `bot:heal_target(unit, on_done)` walks within range (12 meters, 18 upgraded) with the weapon it holds, takes the REP-80 (`equipment/wep_repairtool_01`) out of the bot's slots, faces the target and holds fire until they're at full health, then takes back the weapon it held. With no unit, it picks the most hurt Helldiver within 30 meters that no other bot is healing. The beam does nothing to a downed Helldiver, so help them up first.
-- **On their own.** `bot:auto_revive(radius)` (15 meters) and `bot:auto_heal(radius)` (20 meters, under 80% health) start these by themselves between other orders, while the bot follows or fights. `false` stops either. Only one bot goes to each Helldiver: the free one nearest to them. A bot is free when it calls no stratagem, helps no one, isn't downed and isn't in a vehicle seat, carrying an objective, using something or extracting.
+- **On their own.** `bot:auto_revive(radius)` (15 meters) and `bot:auto_heal(radius)` (20 meters, under 80% health) start these by themselves between other orders, while the bot follows or fights. `false` stops either. `auto_heal(radius, { below = 0.5 })` starts only under half health, and `retry` (both calls, 5 seconds) is how long a bot waits before it tries again someone it failed to help. Only one bot goes to each Helldiver: the free one nearest to them. A bot is free when it calls no stratagem, helps no one, isn't downed and isn't in a vehicle seat, carrying an objective, using something or extracting.
 
 Both answer `true` once started, or `false` and a reason, and `on_done(ok, reason)` hears how it ended. With no unit and another bot already on the way to everyone who needs it, the reason is `"already_helped"`. While one runs, the bot's other orders wait, though a bot that fights shoots back on the way at enemies within 10 meters, and `bot:stop_helping()` ends it. A bot changes weapons only while it stands calm (not downed, knocked down, throwing or in another animation), since a weapon taken out in the middle of one leaves the body in a pose with no animation. A bot wearing the heal drone's backpack (`equipment/equipment_drone_heal_backpack_01`) heals whoever stands within 6 meters of the drone with no order at all.
 
@@ -1473,6 +1477,56 @@ Both answer `true` once started, or `false` and a reason, and `on_done(ok, reaso
 `bot:throw_at(pos, on_done)` throws a grenade at a point the way a player does: the bot turns to it, holds the throw until the charge matches the distance, and lets go. It answers `false, "no_grenades"` with none left, and `on_done(ok, reason)` hears how it went. `bot:throw()` is the plain button: a short throw ahead. Either way the bot lets go of the trigger while it throws, since fire held during a throw sends the grenade at once at the bot's feet.
 
 Bots reload by themselves as a player would: an empty magazine with a spare one left, or a laser such as the Sickle at full heat with a radiator left. The trigger is let go for a moment so the reload goes through. `bot:auto_reload(false)` turns that off, and `bot:reload()` presses the button.
+
+### Weapons
+
+`bot:wield(slot)` takes out the weapon in a slot: `"primary"`, `"sidearm"` or `"support"` (or the game's `"primary_weapon"` and so on). It comes out once the bot stands calm, and `bot:wielding()` answers the slot of the weapon in hand. `bot:switch()` taps the pad's switch button, so the primary and the support weapon take turns.
+
+`fight` takes options:
+
+- `weapon`: the slot it fights with. The bot takes it out and comes back to it after a heal or anything else it takes out.
+- `only`: a function given an enemy unit, true for the enemies to shoot. The rest are left alone. An error in it picks none, and goes in the log once.
+- `secondary`: `true` in a vehicle seat to fire the seat's second gun as well (below).
+
+`bot:use_weapon(slot, target, opts, on_done)` takes out one weapon, fires it at one unit and takes back the weapon from before: an EAT or a recoilless rifle for a Tank while `fight` keeps to the rifle. The bot stands still, faces the target and fires only along a clear line with no Helldiver in the way, and reloads as it would by itself. `opts.shots` is how many shots before it's done (1), `opts.time` the seconds before it gives up (10), and `opts.keep = true` keeps the weapon out afterwards. `on_done(ok, reason)` hears `true` and `"shots"`, `"killed"` or `"spent"` (the EAT leaves the slot once fired), or `false` and why. `bot:using_weapon()` answers the slot and target, and `bot:cancel_weapon()` stops it.
+
+When to fire is the mod's to decide. The API gives what it needs: `api.enemies.info(unit)` has the enemy's `armor_min`, `armor_max` and `large` (the game's own mark for the biggest enemies), `bot:sees(unit)` says whether a straight line from the bot reaches it, and `bot:enemies_in_sight(radius, only)` lists the enemies it sees, nearest first. Each enemy costs a ray, so look every second or so rather than every frame.
+
+```lua
+-- The EAT for anything large, at most every 40 seconds; the rifle for the rest.
+alpha:fight(25, { weapon = "primary" })
+local wait = 0
+obsidian.on_frame(function()
+  wait = wait - (rawget(_G, "ENGINE_DT") or 0.016)
+  if wait > 0 or alpha:using_weapon() then return end
+  wait = 1   -- look once a second
+  local big = alpha:enemies_in_sight(30, function(e) return (api.enemies.info(e) or {}).large end)[1]
+  if big and alpha:use_weapon("support", big) then wait = 40 end
+end)
+```
+
+A semi-automatic weapon fires once per trigger pull, so a fighting bot pulls and lets go. A launcher with an assisted reload, such as the recoilless rifle, reloads by itself only while the bot wears the backpack it needs; otherwise the reload is a teammate's. `bot:refill_backpack()` fills that backpack.
+
+### Vehicles
+
+`bot:enter_vehicle(vehicle, seat, on_done)` walks to a seat's door and gets in as a player does. `vehicle` comes from `api.vehicles.near` or `nearest`. With no `seat`, the bot takes the first free seat no other bot is on the way to, a seat that doesn't steer before the one that does. It answers `true` once started, or `false` and `"no_avatar"`, `"busy"`, `"downed"`, `"seated"`, `"no_vehicle"`, `"no_seat"` or `"taken"`. `on_done(ok, reason)` hears `true` once seated, or `false` and `"taken"`, `"destroyed"`, `"refused"`, `"timeout"` and the like. `bot:boarding()` answers the vehicle and seat it's on the way to, `bot:seat()` the ones it sits in, and `bot:leave_vehicle()` gets it out.
+
+`bot:ride_along(true)` gets the bot into the vehicle of the Helldiver it follows (the player when it follows no one) while a seat that doesn't steer is free, and out again once they're out. Pass a unit to ride along with someone else, and `false` to stop.
+
+In a seat, the orders work the seat's controls:
+
+- `fight` aims the seat's gun and fires it. A seat with no gun fights nothing. `fight(25, { secondary = true })` also fires the second gun: the tank's machine gun, an exosuit's left arm or the first exosuit's grenades. `bot:fire_secondary(on)` holds that trigger by hand.
+- In the seat that steers, `go_to` and `follow` drive: the APC and the bike speed up on the trigger and steer on the stick, the tank drives a track on each stick.
+
+```lua
+-- Into the exosuit the player clicked, then fight with both arms.
+local mech = api.vehicles.nearest(api.world.cursor(), 4)
+if mech then
+  alpha:enter_vehicle(mech, nil, function(ok)
+    if ok then alpha:fight(30, { secondary = true }) end
+  end)
+end
+```
 
 ### Picking things up
 
@@ -1793,15 +1847,17 @@ Bots: Helldivers this machine plays. A bot is a local co-op player on a pad nobo
 - `bot:melee()`
 - `bot:interact()`
 - `bot:throw()`: A grenade: the throw button is held a moment and let go, a short throw ahead. throw_at aims one.
-- `bot:switch()`: The next weapon, as the pad's switch button does.
+- `bot:switch()`: The pad's switch button tapped: the primary weapon and the support weapon take turns, and the sidearm goes back to the primary. wield(slot) takes out a chosen one. The game's input reads a press with no release within 0.2 seconds as the button held, which takes out the sidearm, and from the sidearm the support weapon (InputComponent.update_masters, "toggle_sidearm"): a press alone swaps between those two without end. The press and the release go in the same frame, which the game reads as a tap ("toggle_weapon").
 - `bot:follow(unit, distance)`: Keep near a unit, a player's by default: walk to it when further than distance (6 metres).
 - `bot:fighting()`: The radius it fights in, or false.
-- `bot:fight(radius)`: Aim at and shoot the nearest enemy within radius (25 metres), each frame. false stops.
+- `bot:fight(radius, opts)`: Aim at and shoot the nearest enemy within radius (25 metres), each frame. false stops. opts, all optional: weapon, a slot ("primary", "sidearm", "support" or the game's "primary_weapon" and so on) the bot takes out and fights with, coming back to it after anything else it takes out; only, a function given an enemy unit that answers true for the enemies to shoot (the rest are left alone); secondary, true to fire a vehicle seat's second weapon along with the first (the tank's machine gun, an exosuit's left arm or grenades).
+- `bot:fire_secondary(on)`: In a vehicle seat, holds the second trigger until fire_secondary(false): the tank's machine gun, an exosuit's left arm, the first exosuit's grenades. On foot that button throws a grenade, so it does nothing there.
 - `bot:give_weapon(slot, path, upgrade)`
 - `bot:give_backpack(path, upgrade)`
 - `bot:give_perk(name)`
 - `bot:remove_perk()`
 - `bot:refill()`
+- `bot:refill_backpack()`: The backpack's uses back to full, as api.gear.refill_backpack: the recoilless rifle's rockets, for one.
 - `bot:give_stratagem(name)`
 - `bot:call(name, pos, delay)`: A real call-in of the bot's, at the bot's upgrade level, as api.stratagems.call.
 - `bot:heal()`: Up from downed and at full health, as api.player.heal.
@@ -1811,20 +1867,32 @@ Bots: Helldivers this machine plays. A bot is a local co-op player on a pad nobo
 - `bot:using_stratagem()`: The stratagem the bot is calling and the step it's at ("open", "code", "throw"), or false.
 - `bot:cancel_stratagem()`: Stops a call. A beacon already in hand goes back, as a melee press does for a player.
 - `bot:weapons()`: The weapons it holds, as api.gear.weapons_of.
-- `bot:revive(unit, on_done)`: Walks to a downed Helldiver and helps them up: the bot stands by the body, turns to it and presses interact. unit: the downed Helldiver, or nil for the nearest one within 30 metres that no other bot is helping. Answers true once started, or false and a reason: "no_avatar", "downed" (the bot is downed itself), "busy" (calling a stratagem), "no_one_downed" (no one downed near), "already_helped" (another bot is on the way to each one), "not_downed", "self". on_done(ok, reason) hears how it ended: true once they're up, or false and "dead", "downed", "no_help_up" (presses that did nothing), "timeout" or "cancelled". While it runs, the bot's other orders wait, but a bot that fights shoots back at enemies close by on the way.
-- `bot:heal_target(unit, on_done)`: Heals a hurt Helldiver with the REP-80, as a player does: the bot walks within range, takes the REP-80 out, faces the target and holds fire until they're at full health, then takes back the weapon it held. unit: the Helldiver, or nil for the most hurt one within 30 metres that no other bot is healing. Answers true once started, or false and a reason: "no_avatar", "downed", "busy", "no_heal_tool" (no REP-80 in the bot's slots), "no_one_hurt" (no one hurt near), "already_helped", "not_hurt", "self". on_done(ok, reason): true at full health, or false and "dead", "downed" (the target went down: help them up first), "no_ammo", "no_switch" (the REP-80 wouldn't come out), "timeout" or "cancelled".
+- `bot:wield(slot)`: Takes out the weapon in a slot: "primary_weapon", "sidearm_weapon" or "support_weapon", or "primary", "sidearm" or "support". The weapon comes out once the bot stands calm, within 10 seconds, and a help or a use_weapon that starts meanwhile comes back to it afterwards. Answers true, or false and a reason: "bad_slot", "no_avatar", "no_weapon" (nothing in that slot).
+- `bot:wielding()`: The slot of the weapon in the bot's hands ("primary_weapon", "sidearm_weapon" or "support_weapon"), or nil.
+- `bot:revive(unit, on_done)`: Walks to a downed Helldiver and helps them up: the bot stands by the body, turns to it and presses interact. unit: the downed Helldiver, or nil for the nearest one within 30 metres that no other bot is helping. Answers true once started, or false and a reason: "no_avatar", "downed" (the bot is downed itself), "seated" (in a vehicle seat), "busy" (calling a stratagem, throwing or using a weapon), "no_one_downed" (no one downed near), "already_helped" (another bot is on the way to each one), "not_downed", "self". on_done(ok, reason) hears how it ended: true once they're up, or false and "dead", "downed", "no_help_up" (presses that did nothing), "timeout" or "cancelled". While it runs, the bot's other orders wait, but a bot that fights shoots back at enemies close by on the way.
+- `bot:heal_target(unit, on_done)`: Heals a hurt Helldiver with the REP-80, as a player does: the bot walks within range, takes the REP-80 out, faces the target and holds fire until they're at full health, then takes back the weapon it held. unit: the Helldiver, or nil for the most hurt one within 30 metres that no other bot is healing. Answers true once started, or false and a reason: "no_avatar", "downed", "seated", "busy", "no_heal_tool" (no REP-80 in the bot's slots), "no_one_hurt" (no one hurt near), "already_helped", "not_hurt", "self". on_done(ok, reason): true at full health, or false and "dead", "downed" (the target went down: help them up first), "no_ammo", "no_switch" (the REP-80 wouldn't come out), "timeout" or "cancelled".
 - `bot:helping()`: What the bot is doing for someone: "revive" or "heal" and the unit, or false.
 - `bot:stop_helping()`
+- `bot:enter_vehicle(vehicle, seat, on_done)`: Gets into a vehicle seat as a player does: the bot walks to the seat's door, stands and gets in. vehicle: a unit from api.vehicles.near or api.vehicles.nearest. seat: the seat's index (api.vehicles.seats), or nil for the first free seat no other bot is on the way to, a seat that doesn't steer before the one that does. Answers true once started, or false and a reason: "no_avatar", "busy" (calling a stratagem, throwing or using a weapon), "downed", "seated" (in a seat already: leave_vehicle first), "no_vehicle" (a unit with no seats), "no_seat" (no such seat, or none free), "taken". on_done(ok, reason): true once seated, or false and "taken" (someone else got in), "destroyed", "no_vehicle", "refused" (the game wouldn't seat the bot), "downed", "timeout", "cancelled" or "no_avatar". While it runs the bot's other orders wait, but a bot that fights shoots back at enemies close by on the way.
+- `bot:leave_vehicle()`: Gets out of the seat it sits in, with the interact press a player gets out with, again each second until out (a seat lets no one out in its first moment). Answers true, or false and "no_avatar" or "not_seated".
+- `bot:seat()`: The vehicle the bot sits in and the seat's index, or nil.
+- `bot:boarding()`: The vehicle and seat the bot is on its way to (enter_vehicle), or false.
+- `bot:ride_along(on)`: Rides along with a Helldiver: when they sit in a vehicle with a seat free that doesn't steer, the bot gets in (enter_vehicle), and once they're out it gets out of that vehicle too. on: true for the unit the bot follows (the player when it follows no one), a unit, or false to stop (the default).
 - `bot:auto_get_up(on)`: Downed, the bot holds interact by itself until up: true by default. false leaves it down for a teammate, fighting from the ground with what it holds.
-- `bot:auto_revive(radius)`: Helps up downed Helldivers within radius (15 metres) by itself, between other orders, while it follows or fights. Of the bots that do, only the free one nearest to a downed Helldiver goes. false stops.
-- `bot:auto_heal(radius)`: Heals Helldivers under 80% health within radius (20 metres) by itself with the REP-80, when it carries one. One bot heals each Helldiver, the nearest free one. false stops.
+- `bot:auto_revive(radius, opts)`: Helps up downed Helldivers within radius (15 metres) by itself, between other orders, while it follows or fights. Of the bots that do, only the free one nearest to a downed Helldiver goes. false stops. opts.retry: seconds before it tries again someone it failed to help up (5).
+- `bot:auto_heal(radius, opts)`: Heals hurt Helldivers within radius (20 metres) by itself with the REP-80, when it carries one with ammo, then takes back the weapon it held. One bot heals each Helldiver, the nearest free one. false stops. opts.below: the share of health under which it starts on someone, from 0 to 1 (0.8, so under 80% health). opts.retry: seconds before it tries again someone a heal failed on (5).
 - `bot:auto_helping()`: The radius it helps in by itself: revive's and heal's, or false for each it doesn't.
 - `bot:downed()`: Whether the bot is downed now.
 - `bot:pickup_cooldown(seconds)`: After a bot picks up a weapon or a backpack, it picks up neither for this many seconds (20 by default). Taking one drops what the bot held in that slot right there, so a bot that keeps pressing interact would pick the dropped one up again, and so on. 0 or false lets it pick up at any time.
 - `bot:next_pickup()`: Seconds left before the bot can pick up a weapon or a backpack again: 0 when it can now.
+- `bot:sees(target)`: Whether a straight line from the bot's chest reaches the unit before anything else does: a wall, a rock, another body. In a seat, the bot's own vehicle and its guns don't count. True when the game gives no physics to ask.
+- `bot:enemies_in_sight(radius, only)`: Living enemies within radius (25 metres) that the bot sees, nearest first. only: a function given an enemy unit that answers true for the ones to count, or nil for all. Each enemy costs a ray, so a mod that looks every second or so rather than every frame spends little.
 - `bot:throw_at(pos, on_done)`: Throws a grenade at a point: the bot faces it, charges the throw to the distance and lets go, as a player does. Answers true once started, or false and a reason: "no_avatar", "no_position", "busy" (calling a stratagem or throwing already), "no_grenades". on_done(ok, reason): true once thrown, or false and "interrupted" (downed, knocked down, a vehicle seat), "cancelled" or "timeout". While it runs the bot stands and holds fire, and its other orders wait.
 - `bot:throwing()`: Whether the bot is throwing a grenade at a point (throw_at).
 - `bot:cancel_throw()`: Stops a throw_at that hasn't let go yet.
+- `bot:use_weapon(slot, target, opts, on_done)`: Takes out the weapon in a slot and fires it at a unit, then takes back the weapon the bot held before: an EAT or a recoilless rifle for one heavy enemy, while fight keeps to the rifle. slot: "primary", "sidearm", "support" or the game's "primary_weapon" and so on. opts, all optional: shots, how many shots before it's done (1; math.huge keeps firing until the target dies); time, seconds before it gives up (10); keep, true to keep the weapon out afterwards. on_done may come in place of opts. The bot stands still, faces the target and pulls the trigger only facing it, along a clear line and with no Helldiver in the way; it reloads as auto_reload does. Answers true once started, or false and a reason: "bad_slot", "no_avatar", "busy" (calling a stratagem, throwing, using a weapon, or helping someone: stop_helping first), "downed", "seated", "no_weapon" (nothing in that slot), "no_target". on_done(ok, reason): true and "shots" (all fired), "killed" (the target died) or "spent" (the weapon went from the slot after firing, as the EAT does), or false and "no_switch" (the weapon wouldn't come out), "no_ammo", "no_weapon", "timeout", "downed", "seated", "cancelled" or "no_avatar".
+- `bot:using_weapon()`: The slot and the target of the weapon the bot is using (use_weapon), or false.
+- `bot:cancel_weapon()`: Stops a use_weapon. The weapon from before comes back, as when it ends.
 - `bot:auto_reload(on)`: Reloads by itself, as a player would: an empty magazine with a spare left, or an overheated laser with a radiator left. true by default; false leaves reloads to the orders (reload()).
 - `bot:remove()`
 - `api.bots.all()`
@@ -1942,7 +2010,7 @@ Enemies: spawning them, stopping them, getting rid of them. The host runs the en
 - `api.enemies.kill_all()`
 - `api.enemies.kill_near(radius)`
 - `api.enemies.kill(unit)`
-- `api.enemies.info(unit)`: What the game knows about one enemy: { key, name, faction, boss, hitpoints, max_hitpoints, owned }. The catalog fields are nil for a unit it doesn't list.
+- `api.enemies.info(unit)`: What the game knows about one enemy: { key, name, faction, boss, hitpoints, max_hitpoints, owned, armor_min, armor_max, large }. armor_min and armor_max are the game's armor numbers for the enemy: a weapon's hit gets through by its power against them (api.gear.weapons_of lists a weapon's power). large is the game's own mark for its biggest enemies (the Tank, the Impaler, the IFV among them). The catalog fields are nil for a unit it doesn't list.
 - `api.enemies.nearest(pos)`: The closest living enemy to a position, or to the player, and how far it is.
 - `api.enemies.apply_status(unit, template)`: A hit of no power that carries the status, the way weapons do it, so it reaches the owner from any peer. The status command itself fails on an enemy this peer doesn't own.
 - `api.enemies.stun_near(radius)`
@@ -2014,7 +2082,7 @@ Weapons, ammunition, grenades, perks, backpacks and vehicles of the local player
 - `api.gear.add_drone(path, unit, upgrade)`
 - `drone:alive()`
 - `drone:remove()`: Only the station goes, as when the game drops a pack: a drone without its station takes itself away.
-- `api.gear.refill_backpack()`
+- `api.gear.refill_backpack(unit)`: The backpack's uses back to full. unit: a player on this machine, the main one by default.
 - `api.gear.current_vehicle`
 - `api.gear.repair_vehicle()`
 - `api.gear.refill_vehicle()`
@@ -2228,6 +2296,12 @@ The vehicle under the player. Driving makes a vehicle this peer's, a moment afte
 - `api.vehicles.driving()`
 - `api.vehicles.repair`
 - `api.vehicles.refill`
+- `api.vehicles.seat_settings(v, index)`: The settings of one seat of a vehicle (seat_info), or nil.
+- `api.vehicles.kind(v)`: What a vehicle is: "exosuit", "apc", "bike", "tank" (the tank destroyer, driven a track on each stick), or "turret" (a mannable turret). nil for a unit with no seats.
+- `api.vehicles.seats(v)`: The seats of a vehicle in the game's order: { index, name, drives, unit, free, weapons } each. drives is true for the seat that steers, unit is who sits there (nil for nobody), free is true for an empty seat the game lets someone into, and weapons lists the guns that seat fires: { unit, trigger } each, where trigger is "primary" (the fire button) or "secondary" (the second trigger: the tank's machine gun, an exosuit's left arm, the first exosuit's grenades). {} for a unit with no seats.
+- `api.vehicles.seat_of(unit)`: The vehicle a Helldiver sits in and the seat's index, or nil. unit: the player's when nil.
+- `api.vehicles.near(pos, radius)`: Vehicles, exosuits and mannable turrets within radius (10 metres) of a position, or of the player, nearest first. A destroyed one isn't listed.
+- `api.vehicles.nearest(pos, radius)`: The vehicle nearest to a position within radius (4 metres), and how far it is: the one under the cursor with api.world.cursor(). nil when there's none.
 
 ### api.world
 
