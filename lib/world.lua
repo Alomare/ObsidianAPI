@@ -509,15 +509,37 @@ end
 
 -- fn() with every damage command it queues for a Helldiver dropped: an explosion queues its hits as it
 -- goes off (ExplosionManager.do_explosion), before anything prices them.
-local function sparing_helldivers(fn)
+-- The explosion hands PhysicsWorld.overlap a function that queues those hits, and the engine answers an
+-- overlap on a later physics step, after the explosion's call has returned (the game's own SpawnManager
+-- waits for the answer). So the filter goes in front of the queue while fn runs, and again while each
+-- overlap answer fn handed out runs. Up to 1.34.0 it stood only while fn ran, and spared nobody.
+local function filtering(f, ...)
 	local aux = game.global("EntityAux")
 	local queue = aux.queue_command_interface
 	aux.queue_command_interface = function(unit, interface, name, ...)
 		if interface == "damageable" and name == "do_damage" and is_helldiver(unit) then return end
 		return queue(unit, interface, name, ...)
 	end
-	local ok, err = pcall(fn)
+	local r = { pcall(f, ...) }
 	aux.queue_command_interface = queue
+	if not r[1] then error(r[2], 0) end
+	return unpack(r, 2, table.maxn(r))
+end
+
+local function sparing_helldivers(fn)
+	local pw = game.global("PhysicsWorld")
+	local overlap = type(pw) == "table" and pw.overlap
+	if type(overlap) == "function" then
+		pw.overlap = function(world, answer, ...)
+			if type(answer) == "function" then
+				local inner = answer
+				answer = function(...) return filtering(inner, ...) end
+			end
+			return overlap(world, answer, ...)
+		end
+	end
+	local ok, err = pcall(filtering, fn)
+	if type(overlap) == "function" then pw.overlap = overlap end
 	if not ok then error(err, 0) end
 end
 

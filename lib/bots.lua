@@ -277,7 +277,7 @@ function Bot:dodge() press(self, "dodge_pressed") return self end
 function Bot:melee() press(self, "melee") return self end
 function Bot:interact() press(self, "interact") return self end
 
--- A grenade: the throw button is held a moment and let go.
+-- A grenade: the throw button is held a moment and let go, a short throw ahead. throw_at aims one.
 function Bot:throw()
 	self.throw_frames = 10
 	return self
@@ -414,7 +414,7 @@ end
 
 -- The stratagem the bot is calling and the step it's at ("open", "code", "throw"), or false.
 function Bot:using_stratagem()
-	if not self.job then return false end
+	if not self.job or self.job.kind == "grenade" then return false end
 	return self.job.name, self.job.phase
 end
 
@@ -1094,6 +1094,7 @@ local LOOK_EVERY = 0.25
 local LINE_CHECKS = 4      -- enemies tried for a clear line, nearest first
 local LINE_WIDTH = 1.1     -- metres either side of the line of fire where a Helldiver blocks it
 local RELOAD_GAP = 1       -- seconds between reloads it presses
+local RELOAD_HOLD = 0.3    -- seconds the trigger is let go around a reload it presses
 
 -- Whether a weapon's ray from the bot's chest reaches the enemy before anything else: the game's damage
 -- ray filter, the bot's own body skipped. True when the game gives no physics to ask.
@@ -1174,14 +1175,115 @@ local function fight_step(b, unit, here, t, dt)
 			if no_one_in_the_way(unit, here, p.x, p.y) then t.fire_button = 1 end
 		end
 	end
-	-- An empty magazine, the way a player reloads it.
+end
+
+-- Whether a weapon's state wants the reload a player would press: a magazine empty with a spare one
+-- left, or a laser overheated with a radiator left. A laser's heat runs from 0 to 1, and the game marks
+-- it reloadable only at full heat with a radiator in stock (BeamweaponComponent.update_masters); a
+-- firearm is always reloadable, and its rounds tell. An assisted reload is a teammate's to do.
+function M.wants_reload(ws)
+	if type(ws) ~= "table" or ws.is_reloading or ws.assisted_reload or ws.reloadable ~= true then return false end
+	if type(ws.heat) == "number" and ws.magazine_capacity == nil then return true end
+	return ws.rounds == 0 and (ws.num_mags or 0) > 0
+end
+
+-- Reloading by itself (auto_reload, on by default): with the trigger let go for a moment, so the reload
+-- isn't lost to a state that fires.
+local function reload_step(b, unit, t, dt)
 	b.reload_wait = (b.reload_wait or 0) - dt
-	local inv = game.master(unit, "inventory")
-	local ws = inv and weapon_state(inv.current_weapon)
-	if ws and ws.reloadable and not ws.assisted_reload and ws.rounds == 0 and (ws.num_mags or 0) > 0 and b.reload_wait <= 0 then
-		b.reload_wait = RELOAD_GAP
-		press(b, "reload_pressed")
+	if (b.reload_hold or 0) > 0 then
+		b.reload_hold = b.reload_hold - dt
+		t.fire_button = 0
 	end
+	if b.reloads == false or b.reload_wait > 0 then return end
+	local inv = game.master(unit, "inventory")
+	if M.wants_reload(inv and weapon_state(inv.current_weapon)) then
+		b.reload_wait, b.reload_hold = RELOAD_GAP, RELOAD_HOLD
+		press(b, "reload_pressed")
+		t.fire_button = 0
+	end
+end
+
+-- A grenade thrown at a point, as a player throws one (CharacterStateThrow): the bot faces the point,
+-- holds the throw button until the charge reaches the distance, and lets go. The trigger stays let go
+-- all along: fire held during a throw sends it at once with no charge, at the bot's feet, and keeps the
+-- state from ending after it.
+local GRENADE_TIME = 4
+
+local function grenade_step(b, unit, t, f, dt)
+	local job = b.job
+	job.time, job.total = job.time + dt, job.total + dt
+	local cs = game.master(unit, "character") or {}
+	local throwing = in_state(cs, "CharacterStateThrow", "CharacterStateDownedThrow")
+	t.fire_button, t.throw, t.melee, t.interact, t.interact_button = 0, 0, false, false, 0
+	f.mx, f.my = 0, 0
+	local here = game.global("Unit").world_position(unit, 0)
+	local dx, dy = job.pos.x - here.x, job.pos.y - here.y
+	f.ax, f.ay = direction({ x = dx, y = dy })
+	if job.cancel then return finish(b, false, "cancelled") end
+	if job.total > GRENADE_TIME then return finish(b, false, "timeout") end
+	if job.phase == "turn" then
+		if faces(unit, dx, dy, 0.97) or job.time > TURN_TIME then
+			job.phase, job.time = "hold", 0
+			job.charge = charge_for(math.sqrt(dx * dx + dy * dy))
+		end
+	elseif job.phase == "hold" then
+		if throwing then
+			if cs.has_thrown then
+				job.phase, job.time = "release", 0
+			elseif (cs.grenade_charge or 0) < job.charge then
+				t.throw = 1
+			else
+				job.phase, job.time = "release", 0
+			end
+		else
+			t.throw = 1
+			if job.time > OPEN_TIME then return finish(b, false, "interrupted") end
+		end
+	elseif job.phase == "release" then
+		if cs.throw_done or cs.has_thrown then job.thrown = true end
+		if not throwing then
+			if job.thrown then return finish(b, true) end
+			return finish(b, false, "interrupted")
+		end
+		if job.time > 1.5 then return finish(b, job.thrown == true, not job.thrown and "interrupted" or nil) end
+	end
+end
+
+-- Throws a grenade at a point: the bot faces it, charges the throw to the distance and lets go, as a
+-- player does. Answers true once started, or false and a reason: "no_avatar", "no_position", "busy"
+-- (calling a stratagem or throwing already), "no_grenades". on_done(ok, reason): true once thrown, or
+-- false and "interrupted" (downed, knocked down, a vehicle seat), "cancelled" or "timeout". While it
+-- runs the bot stands and holds fire, and its other orders wait.
+function Bot:throw_at(pos, on_done)
+	if self.job then return false, "busy" end
+	local unit = self:unit()
+	if not unit then return false, "no_avatar" end
+	pos = point(pos)
+	if not pos then return false, "no_position" end
+	local inv = game.master(unit, "inventory")
+	if not (inv and (inv.num_grenades or 0) > 0) then return false, "no_grenades" end
+	self.job = { kind = "grenade", pos = pos, on_done = on_done, phase = "turn", time = 0, total = 0 }
+	return true
+end
+
+-- Whether the bot is throwing a grenade at a point (throw_at).
+function Bot:throwing()
+	return self.job ~= nil and self.job.kind == "grenade"
+end
+
+-- Stops a throw_at that hasn't let go yet.
+function Bot:cancel_throw()
+	if not (self.job and self.job.kind == "grenade") then return false end
+	self.job.cancel = true
+	return true
+end
+
+-- Reloads by itself, as a player would: an empty magazine with a spare left, or an overheated laser with
+-- a radiator left. true by default; false leaves reloads to the orders (reload()).
+function Bot:auto_reload(on)
+	self.reloads = on ~= false
+	return self
 end
 
 -- Walking into a wall: with the stick held and the body nowhere near where it was a moment ago, the
@@ -1338,9 +1440,16 @@ local function drive(b, unit, dt)
 		b.throw_frames = b.throw_frames > 1 and b.throw_frames - 1 or nil
 	end
 	local here = think(b, unit, t, dt)
+	reload_step(b, unit, t, dt)
+	-- A throw, the bot's own (throw) or an order's: fire held sends the grenade at once at the bot's feet,
+	-- and keeps the throw state from ending after it.
+	local cs = game.master(unit, "character")
+	if b.throw_frames or (cs and in_state(cs, "CharacterStateThrow", "CharacterStateDownedThrow")) then t.fire_button = 0 end
 	-- This frame's sticks: the orders' own, which a call or a help writes over for this frame only.
 	local f = { mx = b.axes.move[1], my = b.axes.move[2], ax = b.axes.aim[1], ay = b.axes.aim[2] }
-	if b.job then
+	if b.job and b.job.kind == "grenade" then
+		grenade_step(b, unit, t, f, dt)
+	elseif b.job then
 		stratagem_step(b, unit, t, f, dt)
 	else
 		if b.task then task_step(b, unit, t, f, dt) end

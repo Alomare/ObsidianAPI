@@ -2,6 +2,13 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.35.0
+
+- New: `bot:throw_at(pos, on_done)` throws a grenade at a point as a player does: the bot faces it, charges the throw to the distance and lets go. `bot:throwing()` and `bot:cancel_throw()` go with it.
+- Changed: a bot lets go of the trigger while it throws a grenade. Fire held during a throw sent the grenade at once at the bot's feet, and kept a fighting bot stuck in the throw afterwards.
+- New: bots reload by themselves, an overheated laser's radiator included (the Sickle and the other heat weapons), with the trigger let go for a moment. `bot:auto_reload(false)` leaves reloads to `bot:reload()`.
+- Fixed: `api.world.blast` with `spare_players` spared nobody. The explosion's hits come in a moment after the call, and are now filtered then too.
+
 ## 1.34.0
 
 - Changed: no press or button of a bot outlasts the order, call or help that used it. A press of interact left held after a bot got up made the bot pick an item up, drop it and pick it up again without end, and broke into the get-up.
