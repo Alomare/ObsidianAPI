@@ -2,7 +2,7 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
-## 1.36.0
+## 1.36.1
 
 - New: `bot:wield(slot)` takes out the weapon in a chosen slot, and `bot:wielding()` answers the slot in hand. A bot that heals with the REP-80 takes back the weapon it held, with no swaps in between.
 - New: `bot:use_weapon(slot, target, opts, on_done)` takes out one weapon, fires it at one target and takes back the weapon from before: an EAT or a recoilless rifle for a heavy enemy while the bot fights with the rifle. `bot:using_weapon()` and `bot:cancel_weapon()` go with it.
