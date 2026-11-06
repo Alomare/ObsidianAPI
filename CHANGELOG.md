@@ -2,6 +2,10 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.36.2
+
+- Changed: the F6 key's label in the Keys tab reads **Open in-game menu**.
+
 ## 1.36.1
 
 - New: `bot:wield(slot)` takes out the weapon in a chosen slot, and `bot:wielding()` answers the slot in hand. A bot that heals with the REP-80 takes back the weapon it held, with no swaps in between.

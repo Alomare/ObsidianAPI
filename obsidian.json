@@ -1,7 +1,7 @@
 {
   "obsidian": 1,
   "id": "obsidian.api",
-  "version": "1.36.1",
+  "version": "1.36.2",
   "name": {
     "en": "Obsidian API",
     "pt-BR": "Obsidian API",
@@ -57,7 +57,7 @@
       "default": "f6",
       "pad": "pad_open",
       "label": {
-        "en": "Open in-game overlay menu",
+        "en": "Open in-game menu",
         "pt-BR": "Abrir o menu",
         "zh-CN": "打开菜单",
         "fr": "Ouvrir le menu",
