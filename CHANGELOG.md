@@ -2,7 +2,7 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
-## Next
+## 1.34.0
 
 - Changed: no press or button of a bot outlasts the order, call or help that used it. A press of interact left held after a bot got up made the bot pick an item up, drop it and pick it up again without end, and broke into the get-up.
 - Changed: a downed bot lies still instead of crawling where the orders lead, holds interact without extra presses, and waits while another bot comes to help it up. Left down for a teammate, it stops fighting from the ground once one stands close.
