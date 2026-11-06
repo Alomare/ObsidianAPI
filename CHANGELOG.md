@@ -2,6 +2,15 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.37.0
+
+- New: `bot:use(unit, opts, on_done)` uses a thing the way a player does: samples, ammo boxes, weapons and backpacks lying about, hellbombs, the first press on a terminal, things to carry, and a team reload on a teammate. `bot:using()` and `bot:cancel_use()` go with it.
+- New: `api.bots.usables(pos, radius, kinds)` lists the things around a point that a Helldiver can use.
+- New: `bot:carrying()` and `bot:drop()` for what the bot carries.
+- New: `bot:say(word)` plays a voice line: yes, no, stay, move or a taunt.
+- New: `bot:jump(dir, on_done)` jumps with a jump pack, and `bot:jumping()` says whether a jump is under way.
+- Changed: `bot:stop_helping()` ends a help up or a heal only.
+
 ## 1.36.2
 
 - Changed: the F6 key's label in the Keys tab reads **Open in-game menu**.
