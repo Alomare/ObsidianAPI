@@ -194,6 +194,67 @@ function M.info(unit)
 		armor_min = tonumber(health.armor_min) or hi.armor_min, armor_max = tonumber(health.armor_max) or hi.armor_max, large = hi.large == true }
 end
 
+local function plain(v)
+	return { x = v.x, y = v.y, z = v.z }
+end
+
+-- Where an enemy's aim line runs, as the game draws it (EnemyComponent.handle_shoot_event): from the
+-- shoot effect's position node, along the direction node, to what the line hits or the full length.
+local function aim_line(unit, info, st)
+	local units, quat = game.global("Unit"), game.global("Quaternion")
+	local effect = type(info.shoot_effect) == "table" and info.shoot_effect or {}
+	local function node(name)
+		if not name then return 0 end
+		local ok, i = pcall(units.node, unit, name)
+		return ok and i or 0
+	end
+	local rot = units.world_rotation(unit, node(effect.direction_node))
+	local offset = effect.ray_source_offset or (type(info.weapon_info) == "table" and info.weapon_info.ray_source_offset)
+	local from = plain(units.world_position(unit, node(effect.position_node)))
+	if offset then
+		local o = quat.rotate(rot, game.unbox(offset))
+		from.x, from.y, from.z = from.x + o.x, from.y + o.y, from.z + o.z
+	end
+	local hit = st.particle_end_position
+	if type(hit) == "table" and hit.x ~= nil then return from, plain(game.unbox(hit)) end
+	local f, length = quat.forward(rot), tonumber(effect.max_distance) or 100
+	return from, { x = from.x + f.x * length, y = from.y + f.y * length, z = from.z + f.z * length }
+end
+
+-- An enemy that holds fire a moment before a shot, while it holds it: the Hunter's beam (3
+-- seconds), the Cyborg IFV's laser sight, the Hulk's wind-up. On every machine, owner or not: the game
+-- runs the shot on each. Answers { time, from, to, effect } or nil (not about to shoot, dead, not an
+-- enemy). time: seconds until it fires. from and to ({ x, y, z }): where the aim line runs, ending at what
+-- it hits. effect: the line the game draws ("effects/illuminate_hunter_beam", the IFV's laser sight), nil
+-- for an enemy that draws none.
+function M.charging(unit)
+	if not alive_enemy(unit) then return nil end
+	local st = aux().state(unit, "enemy")
+	local shot = st and st.shoot_event
+	if type(shot) ~= "table" or shot.is_firing or shot.abort_event then return nil end
+	local ok, settings = pcall(function() return game.global("LoadoutSettings").get_upgraded_settings(unit) end)
+	local info = ok and type(settings) == "table" and settings.enemy_info
+	local events = type(info) == "table" and info.shoot_events
+	local index = tonumber(shot.current_event_index)
+	if type(events) ~= "table" or not index then return nil end
+	-- Each event lasts as long as the next one's time says. Only before the first shot counts.
+	for i = 1, index do
+		if not (type(events[i]) == "table" and events[i].disable_fire) then return nil end
+	end
+	local function time_of(i) return type(events[i]) == "table" and tonumber(events[i].time) or 0 end
+	local left = time_of(index + 1) - (tonumber(shot.current_event_timer) or 0)
+	local i = index + 1
+	while type(events[i]) == "table" and events[i].disable_fire do
+		left = left + time_of(i + 1)
+		i = i + 1
+	end
+	if type(events[i]) ~= "table" then return nil end
+	local ok2, from, to = pcall(aim_line, unit, info, st)
+	if not ok2 then return nil end
+	local effect = type(info.shoot_effect) == "table" and info.shoot_effect.particle or nil
+	return { time = math.max(left, 0), from = from, to = to, effect = effect }
+end
+
 -- The closest living enemy to a position, or to the player, and how far it is.
 function M.nearest(pos)
 	local units, v3 = game.global("Unit"), game.global("Vector3")

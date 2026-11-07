@@ -4,7 +4,13 @@ New, changed or removed capabilities, one line each, brief and direct. A release
 
 ## Next
 
+- New: `bot:hurts(target, slot)` and `api.gear.hurts(weapon, target)` answer the damage one hit does to a target after armor: square, glancing and on the weak spot, launchers included. An enemy the rifle gets 0 against is one for the anti-tank weapon.
+- New: `api.enemies.charging(unit)` reads an enemy about to shoot (the Hunter's beam, the Cyborg IFV's laser sight, the Hulk's wind-up): when it fires and where the aim line runs.
+- New: `bot:avoid_shots(true)` gets the bot out of that line, with a dive just before the shot. `bot:avoiding()` goes with it.
+- New: `fight`'s `secondary` takes `only` and `every`.
 - New: `bot:mech_friendly_fire(false)` keeps the mech a bot pilots from hurting Helldivers. Enemies still take the hits.
+- Changed: a bot in an exosuit fires the rockets one each second, and only while it faces the target. Before, it emptied the rack at once.
+- Changed: `bot:throw()` does nothing in a vehicle seat, where the button fires the vehicle's second weapon.
 - Fixed: bots stand still while session mods are off. Before, each one kept the last buttons and sticks it was given, and the game went on reading those every frame.
 
 ## 1.37.0

@@ -161,7 +161,7 @@ return {
 	player = guard(player, { "lives" }),
 	gear = guard(gear),
 	stratagems = guard(stratagems),
-	enemies = guard(enemies, { "available", "list", "count", "carried", "room", "info", "nearest", "near", "chain", "max_enemies", "waves" }),
+	enemies = guard(enemies, { "available", "list", "count", "carried", "room", "info", "charging", "nearest", "near", "chain", "max_enemies", "waves" }),
 	mission = guard(mission, { "objectives", "params" }),
 	progress = guard(progress, { "samples", "max_samples", "loadout", "upgrades", "upgrade_limit", "rank", "owned_cosmetics" }),
 	events = guard(events, { "on", "off" }),

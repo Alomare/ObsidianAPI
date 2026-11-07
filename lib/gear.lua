@@ -407,6 +407,82 @@ local TUNED = { "firearm", "beamweapon", "arcweapon", "flameweapon", "launcher" 
 local ANGLES = { spread = true, spread_min = true, spread_max = true }
 local GUARDED = { magazine_capacity = true }
 
+-- The armor numbers the game prices a hit with (HealthComponent.calculate_damage): the target's own, and
+-- the lowest of the body parts that have their own armor (a weak spot: the Bug Tank's is 45).
+local function armor_of(target)
+	local health = game.master(target, "health") or aux().state(target, "health")
+	if type(health) ~= "table" then return nil end
+	local lo, hi = tonumber(health.armor_min), tonumber(health.armor_max)
+	if not (lo and hi) then
+		local ok, s = pcall(function() return game.global("LoadoutSettings").get_upgraded_settings(target) end)
+		local info = ok and type(s) == "table" and s.health_info or {}
+		lo, hi = tonumber(info.armor_min) or 0, tonumber(info.armor_max) or 0
+	end
+	local weak = lo
+	for _, zone in ipairs(type(health.damage_zones) == "table" and health.damage_zones or {}) do
+		local z = tonumber(zone.armor_min)
+		if z and not zone.disabled and z < weak then weak = z end
+	end
+	return lo, hi, weak
+end
+
+-- What a hit of power costs past armor, by the attributes the game reads with it.
+local function through(power, armor, flags)
+	power = tonumber(power) or 0
+	if flags.armorignore or flags.ignore_armor then
+		armor = 0
+	elseif flags.armorpiercing then
+		armor = math.max(0, armor - 15)
+	end
+	return math.max(power - armor, 0)
+end
+
+-- The explosion a weapon's hit or shot sets off: the weapon's own (the EAT, the recoilless rifle) or
+-- the one of what it fires (rockets, launcher grenades).
+local function explosion_of(weapon, info)
+	local ok, s = pcall(function() return game.global("LoadoutSettings").get_upgraded_settings(weapon) end)
+	local ex = ok and type(s) == "table" and s.explosive_info
+	local shot = type(info.projectile) == "string" and info.projectile
+	if shot then
+		local manager = game.global("LuaSettingsManager")
+		local ok2, ps = pcall(function() return manager:get_settings_by_unit_path(shot) end)
+		ex = ok2 and type(ps) == "table" and ps.explosive_info or ex
+	end
+	if type(ex) ~= "table" then return nil end
+	return math.max(tonumber(ex.center_power) or 0, tonumber(ex.blast_power) or 0), ex
+end
+
+-- The damage one hit of a weapon does to a target after armor, as the game works it out: square (the hit
+-- meets armor_min), glancing (armor_max) and on the target's weak spot (the lowest armor, from the body
+-- parts with armor of their own). 0 means the weapon can't hurt it there. A gun's bullet or pellet with
+-- the weapon's armor piercing; a weapon that explodes adds the blast at the center, which always lands square; a
+-- launcher counts what it fires. A beam or a flamethrower answers per second. Critical hits don't count.
+-- weapon: a weapon unit (api.gear.weapons_of). Answers the three numbers, or nil and "no_weapon" or
+-- "no_target" (a unit with no health).
+function M.hurts(weapon, target)
+	if not alive(weapon) then return nil, "no_weapon" end
+	local info, component
+	for _, name in ipairs(TUNED) do
+		local ctx = game.masters(name)[weapon] or game.slaves(name)[weapon]
+		if ctx then
+			info, component = ctx.state and ctx.state.weapon_info, name
+			break
+		end
+	end
+	if type(info) ~= "table" then return nil, "no_weapon" end
+	if not alive(target) then return nil, "no_target" end
+	local lo, hi, weak = armor_of(target)
+	if not lo then return nil, "no_target" end
+	local flags = type(info.attributes) == "table" and info.attributes or {}
+	local blast, ex = explosion_of(weapon, info)
+	local function at(armor)
+		local direct = component == "launcher" and 0 or through(info.power, armor, flags)
+		local boom = blast and through(blast, math.min(armor, lo), ex) or 0
+		return direct + boom
+	end
+	return at(lo), at(hi), at(weak)
+end
+
 -- The weapons a player's unit holds: { unit, component, slot, info }, where slot is primary_weapon,
 -- sidearm_weapon or support_weapon, and info the weapon's settings before any tuning. owner: nil for
 -- the main player.

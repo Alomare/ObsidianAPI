@@ -1486,24 +1486,35 @@ Bots reload by themselves as a player would: an empty magazine with a spare one 
 
 - `weapon`: the slot it fights with. The bot takes it out and comes back to it after a heal or anything else it takes out.
 - `only`: a function given an enemy unit, true for the enemies to shoot. The rest are left alone. An error in it picks none, and goes in the log once.
-- `secondary`: `true` in a vehicle seat to fire the seat's second gun as well (below).
+- `secondary`: `true` in a vehicle seat to fire the seat's second weapon as well, or a table that sets `only` and `every` for that weapon (below).
 
 `bot:use_weapon(slot, target, opts, on_done)` takes out one weapon, fires it at one unit and takes back the weapon from before: an EAT or a recoilless rifle for a Tank while `fight` keeps to the rifle. The bot stands still, faces the target and fires only along a clear line with no Helldiver in the way, and reloads as it would by itself. `opts.shots` is how many shots before it's done (1), `opts.time` the seconds before it gives up (10), and `opts.keep = true` keeps the weapon out afterwards. `on_done(ok, reason)` hears `true` and `"shots"`, `"killed"` or `"spent"` (the EAT leaves the slot once fired), or `false` and why. `bot:using_weapon()` answers the slot and target, and `bot:cancel_weapon()` stops it.
 
-When to fire is the mod's to decide. The API gives what it needs: `api.enemies.info(unit)` has the enemy's `armor_min`, `armor_max` and `large` (the game's own mark for the biggest enemies), `bot:sees(unit)` says whether a straight line from the bot reaches it, and `bot:enemies_in_sight(radius, only)` lists the enemies it sees, nearest first. Each enemy costs a ray, so look every second or so rather than every frame.
+When to fire is the mod's to decide. The API gives what it needs:
+- `bot:hurts(target, slot)` answers the damage one hit of that slot's weapon does to the target after armor.
+- `bot:sees(unit)` says whether a straight line from the bot reaches it.
+- `bot:enemies_in_sight(radius, only)` lists the enemies it sees, nearest first. Each enemy costs a ray, so look every second or so rather than every frame.
+
+Armor and anti-tank are two sides of one sum. Every hit costs the shot's power minus the armor where it lands: `armor_min` for a square hit, up to `armor_max` for a glancing one, and armor piercing takes 15 off. Some enemies have a part with separate armor, such as the Bug Tank's weak spot (45 against a body of 1000 to 1500). So an anti-tank target is one the bot's gun does nothing to. `bot:hurts` answers three numbers, each 0 where the weapon can't get through: square, glancing and on the weak spot. For a weapon that explodes, it adds the blast, and for a launcher it counts the rocket. `api.gear.hurts(weapon, target)` does the same for any weapon unit. `api.enemies.info(unit)` still has `armor_min`, `armor_max` and `large`, but `large` is the game's size mark: the bike has it, and it says nothing about armor.
 
 ```lua
--- The EAT for anything large, at most every 40 seconds; the rifle for the rest.
-alpha:fight(25, { weapon = "primary" })
+-- The rifle for what it can hurt; the EAT for what it can't, once each 40 seconds at most.
+alpha:fight(25, { weapon = "primary", only = function(e) return (alpha:hurts(e, "primary") or 0) > 0 end })
 local wait = 0
 obsidian.on_frame(function()
   wait = wait - (rawget(_G, "ENGINE_DT") or 0.016)
   if wait > 0 or alpha:using_weapon() then return end
   wait = 1   -- look once a second
-  local big = alpha:enemies_in_sight(30, function(e) return (api.enemies.info(e) or {}).large end)[1]
-  if big and alpha:use_weapon("support", big) then wait = 40 end
+  local heavy = alpha:enemies_in_sight(30, function(e) return alpha:hurts(e, "primary") == 0 end)[1]
+  if heavy and alpha:use_weapon("support", heavy) then wait = 40 end
 end)
 ```
+
+### Getting out of a shot
+
+`api.enemies.charging(unit)` answers an enemy that holds fire before a shot, while it holds it: the Hunter's beam (3 seconds), the Cyborg IFV's laser sight, the Hulk's wind-up. It gives `{ time, from, to, effect }`: the seconds until it fires, where the aim line runs (ending at what it hits), and the line the game draws. It works on every machine, whoever runs the enemy.
+
+`bot:avoid_shots(true, opts)` uses it: while a line runs within `opts.width` metres of the bot (2), the bot walks straight out of it to the side it's on, and dives just before the shot if it's still in the line. It looks at enemies within `opts.radius` metres (40). `opts.dodge = false` walks out only, and `bot:avoiding()` says whether it's getting out of one now. It waits while the bot sits in a vehicle, is downed, calls a stratagem or throws.
 
 A semi-automatic weapon fires once per trigger pull, so a fighting bot pulls and lets go. A launcher with an assisted reload, such as the recoilless rifle, reloads by itself only while the bot wears the backpack it needs; otherwise the reload is a teammate's. `bot:refill_backpack()` fills that backpack.
 
@@ -1515,17 +1526,20 @@ A semi-automatic weapon fires once per trigger pull, so a fighting bot pulls and
 
 In a seat, the orders work the seat's controls:
 
-- `fight` aims the seat's gun and fires it. A seat with no gun fights nothing. `fight(25, { secondary = true })` also fires the second gun: the tank's machine gun, an exosuit's left arm or the first exosuit's grenades. `bot:fire_secondary(on)` holds that trigger by hand.
+- `fight` aims the seat's gun and fires it. A seat with no gun fights nothing. `fight(25, { secondary = true })` also fires the second weapon: the tank's machine gun or the first exosuit's rockets. The rockets leave from the exosuit's front, so they go only while it faces the target, one each second. `secondary` as a table sets that: `only` picks the enemies the second weapon is for, and `every` the seconds between shots (0 holds the trigger). `bot:fire_secondary(on)` holds that trigger by hand.
+- The throw button is the second trigger in a seat, so `bot:throw()` does nothing there.
 - In the seat that steers, `go_to` and `follow` drive: the APC and the bike speed up on the trigger and steer on the stick, the tank drives a track on each stick.
 
 `bot:mech_friendly_fire(false)` keeps the mech a bot pilots from hurting Helldivers: its shots cost players and other bots no health, and enemies take them as before. Shells still in the air count for 2 seconds after the bot gets out. It works while session mods run, and only on health: a knockdown or a status effect from a shot isn't held back.
 
 ```lua
--- Into the exosuit the player clicked, then fight with both arms.
+-- Into the exosuit the player clicked: the gun for what it can hurt, rockets for the rest, one each 2 seconds.
 local mech = api.vehicles.nearest(api.world.cursor(), 4)
 if mech then
   alpha:enter_vehicle(mech, nil, function(ok)
-    if ok then alpha:fight(30, { secondary = true }) end
+    if not ok then return end
+    local function soft(e) return (api.enemies.info(e) or { armor_min = 0 }).armor_min < 100 end
+    alpha:fight(30, { only = soft, secondary = { every = 2, only = function(e) return not soft(e) end } })
   end)
 end
 ```
@@ -1873,11 +1887,11 @@ Bots: Helldivers this machine plays. A bot is a local co-op player on a pad nobo
 - `bot:dodge()`
 - `bot:melee()`
 - `bot:interact()`
-- `bot:throw()`: A grenade: the throw button is held a moment and let go, a short throw ahead. throw_at aims one.
+- `bot:throw()`: A grenade: the throw button is held a moment and let go, a short throw ahead. throw_at aims one. In a vehicle seat it does nothing: that button fires the vehicle's second weapon there.
 - `bot:switch()`: The pad's switch button tapped: the primary weapon and the support weapon take turns, and the sidearm goes back to the primary. wield(slot) takes out a chosen one. The game's input reads a press with no release within 0.2 seconds as the button held, which takes out the sidearm, and from the sidearm the support weapon (InputComponent.update_masters, "toggle_sidearm"): a press alone swaps between those two without end. The press and the release go in the same frame, which the game reads as a tap ("toggle_weapon").
 - `bot:follow(unit, distance)`: Keep near a unit, a player's by default: walk to it when further than distance (6 metres).
 - `bot:fighting()`: The radius it fights in, or false.
-- `bot:fight(radius, opts)`: Aim at and shoot the nearest enemy within radius (25 metres), each frame. false stops. opts, all optional: weapon, a slot ("primary", "sidearm", "support" or the game's "primary_weapon" and so on) the bot takes out and fights with, coming back to it after anything else it takes out; only, a function given an enemy unit that answers true for the enemies to shoot (the rest are left alone); secondary, true to fire a vehicle seat's second weapon along with the first (the tank's machine gun, an exosuit's left arm or grenades).
+- `bot:fight(radius, opts)`: Aim at and shoot the nearest enemy within radius (25 metres), each frame. false stops. opts, all optional: weapon, a slot ("primary", "sidearm", "support" or the game's "primary_weapon" and so on) the bot takes out and fights with, coming back to it after anything else it takes out; only, a function given an enemy unit that answers true for the enemies to shoot (the rest are left alone); secondary, true or a table to fire a vehicle seat's second weapon along with the first (the tank's machine gun, the first exosuit's rockets). The rockets go only while the exosuit faces the target. As a table: secondary.only, a function given an enemy unit that answers true for the enemies the second weapon is for (the vehicle then also turns to them when only leaves them out); secondary.every, the seconds between shots, one press each: 1 for the exosuit's rockets by default, held for the rest.
 - `bot:fire_secondary(on)`: In a vehicle seat, holds the second trigger until fire_secondary(false): the tank's machine gun, an exosuit's left arm, the first exosuit's grenades. On foot that button throws a grenade, so it does nothing there.
 - `bot:give_weapon(slot, path, upgrade)`
 - `bot:give_backpack(path, upgrade)`
@@ -1894,6 +1908,7 @@ Bots: Helldivers this machine plays. A bot is a local co-op player on a pad nobo
 - `bot:using_stratagem()`: The stratagem the bot is calling and the step it's at ("open", "code", "throw"), or false.
 - `bot:cancel_stratagem()`: Stops a call. A beacon already in hand goes back, as a melee press does for a player.
 - `bot:weapons()`: The weapons it holds, as api.gear.weapons_of.
+- `bot:hurts(target, slot)`: The damage one hit of the weapon in a slot does to a target after armor, as api.gear.hurts answers it: square, glancing and on the target's weak spot, 0 where it can't hurt it. slot: as wield takes it, or nil for the weapon in hand. An enemy the rifle answers 0 for is one for the anti-tank weapon. Answers the three numbers, or nil and "bad_slot", "no_avatar", "no_weapon" or "no_target".
 - `bot:wield(slot)`: Takes out the weapon in a slot: "primary_weapon", "sidearm_weapon" or "support_weapon", or "primary", "sidearm" or "support". The weapon comes out once the bot stands calm, within 10 seconds, and a help or a use_weapon that starts meanwhile comes back to it afterwards. Answers true, or false and a reason: "bad_slot", "no_avatar", "no_weapon" (nothing in that slot).
 - `bot:wielding()`: The slot of the weapon in the bot's hands ("primary_weapon", "sidearm_weapon" or "support_weapon"), or nil.
 - `bot:revive(unit, on_done)`: Walks to a downed Helldiver and helps them up: the bot stands by the body, turns to it and presses interact. unit: the downed Helldiver, or nil for the nearest one within 30 metres that no other bot is helping. Answers true once started, or false and a reason: "no_avatar", "downed" (the bot is downed itself), "seated" (in a vehicle seat), "busy" (calling a stratagem, throwing or using a weapon), "no_one_downed" (no one downed near), "already_helped" (another bot is on the way to each one), "not_downed", "self". on_done(ok, reason) hears how it ended: true once they're up, or false and "dead", "downed", "no_help_up" (presses that did nothing), "timeout" or "cancelled". While it runs, the bot's other orders wait, but a bot that fights shoots back at enemies close by on the way.
@@ -1906,6 +1921,8 @@ Bots: Helldivers this machine plays. A bot is a local co-op player on a pad nobo
 - `bot:boarding()`: The vehicle and seat the bot is on its way to (enter_vehicle), or false.
 - `bot:ride_along(on)`: Rides along with a Helldiver: when they sit in a vehicle with a seat free that doesn't steer, the bot gets in (enter_vehicle), and once they're out it gets out of that vehicle too. on: true for the unit the bot follows (the player when it follows no one), a unit, or false to stop (the default).
 - `bot:mech_friendly_fire(on)`: Hits from the mech the bot pilots cost Helldivers no health while on is false, and for 2 seconds after it gets out, for a shell still in the air. Every Helldiver counts, other players and bots alike, on any machine: the game takes the lower of what the bot's machine and theirs work out. Enemies take the hits as before. true, the game's own way, is the default.
+- `bot:avoid_shots(on, opts)`: Gets out of the line of an enemy about to shoot (api.enemies.charging: the Hunter's beam, the Cyborg IFV's laser sight, the Hulk's wind-up): while the line runs within opts.width metres of the bot (2), it walks straight out to the side it's on, and dives just before the shot if still in it. It looks at enemies within opts.radius metres (40). opts.dodge: false to walk out only. Not in a seat, while downed or while calling a stratagem or throwing. false stops (the default).
+- `bot:avoiding()`: Whether the bot is getting out of a line now: true and the enemy, or false.
 - `bot:auto_get_up(on)`: Downed, the bot holds interact by itself until up: true by default. false leaves it down for a teammate, fighting from the ground with what it holds.
 - `bot:auto_revive(radius, opts)`: Helps up downed Helldivers within radius (15 metres) by itself, between other orders, while it follows or fights. Of the bots that do, only the free one nearest to a downed Helldiver goes. false stops. opts.retry: seconds before it tries again someone it failed to help up (5).
 - `bot:auto_heal(radius, opts)`: Heals hurt Helldivers within radius (20 metres) by itself with the REP-80, when it carries one with ammo, then takes back the weapon it held. One bot heals each Helldiver, the nearest free one. false stops. opts.below: the share of health under which it starts on someone, from 0 to 1 (0.8, so under 80% health). opts.retry: seconds before it tries again someone a heal failed on (5).
@@ -2048,6 +2065,7 @@ Enemies: spawning them, stopping them, getting rid of them. The host runs the en
 - `api.enemies.kill_near(radius)`
 - `api.enemies.kill(unit)`
 - `api.enemies.info(unit)`: What the game knows about one enemy: { key, name, faction, boss, hitpoints, max_hitpoints, owned, armor_min, armor_max, large }. armor_min and armor_max are the game's armor numbers for the enemy: a weapon's hit gets through by its power against them (api.gear.weapons_of lists a weapon's power). large is the game's own mark for its biggest enemies (the Tank, the Impaler, the IFV among them). The catalog fields are nil for a unit it doesn't list.
+- `api.enemies.charging(unit)`: An enemy that holds fire a moment before a shot, while it holds it: the Hunter's beam (3 seconds), the Cyborg IFV's laser sight, the Hulk's wind-up. On every machine, owner or not: the game runs the shot on each. Answers { time, from, to, effect } or nil (not about to shoot, dead, not an enemy). time: seconds until it fires. from and to ({ x, y, z }): where the aim line runs, ending at what it hits. effect: the line the game draws ("effects/illuminate_hunter_beam", the IFV's laser sight), nil for an enemy that draws none.
 - `api.enemies.nearest(pos)`: The closest living enemy to a position, or to the player, and how far it is.
 - `api.enemies.apply_status(unit, template)`: A hit of no power that carries the status, the way weapons do it, so it reaches the owner from any peer. The status command itself fails on an enemy this peer doesn't own.
 - `api.enemies.stun_near(radius)`
@@ -2124,6 +2142,7 @@ Weapons, ammunition, grenades, perks, backpacks and vehicles of the local player
 - `api.gear.repair_vehicle()`
 - `api.gear.refill_vehicle()`
 - `api.gear.refresh()`: Fields cached on live weapons take a settings change when reloaded this way. Loaded rounds stay, so a bigger magazine shows after the next reload.
+- `api.gear.hurts(weapon, target)`: The damage one hit of a weapon does to a target after armor, as the game works it out: square (the hit meets armor_min), glancing (armor_max) and on the target's weak spot (the lowest armor, from the body parts with armor of their own). 0 means the weapon can't hurt it there. A gun's bullet or pellet with the weapon's armor piercing; a weapon that explodes adds the blast at the center, which always lands square; a launcher counts what it fires. A beam or a flamethrower answers per second. Critical hits don't count. weapon: a weapon unit (api.gear.weapons_of). Answers the three numbers, or nil and "no_weapon" or "no_target" (a unit with no health).
 - `api.gear.weapons_of(owner)`: The weapons a player's unit holds: { unit, component, slot, info }, where slot is primary_weapon, sidearm_weapon or support_weapon, and info the weapon's settings before any tuning. owner: nil for the main player.
 - `api.gear.tune(unit, component, changes)`: changes: { field = factor } on a number of its settings, { attribute = true or false } on one of its attributes. It replaces the tuning before; {} takes it all off. It reaches only this machine's own weapons, and each player runs it for theirs. component "melee" tunes the weapon's melee attack: power, and duration and delay for how soon it hits and the next can start.
 

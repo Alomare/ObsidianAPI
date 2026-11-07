@@ -287,7 +287,8 @@ function Bot:dodge() press(self, "dodge_pressed") return self end
 function Bot:melee() press(self, "melee") return self end
 function Bot:interact() press(self, "interact") return self end
 
--- A grenade: the throw button is held a moment and let go, a short throw ahead. throw_at aims one.
+-- A grenade: the throw button is held a moment and let go, a short throw ahead. throw_at aims one. In a
+-- vehicle seat it does nothing: that button fires the vehicle's second weapon there.
 function Bot:throw()
 	self.throw_frames = 10
 	return self
@@ -321,16 +322,27 @@ end
 -- optional: weapon, a slot ("primary", "sidearm", "support" or the game's "primary_weapon" and so on) the
 -- bot takes out and fights with, coming back to it after anything else it takes out; only, a function
 -- given an enemy unit that answers true for the enemies to shoot (the rest are left alone); secondary,
--- true to fire a vehicle seat's second weapon along with the first (the tank's machine gun, an exosuit's
--- left arm or grenades).
+-- true or a table to fire a vehicle seat's second weapon along with the first (the tank's machine gun,
+-- the first exosuit's rockets). The rockets go only while the exosuit faces the target. As a table:
+-- secondary.only, a function given an enemy unit that answers true for the enemies the second weapon is
+-- for (the vehicle then also turns to them when only leaves them out); secondary.every, the seconds
+-- between shots, one press each: 1 for the exosuit's rockets by default, held for the rest.
 function Bot:fight(radius, opts)
 	if radius == false then
 		self.goals.fight = nil
 		self:fire(false)
 	else
 		opts = type(opts) == "table" and opts or {}
+		local secondary = nil
+		if opts.secondary == true then
+			secondary = {}
+		elseif type(opts.secondary) == "table" then
+			local every = tonumber(opts.secondary.every)
+			secondary = { only = type(opts.secondary.only) == "function" and opts.secondary.only or nil,
+				every = every and every == every and every >= 0 and every or nil }
+		end
 		self.goals.fight = { radius = radius or 25, weapon = SLOTS[opts.weapon], only = type(opts.only) == "function" and opts.only or nil,
-			secondary = opts.secondary == true }
+			secondary = secondary }
 	end
 	return self
 end
@@ -769,6 +781,24 @@ local function current_slot(unit)
 	return nil
 end
 
+-- The damage one hit of the weapon in a slot does to a target after armor, as api.gear.hurts answers it:
+-- square, glancing and on the target's weak spot, 0 where it can't hurt it. slot: as wield takes it, or
+-- nil for the weapon in hand. An enemy the rifle answers 0 for is one for the anti-tank weapon.
+-- Answers the three numbers, or nil and "bad_slot", "no_avatar", "no_weapon" or "no_target".
+function Bot:hurts(target, slot)
+	local name = slot ~= nil and SLOTS[slot]
+	if slot ~= nil and not name then return nil, "bad_slot" end
+	local unit = self:unit()
+	if not unit then return nil, "no_avatar" end
+	local inv = game.master(unit, "inventory")
+	local weapon = nil
+	if inv then
+		if name then weapon = inv[name] else weapon = inv.current_weapon end
+	end
+	if not alive(weapon) then return nil, "no_weapon" end
+	return gear.hurts(weapon, target)
+end
+
 -- Takes out the weapon in a slot: "primary_weapon", "sidearm_weapon" or "support_weapon", or "primary",
 -- "sidearm" or "support". The weapon comes out once the bot stands calm, within 10 seconds, and a help
 -- or a use_weapon that starts meanwhile comes back to it afterwards. Answers true, or false and a reason:
@@ -1045,6 +1075,30 @@ end
 function Bot:mech_friendly_fire(on)
 	self.mech_spares = on == false or nil
 	return self
+end
+
+-- Gets out of the line of an enemy about to shoot (api.enemies.charging: the Hunter's beam, the Cyborg
+-- IFV's laser sight, the Hulk's wind-up): while the line runs within opts.width metres of the bot (2), it
+-- walks straight out to the side it's on, and dives just before the shot if still in it. It looks at
+-- enemies within opts.radius metres (40). opts.dodge: false to walk out only. Not in a seat, while
+-- downed or while calling a stratagem or throwing. false stops (the default).
+function Bot:avoid_shots(on, opts)
+	if on == false or on == nil then
+		self.goals.avoid = nil
+	else
+		opts = type(opts) == "table" and opts or {}
+		local radius, width = tonumber(opts.radius), tonumber(opts.width)
+		self.goals.avoid = { radius = radius and radius > 0 and radius or 40, width = width and width > 0 and width or 2,
+			dodge = opts.dodge ~= false, wait = 0 }
+	end
+	return self
+end
+
+-- Whether the bot is getting out of a line now: true and the enemy, or false.
+function Bot:avoiding()
+	local a = self.goals.avoid
+	if a and a.threat then return true, a.threat.enemy end
+	return false
 end
 
 -- Downed, the bot holds interact by itself until up: true by default. false leaves it down for a
@@ -1545,14 +1599,38 @@ local function pull(b, unit, t)
 end
 
 -- What fight shoots at: the enemies within its radius that its only() picks, nearest first.
+-- In a seat whose second weapon has a separate only(), the enemies that one picks count too.
 local function targets(b, fight, here)
 	local found = enemies.near(fight.radius, here)
 	if not fight.only then return found end
+	local seat = b.in_seat
+	local second = seat and seat.secondary and fight.secondary and fight.secondary.only
 	local out = {}
 	for _, e in ipairs(found) do
-		if picks(b, fight.only, e) then out[#out + 1] = e end
+		if picks(b, fight.only, e) or (second and picks(b, second, e)) then out[#out + 1] = e end
 	end
 	return out
+end
+
+-- An exosuit's rockets leave from the exosuit's front, so they go only within this of facing the target (about
+-- 15 degrees), one each second unless secondary.every says otherwise. Other second weapons (the tank's
+-- machine gun) turn on their own mounts.
+local ROCKET_FACING = 0.966
+local ROCKET_EVERY = 1
+
+local function second_trigger(b, seat, fight, face, dx, dy, t)
+	local second = fight.secondary
+	if second.only and not picks(b, second.only, face) then return end
+	if seat.kind == "exosuit" and not faces(seat.vehicle, dx, dy, ROCKET_FACING) then return end
+	local every = second.every
+	if every == nil and seat.kind == "exosuit" then every = ROCKET_EVERY end
+	if not every or every == 0 then
+		t.throw = 1
+	elseif (b.second_wait or 0) <= 0 then
+		t.throw = 1
+		b.second_hold = PULL_FRAMES > 1 and PULL_FRAMES - 1 or nil
+		b.second_wait = every
+	end
 end
 
 -- In a seat with no gun (the APC's or the bike's driver, a passenger seat with none), the sticks and the
@@ -1578,6 +1656,12 @@ local function fight_step(b, unit, here, t, dt)
 	if face and not alive(face) then face, b.fight_face = nil, nil end
 	b.fight_near = false
 	if seat and not seat.armed then return end
+	-- A paced second weapon: one press, held a few frames, then the wait.
+	b.second_wait = (b.second_wait or 0) - dt
+	if b.second_hold then
+		if seat then t.throw = 1 end
+		b.second_hold = b.second_hold > 1 and b.second_hold - 1 or nil
+	end
 	t.fire_button = 0
 	if face then
 		local p = units.world_position(face, 0)
@@ -1586,8 +1670,8 @@ local function fight_step(b, unit, here, t, dt)
 			local dx, dy = p.x - here.x, p.y - here.y
 			b.fight_near = dx * dx + dy * dy <= THREAT * THREAT
 			if no_one_in_the_way(unit, here, p.x, p.y, seat and seat.vehicle) then
-				if not seat or seat.primary then pull(b, unit, t) end
-				if seat and seat.secondary and fight.secondary then t.throw = 1 end
+				if (not seat or seat.primary) and (not seat or not fight.only or picks(b, fight.only, face)) then pull(b, unit, t) end
+				if seat and seat.secondary and fight.secondary then second_trigger(b, seat, fight, face, dx, dy, t) end
 			end
 		end
 	end
@@ -2301,6 +2385,56 @@ local function jump_step(b, unit, t, f, dt)
 	end
 end
 
+-- How far a point stands off a line on the ground, and the way out: the side it's on. nil when the
+-- point is behind the line's start or past the line's end.
+local function off_line(p, from, to)
+	local lx, ly = to.x - from.x, to.y - from.y
+	local len2 = lx * lx + ly * ly
+	if len2 < 1e-6 then return nil end
+	local s = ((p.x - from.x) * lx + (p.y - from.y) * ly) / len2
+	if s < 0 or s > 1 then return nil end
+	local cx, cy = from.x + lx * s, from.y + ly * s
+	local ox, oy = p.x - cx, p.y - cy
+	local d = math.sqrt(ox * ox + oy * oy)
+	if d < 0.05 then
+		local len = math.sqrt(len2)
+		return d, -ly / len, lx / len
+	end
+	return d, ox / d, oy / d
+end
+
+local AVOID_LOOK = 0.1
+local DIVE_AT = 0.35
+
+-- avoid_shots: each tenth of a second, the nearest line through the bot. While in one, the walk goes
+-- straight out of it for this frame, whatever the orders say.
+local function avoid_step(b, unit, here, f, dt)
+	local a = b.goals.avoid
+	a.wait = a.wait - dt
+	if a.wait <= 0 then
+		a.wait = AVOID_LOOK
+		local kept = a.threat
+		a.threat = nil
+		for _, e in ipairs(enemies.near(a.radius, here)) do
+			local c = enemies.charging(e)
+			local d, sx, sy
+			if c then d, sx, sy = off_line(here, c.from, c.to) end
+			if d and d < a.width then
+				local dove = kept and kept.enemy == e and kept.dove
+				a.threat = { enemy = e, x = sx, y = sy, fire_at = M.clock + c.time, dove = dove }
+				break
+			end
+		end
+	end
+	local th = a.threat
+	if not th then return end
+	f.mx, f.my, f.stick = th.x, th.y, nil
+	if a.dodge and not th.dove and th.fire_at - M.clock <= DIVE_AT then
+		th.dove = true
+		press(b, "dodge_pressed")
+	end
+end
+
 -- Hands each bot's character its input table, with this frame's vectors. The game's input component
 -- reads input_data when its player has focus. The table is built again from rest each frame: the
 -- orders' holds (fire, sprint), the presses still running, then the orders, then a stratagem call, a
@@ -2333,6 +2467,8 @@ local function drive(b, unit, dt)
 		if left > 0 then t[field] = true end
 		b.presses[field] = left > 1 and left - 1 or nil
 	end
+	-- In a seat the throw button is the vehicle's second trigger: a grenade asked for there is dropped.
+	if b.throw_frames and seat then b.throw_frames = nil end
 	if b.throw_frames then
 		if b.throw_frames > 1 then t.throw = 1 end
 		b.throw_frames = b.throw_frames > 1 and b.throw_frames - 1 or nil
@@ -2363,6 +2499,7 @@ local function drive(b, unit, dt)
 			keep_weapon(b, unit, dt)
 		end
 	end
+	if b.goals.avoid and not seat and not b.job and not b.leap and not is_downed(unit) then avoid_step(b, unit, here, f, dt) end
 	if b.leap and not seat then jump_step(b, unit, t, f, dt) end
 	if seat then
 		-- In a seat that steers, the orders' walking drives the vehicle.
