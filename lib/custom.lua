@@ -80,9 +80,11 @@ local function own_unlock(name, xp)
 end
 catalog.own_unlock = own_unlock
 
--- From this library's frame callback, where obsidian.storage is this library's.
-function M.tick()
+-- From this library's frame callback, where obsidian.storage is this library's. dt: the frame's seconds.
+local watch_shared
+function M.tick(dt)
 	if unsaved then save() end
+	if watch_shared then watch_shared(tonumber(dt) or 0.016) end
 end
 
 local ARROWS = { up = true, down = true, left = true, right = true }
@@ -424,6 +426,573 @@ local function drain()
 	end
 end
 
+-- Hidden stratagems: the game's own, taken out of the Arsenal, the Loadout screen, the default and saved
+-- loadouts and the inventory a player starts a mission with. A separate section: nothing above reads it.
+local hidden = {}        -- name -> { replace = name or nil }
+local hidden_order = {}  -- the names, in the order they were hidden
+local defaults_journal = {} -- what the default loadouts held before: { list, index, old, removed }
+-- Carried stratagems (further down) that are custom ones leave the menus as hidden ones do.
+local carried = {}       -- name -> { upgrade = "base", a level or nil }
+local carried_order = {} -- the names, in the order they were carried
+
+-- A custom stratagem every player carries: no menu offers it, as every mission has it anyway.
+local function carried_custom(name)
+	return carried[name] ~= nil and defs[name] ~= nil
+end
+
+local function carrying_customs()
+	for _, name in ipairs(carried_order) do
+		if defs[name] then return true end
+	end
+	return false
+end
+
+local function is_static(name)
+	local s = settings()
+	for _, n in ipairs(s and type(s.static_stratagems) == "table" and s.static_stratagems or {}) do
+		if n == name then return true end
+	end
+	return false
+end
+
+local function shares_subtype(a, b)
+	for _, x in ipairs(type(a.stratagem_subtypes) == "table" and a.stratagem_subtypes or {}) do
+		for _, y in ipairs(type(b.stratagem_subtypes) == "table" and b.stratagem_subtypes or {}) do
+			if x == y then return true end
+		end
+	end
+	return false
+end
+
+local function list_has(list, name)
+	for _, n in ipairs(list) do
+		if n == name then return true end
+	end
+	return false
+end
+
+-- The stratagem that takes a hidden one's place in a loadout's list: the mod's choice, else the first of
+-- the game's the player has that isn't in the list yet, one of the same kind first. nil when none.
+local function replacement_for(list, name, preferred)
+	if preferred and not hidden[preferred] and not list_has(list, preferred) then return preferred end
+	local s = settings()
+	if not s then return nil end
+	local original = catalog.stratagem(name)
+	local second
+	for _, item in ipairs(s.stratagems) do
+		local n = item.name
+		if n and not hidden[n] and not defs[n] and not is_static(n) and not list_has(list, n) and catalog.unlocked(n) then
+			if original and shares_subtype(original, item) then return n end
+			second = second or n
+		end
+	end
+	return second
+end
+
+-- Swaps every hidden name in a list of stratagem names. journal: where to record what was there, or nil.
+-- customs: also the carried custom stratagems, which a saved loadout may still name.
+local function swap_hidden(list, journal, customs)
+	if type(list) ~= "table" then return end
+	local i = 1
+	while i <= #list do
+		local name = list[i]
+		local h = hidden[name] or (customs and carried_custom(name) and {}) or nil
+		if h and not is_static(name) then
+			local into = replacement_for(list, name, h.replace)
+			if into then
+				if journal then journal[#journal + 1] = { list = list, index = i, old = name } end
+				list[i] = into
+				i = i + 1
+			else
+				if journal then journal[#journal + 1] = { list = list, index = i, old = name, removed = true } end
+				table.remove(list, i)
+			end
+		else
+			i = i + 1
+		end
+	end
+end
+
+local function each_default(fn)
+	local s = settings()
+	if not s then return end
+	if type(s.default_loadout) == "table" then fn(s.default_loadout.stratagems) end
+	for _, l in ipairs(type(s.default_loadouts) == "table" and s.default_loadouts or {}) do
+		if type(l) == "table" then fn(l.stratagems) end
+	end
+end
+
+local function restore_defaults()
+	for i = #defaults_journal, 1, -1 do
+		local j = defaults_journal[i]
+		if j.removed then table.insert(j.list, math.min(j.index, #j.list + 1), j.old) else j.list[j.index] = j.old end
+	end
+	defaults_journal = {}
+end
+
+local function apply_defaults()
+	restore_defaults()
+	if #hidden_order == 0 then return end
+	each_default(function(list) swap_hidden(list, defaults_journal) end)
+end
+
+local function hiding()
+	return #hidden_order > 0 and cleared()
+end
+
+-- Whether the menus leave anything out: hidden stratagems, or carried custom ones.
+local function filtering()
+	return (#hidden_order > 0 or carrying_customs()) and cleared()
+end
+
+local function left_out(name)
+	return hidden[name] ~= nil or carried_custom(name)
+end
+
+-- A loadout as the game saves it, { stratagems = { name, ... }, ... }: only the hidden entries swapped.
+-- The Loadout screen resets a whole loadout that holds a stratagem it doesn't list, so this runs first.
+local function clean_loadout(loadout)
+	if filtering() and type(loadout) == "table" then swap_hidden(loadout.stratagems, nil, true) end
+	return loadout
+end
+
+local function clean_saved_loadouts(screen, slot)
+	if not filtering() then return end
+	local players = type(screen.parent) == "table" and screen.parent.players
+	local player = type(players) == "table" and players[slot]
+	local save, users = game.global("SaveManager"), game.global("UserManager")
+	if type(player) ~= "table" or not save or not users then return end
+	local pad = player.pad_number
+	local ok, uid = pcall(users.get_user_id, users, pad)
+	if not ok then return end
+	local reads = { function(k) return save:user_get(k, uid) end }
+	if type(pad) == "number" then
+		reads[#reads + 1] = function(k) return save:get(k .. "_" .. tostring(pad)) end
+	end
+	for _, read in ipairs(reads) do
+		for _, key in ipairs({ "loadout", "loadouts" }) do
+			local fine, value = pcall(read, key)
+			if fine and type(value) == "table" then
+				if key == "loadout" then
+					clean_loadout(value)
+				else
+					for _, l in ipairs(value) do clean_loadout(l) end
+				end
+			end
+		end
+	end
+end
+
+-- Takes hidden stratagems out of a list of groups ({ name, items }) in place.
+local function filter_groups(groups)
+	if not filtering() or type(groups) ~= "table" then return end
+	local out = {}
+	for _, group in ipairs(groups) do
+		local keep = type(group) == "table" and not left_out(group.name)
+		if keep and type(group.items) == "table" then
+			local items, had = {}, #group.items
+			for _, item in ipairs(group.items) do
+				if not left_out(named(item)) then items[#items + 1] = item end
+			end
+			if had > 0 and #items == 0 then keep = false end
+			if keep then
+				for i = #group.items, 1, -1 do group.items[i] = nil end
+				for i, item in ipairs(items) do group.items[i] = item end
+			end
+		end
+		if keep then out[#out + 1] = group end
+	end
+	for i = #groups, 1, -1 do groups[i] = nil end
+	for i, group in ipairs(out) do groups[i] = group end
+end
+
+-- An inventory component's state from what the component's functions get: the entity's context ({ state, ... }),
+-- or the state itself.
+local function inventory_state(ctx)
+	if type(ctx) ~= "table" then return nil end
+	if type(ctx.state) == "table" then return ctx.state end
+	return ctx
+end
+
+-- A player's stratagems for the mission, off the inventory the game just built.
+local function filter_inventory(state)
+	if not hiding() or type(state) ~= "table" or type(state.stratagems) ~= "table" then return end
+	local ids = {}
+	for name in pairs(hidden) do
+		local s = catalog.stratagem(name)
+		if s then ids[s.id] = true end
+	end
+	for i = #state.stratagems, 1, -1 do
+		local e = state.stratagems[i]
+		if type(e) == "table" and ids[e.id] then table.remove(state.stratagems, i) end
+	end
+end
+
+-- Takes a stratagem of the game's out of the Arsenal, the Loadout screen, the default loadouts, and a
+-- player's saved loadouts and mission inventory, until unhide(name). Only a session mod in a cleared
+-- session can. A saved loadout holding it gets another stratagem in that one slot, not a reset.
+--   name   the stratagem's name ("stratagem_resupply")
+--   opts   { replace = "stratagem_mortar" }: what takes the hidden one's place in a loadout. By default the first
+--          stratagem the player has that the loadout doesn't hold, one of the same kind where there is
+--          one; an entry with no such stratagem is dropped.
+-- Returns true, or false and why: "not_available" (the game has no such stratagem, or replace isn't
+-- one), "static" (the always-present stratagems, such as Reinforce, can't go), "not_cleared".
+function M.hide(name, opts)
+	if type(name) ~= "string" then return false, "bad_type" end
+	if opts ~= nil and type(opts) ~= "table" then return false, "bad_type" end
+	local replace = opts and opts.replace
+	if replace ~= nil and type(replace) ~= "string" then return false, "bad_type" end
+	if not catalog.stratagem(name) or defs[name] then return false, "not_available" end
+	if replace and (not catalog.stratagem(replace) or hidden[replace] or replace == name or is_static(replace)) then return false, "not_available" end
+	if is_static(name) then return false, "static" end
+	if not cleared() then return false, "not_cleared" end
+	if not hidden[name] then hidden_order[#hidden_order + 1] = name end
+	hidden[name] = { replace = replace }
+	apply_defaults()
+	return true
+end
+
+-- Brings a hidden stratagem back to the Arsenal, the Loadout screen and the default loadouts. A saved
+-- loadout whose entry was swapped keeps the swap. Returns true, also when it wasn't hidden.
+function M.unhide(name)
+	if type(name) ~= "string" then return false, "bad_type" end
+	if hidden[name] then
+		hidden[name] = nil
+		for i, n in ipairs(hidden_order) do
+			if n == name then table.remove(hidden_order, i) break end
+		end
+		apply_defaults()
+	end
+	return true
+end
+
+-- Whether hide(name) is in effect.
+function M.is_hidden(name)
+	return hidden[name] ~= nil
+end
+
+-- Carried stratagems: one more entry in every player's mission inventory, after the eight slots. The
+-- game builds the inventory in InventoryComponent.set_loadout, and the "loadout" command that calls it
+-- sends every entry to the other machines right after (broadcast_stratagem_cooldown), so they see it
+-- too. A respawn copies the old entries back by index over a new list built the same way, so the
+-- carried one keeps the same place and cooldown.
+
+-- Whether a name is a stratagem now, or a custom one waiting for the game's list.
+local function known(name)
+	if defs[name] or catalog.stratagem(name) then return true end
+	for _, p in ipairs(pending) do
+		if p.def.name == name then return true end
+	end
+	return false
+end
+
+local function holds(entries, id)
+	for _, e in pairs(entries) do
+		if type(e) == "table" and e.id == id then return true end
+	end
+	return false
+end
+
+-- The level a carried entry has: what the player bought of the stratagem or of the base, or the one
+-- the mod named, within the levels the stratagem has.
+local function carried_level(name, entry, upgrades)
+	local rule = carried[name] and carried[name].upgrade
+	local level
+	if type(rule) == "number" then
+		level = rule
+	else
+		local key = name
+		if rule == "base" and defs[name] then key = defs[name].base end
+		level = upgrades and tonumber(upgrades[key]) or 0
+	end
+	local max = type(entry.upgrades) == "table" and #entry.upgrades or 0
+	return math.max(0, math.min(math.floor(level), max))
+end
+
+-- After the game built a player's list from a loadout. The level goes into this inventory's copy of
+-- the player's upgrades too, as the call-in and the cooldown read it there by the stratagem's name.
+local function add_carried(state)
+	if #carried_order == 0 or not cleared() or type(state) ~= "table" or type(state.stratagems) ~= "table" then return end
+	local s = settings()
+	if not s or type(s.get_upgraded_stratagem) ~= "function" then return end
+	local upgrades = type(state.item_upgrades) == "table" and state.item_upgrades or nil
+	for _, name in ipairs(carried_order) do
+		local e = catalog.stratagem(name)
+		if e and not holds(state.stratagems, e.id) then
+			local level = carried_level(name, e, upgrades)
+			if upgrades then upgrades[name] = level end
+			local info = s.get_upgraded_stratagem(e.id, level)
+			state.stratagems[#state.stratagems + 1] = { id = e.id, cooldown_timer = 0, uses_left = info and info.num_uses,
+				upgrade_value = level, loadout_info = info }
+		end
+	end
+end
+
+-- Another machine's player, as this one sees them: a custom stratagem arrives as the base, so the
+-- carried entry shows the base's icon and words. The carried one is the last of that player's list, so
+-- of the entries holding a carried custom's base, the last goes back to the custom, and any before it
+-- stay the base. Customs carried on one base take the last places in the order they were carried.
+local function relabel(state)
+	if #carried_order == 0 or not cleared() or type(state) ~= "table" or type(state.stratagems) ~= "table" then return end
+	local s = settings()
+	if not s or type(s.get_upgraded_stratagem) ~= "function" then return end
+	local groups = {}
+	for _, name in ipairs(carried_order) do
+		local d = defs[name]
+		if d then
+			groups[d.base_id] = groups[d.base_id] or {}
+			table.insert(groups[d.base_id], d)
+		end
+	end
+	for base_id, list in pairs(groups) do
+		local ids = { [base_id] = true }
+		for _, d in ipairs(list) do ids[d.id] = true end
+		local at = {}
+		for i, e in pairs(state.stratagems) do
+			if type(i) == "number" and type(e) == "table" and ids[e.id] then at[#at + 1] = i end
+		end
+		table.sort(at, function(a, b) return a > b end)
+		for k, i in ipairs(at) do
+			local d = list[#list - k + 1]
+			local want = d and d.id or base_id
+			local e = state.stratagems[i]
+			if e.id ~= want then
+				local ok, info = pcall(s.get_upgraded_stratagem, want, e.upgrade_value or 0)
+				e.id = want
+				if ok and info then e.loadout_info = info end
+			end
+		end
+	end
+end
+
+-- Every player carries a stratagem in every mission, as one more entry after the eight slots of their
+-- loadout, until uncarry(name). A player whose loadout already holds it gets no second one. Every
+-- player in the session needs the same call, so make it from a mod every player runs. It takes effect
+-- at each player's next spawn, and in a lobby that isn't cleared nothing is added. A carried custom
+-- stratagem leaves the Arsenal and the Loadout screen, and a saved loadout naming it gets another
+-- stratagem in that slot; one of the game's stays in both, where the player buys the upgrades.
+--   name   a stratagem of the game's, or a custom one (also one still pending)
+--   opts   { upgrade = "base" }: a custom stratagem goes at the level the player owns of the base, for
+--          one that keeps the base's levels. A number: that level for everyone. By default, the level
+--          the player owns of the stratagem itself.
+-- Returns true, or false and why: "not_available", "static" (always in every loadout), "not_cleared".
+function M.carry(name, opts)
+	if type(name) ~= "string" then return false, "bad_type" end
+	if opts ~= nil and type(opts) ~= "table" then return false, "bad_type" end
+	local upgrade = opts and opts.upgrade
+	if upgrade ~= nil and upgrade ~= "base" and not (type(upgrade) == "number" and upgrade >= 0 and upgrade <= 15 and upgrade == math.floor(upgrade)) then
+		return false, "bad_type"
+	end
+	if settings() and not known(name) then return false, "not_available" end
+	if is_static(name) then return false, "static" end
+	if not cleared() then return false, "not_cleared" end
+	if not carried[name] then carried_order[#carried_order + 1] = name end
+	carried[name] = { upgrade = upgrade }
+	return true
+end
+
+-- Stops carrying a stratagem from the next mission on: a player in a mission keeps the entry until
+-- then. Returns true, also when it wasn't carried.
+function M.uncarry(name)
+	if type(name) ~= "string" then return false, "bad_type" end
+	if carried[name] then
+		carried[name] = nil
+		for i, n in ipairs(carried_order) do
+			if n == name then table.remove(carried_order, i) break end
+		end
+	end
+	return true
+end
+
+-- Whether carry(name) is in effect.
+function M.is_carried(name)
+	return carried[name] ~= nil
+end
+
+-- Shared cooldowns: one throw starts the cooldown for the whole squad. Each machine looks after the
+-- players it runs: a throw here is seen in the throw command, a throw on another machine as that player's
+-- entry going from ready to a long cooldown, through the game's own messages. Either way, every player
+-- of this machine whose entry is shorter gets the same time, through the game's set_stratagem_info and
+-- a broadcast, as reset_cooldowns does. Those broadcasts look like a throw to the others, but they find
+-- their players' entries as long already and send nothing back.
+local shared = {}        -- name -> true
+local shared_order = {}
+local SLACK = 2          -- seconds a player's entry may be short of the squad's before being set
+local SETTLE = 4         -- seconds an entry is watched before a jump counts: a respawn copies old times in
+local READY = 1          -- an entry this close to ready could have been thrown
+local JUMP = 5           -- and one that is now this long was
+local thrown = {}        -- id -> the longest time thrown on this machine since the last frame
+local watched = setmetatable({}, { __mode = "k" }) -- another machine's entry -> { time, age }
+
+-- id -> true for the shared stratagems the game has.
+local function shared_ids()
+	local out
+	for _, name in ipairs(shared_order) do
+		local e = catalog.stratagem(name)
+		if e then
+			out = out or {}
+			out[e.id] = true
+		end
+	end
+	return out
+end
+
+local function cooldown_of(e)
+	local t = tonumber(e.cooldown_timer)
+	if t == nil or t ~= t then return 0 end
+	return t
+end
+
+-- From the throw command on this machine: the entries it just started.
+local function note_throw(state, id)
+	if #shared_order == 0 or not cleared() or type(state) ~= "table" or type(state.stratagems) ~= "table" then return end
+	local ids = shared_ids()
+	if not (ids and ids[id]) then return end
+	for _, e in pairs(state.stratagems) do
+		if type(e) == "table" and e.id == id then
+			local t = cooldown_of(e)
+			if t > 0 and t > (thrown[id] or 0) then thrown[id] = t end
+		end
+	end
+end
+
+-- Whether an entry of another machine just went from ready to a long cooldown.
+local function jumped(before, now, age)
+	return age >= SETTLE and before <= READY and now >= JUMP
+end
+
+-- Whether this machine's entry, at `now`, is to be set to the squad's `squad`.
+local function behind_of(now, squad)
+	return now < squad - SLACK
+end
+
+-- Sets the entry on every player of this machine that is short of the squad's time, and tells the
+-- other machines.
+local function catch_up(id, time)
+	for unit, ctx in pairs(game.masters("inventory")) do
+		local state = inventory_state(ctx)
+		local behind = false
+		for _, e in pairs(state and type(state.stratagems) == "table" and state.stratagems or {}) do
+			if type(e) == "table" and e.id == id and behind_of(cooldown_of(e), time) then behind = true end
+		end
+		if behind and game.command(unit, "inventory", "set_stratagem_info", { id = id, cooldown_timer = time }) then
+			game.command(unit, "inventory", "broadcast_stratagem_cooldown")
+		end
+	end
+end
+
+watch_shared = function(dt)
+	if #shared_order == 0 or not cleared() then
+		thrown = {}
+		return
+	end
+	local ids = shared_ids()
+	if not ids then return end
+	local times = thrown
+	thrown = {}
+	for unit, ctx in pairs(game.slaves("inventory")) do
+		local state = not game.master(unit, "inventory") and inventory_state(ctx)
+		for _, e in pairs(state and type(state.stratagems) == "table" and state.stratagems or {}) do
+			if type(e) == "table" and ids[e.id] then
+				local now, w = cooldown_of(e), watched[e]
+				if w then
+					if jumped(w.time, now, w.age) and now > (times[e.id] or 0) then times[e.id] = now end
+					w.time, w.age = now, w.age + dt
+				else
+					watched[e] = { time = now, age = 0 }
+				end
+			end
+		end
+	end
+	for id, time in pairs(times) do catch_up(id, time) end
+end
+
+-- Makes a stratagem's cooldown the squad's: when any player throws it, every player's entry for it
+-- waits the same time, until unshare_cooldown(name). Every player in the session needs the same call,
+-- so make it from a mod every player runs. Players on one machine share it too. A player who joins
+-- during a mission starts with it ready, and is caught up at the next throw. In a lobby that isn't
+-- cleared each player's cooldown is their own. A custom stratagem is recognised on other machines
+-- when it is carried (carry), since a custom one travels as the base; a game's one always is.
+-- Returns true, or false and why: "not_available", "not_cleared".
+function M.share_cooldown(name)
+	if type(name) ~= "string" then return false, "bad_type" end
+	if settings() and not known(name) then return false, "not_available" end
+	if not cleared() then return false, "not_cleared" end
+	if not shared[name] then shared_order[#shared_order + 1] = name end
+	shared[name] = true
+	return true
+end
+
+-- Each player's cooldown for the stratagem is their own again. Returns true, also when it wasn't shared.
+function M.unshare_cooldown(name)
+	if type(name) ~= "string" then return false, "bad_type" end
+	if shared[name] then
+		shared[name] = nil
+		for i, n in ipairs(shared_order) do
+			if n == name then table.remove(shared_order, i) break end
+		end
+	end
+	return true
+end
+
+-- Whether share_cooldown(name) is in effect.
+function M.is_shared(name)
+	return shared[name] == true
+end
+
+-- A code two stratagems have: the game's find_stratagem answers the first in the game's list, and the player
+-- may hold only the other. Of the stratagems whose code is the arrows in `queue`, the one the player
+-- holds and can call now wins, then one the player holds, then the game's answer `id`. The player is the
+-- one whose character keeps that queue.
+local function same_code(combo, queue)
+	if type(combo) ~= "table" or #combo ~= #queue then return false end
+	for i = 1, #queue do
+		if combo[i] ~= queue[i] then return false end
+	end
+	return true
+end
+
+function M.prefer_held(id, queue)
+	local s = settings()
+	if not s or type(queue) ~= "table" or #queue == 0 then return id end
+	local order = { id }
+	for i, e in ipairs(s.stratagems) do
+		if i ~= id and type(e) == "table" and same_code(e.combo, queue) then order[#order + 1] = i end
+	end
+	if #order == 1 then return id end
+	local inv
+	for unit, ctx in pairs(game.masters("character")) do
+		local state = inventory_state(ctx)
+		if state and state.stratagems_queue == queue then inv = game.master(unit, "inventory") end
+	end
+	if not (inv and type(inv.stratagems) == "table") then return id end
+	local held, ready = {}, {}
+	for _, e in pairs(inv.stratagems) do
+		if type(e) == "table" and e.id ~= nil then
+			held[e.id] = true
+			if cooldown_of(e) <= 0 and not e.blocked and (e.uses_left == nil or e.uses_left > 0) then ready[e.id] = true end
+		end
+	end
+	for _, c in ipairs(order) do
+		if c and ready[c] then return c end
+	end
+	for _, c in ipairs(order) do
+		if c and held[c] then return c end
+	end
+	return id
+end
+
+-- The proving grounds draw a random loadout from the game's list: not a hidden stratagem, a carried
+-- one, nor a custom one nobody has unlocked.
+local function keep_out_of_pool(list)
+	if type(list) ~= "table" or not cleared() then return end
+	for i = #list, 1, -1 do
+		local name = list[i]
+		local d = defs[name]
+		if (hiding() and hidden[name]) or carried[name] or (d and d.unlock == "manual" and not opened[name]) then table.remove(list, i) end
+	end
+end
+
 -- The hooks that can go through the loader: paid packs, ranks, the call-in, and a flare's id as it's
 -- first copied out. From main.lua, so they're the library's and not the first mod's that makes one.
 function M.install()
@@ -471,7 +1040,7 @@ function M.install()
 	-- saved loadout naming it keeps it. A wrap, so it runs in any lobby.
 	wrap("Boot", "ensure_loadout", function(original, ...)
 		drain()
-		return original(...)
+		return clean_loadout(original(...))
 	end)
 	-- Every gui that lists hud/hud lists the icons' materials too: the game's, through WorldProxy.new_gui,
 	-- and the loader's for kit:icon. A wrap, as the icons are there in any lobby.
@@ -490,15 +1059,51 @@ function M.install()
 		for _, group in ipairs(type(items) == "table" and type(items.groups) == "table" and items.groups or {}) do
 			beside_bases(group.items, named, is_named)
 		end
+		if type(items) == "table" then filter_groups(items.groups) end
 		return unpack(r)
 	end)
 	obsidian.hook("MenuScreenLoadout", "setup_loadout", function(original, self, slot, ...)
+		clean_saved_loadouts(self, slot)
 		local r = { original(self, slot, ...) }
 		local players = type(self.parent) == "table" and self.parent.players
 		local player = type(players) == "table" and players[slot]
 		local items = type(player) == "table" and type(player.available_items) == "table" and player.available_items.stratagems
-		if type(items) == "table" then beside_bases(items.groups, named, group_holds) end
+		if type(items) == "table" then
+			beside_bases(items.groups, named, group_holds)
+			filter_groups(items.groups)
+		end
 		return unpack(r)
+	end)
+	-- A hidden stratagem is not in the inventory a mission starts with, whatever loadout named it, and a
+	-- carried one is added after the rest. `from` is the player the loadout is read for; the tutorial's
+	-- and the game's fixed loadouts ("loadout_override") have none and get nothing added.
+	obsidian.hook("InventoryComponent", "set_loadout", function(original, self, unit, ctx, from, ...)
+		local r = { original(self, unit, ctx, from, ...) }
+		local state = inventory_state(ctx)
+		filter_inventory(state)
+		if from ~= nil then add_carried(state) end
+		return unpack(r)
+	end)
+	-- Another machine's entry for a carried custom stratagem shows as the custom one, and a throw of a
+	-- shared stratagem here starts the squad's cooldown.
+	obsidian.hook("InventoryComponent", "command_slave", function(original, self, unit, ctx, name, data, ...)
+		local r = { original(self, unit, ctx, name, data, ...) }
+		if name == "stratagem_cooldown" then relabel(inventory_state(ctx)) end
+		return unpack(r)
+	end)
+	obsidian.hook("InventoryComponent", "command_master", function(original, self, unit, ctx, name, data, ...)
+		local r = { original(self, unit, ctx, name, data, ...) }
+		if name == "throw_stratagem" then note_throw(inventory_state(ctx), data) end
+		return unpack(r)
+	end)
+	obsidian.hook("ProvinggroundsConditions", "remove_blacklisted_strats", function(original, list, ...)
+		local r = { original(list, ...) }
+		keep_out_of_pool(r[1])
+		return unpack(r)
+	end)
+	-- Hides come off the default loadouts when the session stops being cleared, and go back with it.
+	obsidian.on_session(function(on)
+		if on then apply_defaults() else restore_defaults() end
 	end)
 	-- The game's functions go in once a custom stratagem is made and they all exist, and the pending ones
 	-- are made once the list is there. true stops the calls.

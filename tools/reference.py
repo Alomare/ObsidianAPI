@@ -37,7 +37,10 @@ INTERNAL = {
 }
 # Calls one module makes public under another table's name.
 RENAMED = {"custom": ("stratagems", {"define": "define", "list": "custom", "unlock": "unlock", "lock": "lock",
-                                      "is_unlocked": "is_unlocked"})}
+                                      "is_unlocked": "is_unlocked", "hide": "hide", "unhide": "unhide",
+                                      "is_hidden": "is_hidden", "carry": "carry", "uncarry": "uncarry",
+                                      "is_carried": "is_carried", "share_cooldown": "share_cooldown",
+                                      "unshare_cooldown": "unshare_cooldown", "is_shared": "is_shared"})}
 OBJECTS = {"Bot": "bot", "Drone": "drone", "Prop": "prop", "Marker": "marker", "Page": "page", "Panel": "panel", "LightHandle": "light"}
 
 FUNC = re.compile(r"^function (M\.camera|M|Bot|Drone|Prop|Marker|Page|Panel|LightHandle)[.:]([A-Za-z_]\w*)\s*\(([^)]*)\)")

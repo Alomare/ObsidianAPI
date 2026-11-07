@@ -44,7 +44,7 @@ obsidian.on_frame(function()
 	pcall(mod_settings.tick)
 	local ran, why = pcall(mod_settings.run_chosen)
 	if not ran then obsidian.log("mod_settings: " .. tostring(why)) end
-	pcall(custom.tick)
+	pcall(custom.tick, dt)
 	pcall(world.tick)
 	-- Other machines' api.player.damage on this machine's players.
 	ran, why = pcall(player.tick)

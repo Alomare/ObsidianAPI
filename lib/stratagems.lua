@@ -11,6 +11,10 @@ local M = { selected = nil, bot_queues = setmetatable({}, { __mode = "k" }) }
 -- Custom stratagems, made from the game's own: lib/custom.lua.
 M.define, M.custom = custom.define, custom.list
 M.unlock, M.lock, M.is_unlocked = custom.unlock, custom.lock, custom.is_unlocked
+-- Hiding the game's own stratagems, carrying one in every mission and sharing a cooldown: lib/custom.lua.
+M.hide, M.unhide, M.is_hidden = custom.hide, custom.unhide, custom.is_hidden
+M.carry, M.uncarry, M.is_carried = custom.carry, custom.uncarry, custom.is_carried
+M.share_cooldown, M.unshare_cooldown, M.is_shared = custom.share_cooldown, custom.unshare_cooldown, custom.is_shared
 
 local function my_unit()
 	local unit = game.my_unit()
@@ -76,7 +80,7 @@ effects.define({ id = "any_arrow" })
 
 function M.find(original, queue)
 	if effects.is_on("any_arrow") and M.selected and #queue > 0 and not M.bot_queues[queue] then return M.selected end
-	return original(queue)
+	return custom.prefer_held(original(queue), queue)
 end
 
 -- id: the index in LoadoutSettings.stratagems.

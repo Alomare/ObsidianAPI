@@ -2,6 +2,13 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.40.0
+
+- New: `api.stratagems.hide(name)` takes a game stratagem out of the Arsenal, the Loadout screen, the default and saved loadouts and the mission inventory; `unhide` and `is_hidden` go with it.
+- New: `api.stratagems.carry(name)` gives every player a stratagem as an extra entry in missions, beyond the 8 loadout slots, and other players' HUDs show it; `uncarry` and `is_carried` go with it.
+- New: `api.stratagems.share_cooldown(name)` puts the whole squad on one cooldown for a stratagem; `unshare_cooldown` and `is_shared` go with it.
+- Changed: when several stratagems share an arrow code, the one the player holds and can use wins.
+
 ## 1.39.1
 
 - Changed: the label of the F6 key says "Open in-game menu" in French, Spanish, Portuguese and Chinese too, as in English since 1.36.2.
