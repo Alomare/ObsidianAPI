@@ -76,6 +76,147 @@ function M.objectives()
 	return out
 end
 
+local function plain(v)
+	return { x = v.x, y = v.y, z = v.z }
+end
+
+local function alive(unit)
+	return unit ~= nil and game.global("Unit").alive(unit)
+end
+
+-- The state of a component on a unit: this peer's master copy when it owns the unit, else the shared one.
+local function state_of(unit, name)
+	local ctx = game.masters(name)[unit] or game.slaves(name)[unit]
+	return ctx and ctx.state or nil, ctx
+end
+
+local function node_position(unit, node)
+	local units = game.global("Unit")
+	local ok, pos = pcall(function() return units.world_position(unit, units.node(unit, node)) end)
+	if ok and pos then return pos end
+	return units.world_position(unit, 0)
+end
+
+-- Where the things objectives ask to carry count as delivered: { position, unit, kind, ready } each. kind is
+-- "objective", the drop-off of the terminal the thing belongs to (the artillery's missiles), or "droppoint",
+-- a drop point of the level. The game counts a thing that lies on the ground within 3 metres of one, and a
+-- thing that belongs to a terminal only at that terminal, while the terminal asks for them (ready).
+-- carry: one carried thing, for the drop-offs of that thing, or nil for all of them.
+function M.drop_offs(carry)
+	local out, seen = {}, {}
+	if not game.in_mission() then return out end
+	local lsm = game.global("LuaSettingsManager")
+	local function intended(unit)
+		local st = state_of(unit, "objective_carry_object")
+		local target = st and st.intended_drop_off_unit
+		return alive(target) and target or nil
+	end
+	local function add_objective(target)
+		if seen[target] then return end
+		seen[target] = true
+		local ok, s = pcall(function() return lsm:get_settings_by_unit(target) end)
+		local info = ok and type(s) == "table" and s.objective_info
+		local node = info and info.drop_off_node
+		local st = state_of(target, "objective_interact_object")
+		local stage = st and st.stages and st.current_stage_index and st.stages[st.current_stage_index]
+		out[#out + 1] = { position = plain(node and node_position(target, node) or game.global("Unit").world_position(target, 0)), unit = target,
+			kind = "objective", ready = stage ~= nil and stage.interact_type == "carry_units" }
+	end
+	local function add_droppoints()
+		for unit, ctx in pairs(game.slaves("droppoint")) do
+			local info = ctx.settings and ctx.settings.droppoint_info
+			for _, joint in ipairs(info and info.droppoint_joints or {}) do
+				out[#out + 1] = { position = plain(node_position(unit, joint)), unit = unit, kind = "droppoint", ready = true }
+			end
+		end
+	end
+	if carry ~= nil then
+		local target = intended(carry)
+		if target then add_objective(target) else add_droppoints() end
+		return out
+	end
+	for unit in pairs(game.slaves("objective_carry_object")) do
+		local target = intended(unit)
+		if target then add_objective(target) end
+	end
+	add_droppoints()
+	return out
+end
+
+-- The extraction as it stands, or nil before there is any: { beacon, shuttle }. beacon, once the extraction
+-- beacon is down: { unit, position, enabled, activated, progress, code_length, countdown, too_far }. activated is
+-- true once the code is in and the shuttle is called; countdown the seconds until the shuttle comes, on the
+-- host; too_far the seconds left before the beacon resets because the squad stands more than 25 metres from it,
+-- or nil. shuttle: { unit, state, landed, position, door, time_left, aboard }. state is the game's number for the
+-- landing zone: 1 waiting for the beacon, 4 coming, 5 landing, 6 landed, 7 leaving with the ones aboard, 0 gone
+-- with none. door: where a Helldiver walks to get in (the game boards every live Helldiver within 1.9 metres of
+-- it). time_left: the seconds before the shuttle leaves once landed. aboard: how many got in.
+function M.extraction()
+	if not game.in_mission() then return nil end
+	local out = {}
+	local units = game.global("Unit")
+	for unit, ctx in pairs(game.slaves("extract_beacon")) do
+		local st = game.masters("extract_beacon")[unit]
+		st = st and st.state or ctx.state or {}
+		out.beacon = { unit = unit, position = plain(units.world_position(unit, 0)), enabled = st.enabled ~= false, activated = st.activated == true,
+			progress = tonumber(st.progress) or 0, code_length = st.combo and #st.combo or tonumber(st.target_interacts),
+			countdown = st.activated and tonumber(st.extraction_timer) or nil, too_far = tonumber(st.too_far_away_timer) }
+		break
+	end
+	local lz = game.component("objective_extract_lz")
+	for unit, ctx in pairs(game.slaves("objective_extract_lz")) do
+		local st = (game.masters("objective_extract_lz")[unit] or ctx).state or {}
+		local active = st.active_lz == unit or (lz and lz.active_lz == unit)
+		if active or (tonumber(st.shuttle_state) or 0) >= 4 then
+			local s = { unit = st.shuttle, state = tonumber(st.shuttle_state) or 0, aboard = tonumber(st.avatars_in_dropship) or 0 }
+			s.landed = s.state == 6
+			if st.shuttle_position and s.state >= 4 then
+				local at = game.unbox(st.shuttle_position)
+				s.position = plain(at)
+				local ok, door = pcall(function()
+					local q, v3 = game.global("Quaternion"), game.global("Vector3")
+					return at + q.forward(q(v3(0, 0, 1), math.rad(90))) * 1.5
+				end)
+				s.door = ok and door and plain(door) or s.position
+			end
+			if s.landed then s.time_left = tonumber(st.abandon_timer) end
+			out.shuttle = s
+			break
+		end
+	end
+	if not (out.beacon or out.shuttle) then return nil end
+	return out
+end
+
+-- Whether the shuttle took this Helldiver aboard.
+function M.aboard(unit)
+	local lz = game.component("objective_extract_lz")
+	return lz ~= nil and type(lz.extracted_units) == "table" and lz.extracted_units[unit] == true
+end
+
+-- The areas objectives ask Helldivers to stand in: { kind, unit, position, radius, state, done, inside, total }
+-- each. kind: "hold" (stand inside until done reaches 1; enemies inside slow it to a tenth) or "fortify"
+-- (capture_radius, the area to take, comes too). Every Helldiver counts, bots and bare bots among them: the
+-- game moves done along by the share of the squad inside, so one who stays out slows it. state: "pending",
+-- "complete" or "failed". done, inside and total are the host's.
+function M.areas()
+	local out = {}
+	if not game.in_mission() then return out end
+	local units = game.global("Unit")
+	for unit, ctx in pairs(game.slaves("objective_hold_object")) do
+		local st = state_of(unit, "objective_hold_object") or ctx.state or {}
+		local stage = st.current_stage
+		out[#out + 1] = { kind = "hold", unit = unit, position = plain(units.world_position(unit, 0)), radius = stage and tonumber(stage.hold_radius),
+			state = st.mission_state, done = tonumber(st.percent_done), inside = tonumber(st.num_characters_in_radius), total = tonumber(st.num_characters) }
+	end
+	for unit, ctx in pairs(game.slaves("objective_fortify_object")) do
+		local st = state_of(unit, "objective_fortify_object") or ctx.state or {}
+		out[#out + 1] = { kind = "fortify", unit = unit, position = plain(units.world_position(unit, 0)), radius = tonumber(st.hold_radius),
+			capture_radius = tonumber(st.capture_radius), state = st.mission_state, inside = tonumber(st.num_characters_in_radius) }
+	end
+	return out
+end
+
 -- Convoys and escorted people can't die. The game switches them on and off as they move, so this
 -- repeats, and on the way out gives them what the game would have set by then. Masters only: a
 -- client holding one of these keeps it mortal.

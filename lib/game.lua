@@ -38,6 +38,7 @@ local COMMANDS = {
 	equipment = set("wielder wield"),
 	drone_station = set("set_force_dock"),
 	interactor = set("force_interaction"),
+	camera_target = set("activate deactivate"),
 }
 
 -- The state object and its name, in every game state once the game has booted.

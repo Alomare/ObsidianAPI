@@ -2,6 +2,23 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## Next
+
+- New: `bot:operate(unit, opts, on_done)` works a terminal to the end: objective terminals, the extraction beacon and hidden objects. Arrows go in one frame each, checked before the next, and presses come at a set rate. `bot:operating()` and `bot:cancel_operate()` go with it.
+- New: `bot:deliver(unit, pos, opts, on_done)` carries a thing an objective asks for to the drop-off and puts it down there. `bot:delivering()` goes with it.
+- New: `api.mission.drop_offs(thing)` lists where carried things count as delivered.
+- New: `bot:load(unit, opts, on_done)` loads a teammate's recoilless rifle or missile launcher from the bot's backpack.
+- New: `bot:take_ammo(unit, opts, on_done)` takes ammo from a teammate's ammo backpack, or from the bot's own.
+- New: `api.bots.dead()` lists the players the next reinforcement brings back, and `bot:reinforce(pos, on_done)` calls it.
+- New: `api.mission.extraction()` reads the beacon and the shuttle, `api.mission.aboard(unit)` says who got in, and `bot:board(opts, on_done)` walks a bot into the shuttle. A bare bot aboard leaves the level.
+- New: `bot:detonate()` sets off the satchel charges the bot threw, and `bot:charges_out()` counts them.
+- New: `api.bots.hazards(pos, radius, kinds)` lists mines, burning areas and armed hellbombs near a point.
+- New: `api.mission.areas()` lists the hold and fortify areas with their radius and progress.
+- New: `bot:camera(false)`, or `api.bots.add({ free_camera = true })`, takes a player bot out of the camera's framing and the screen's edge, so it walks anywhere on the map. `bot:in_camera()` goes with it.
+- New: `use_weapon` takes `move`, to keep walking on the bot's orders while it fires, and `rest`, seconds the weapon stays put away afterwards. `bot:resting(slot)` says how long.
+- New: `bot:use` takes `force`, to have the game use the thing with no wait for the game to offer it.
+- Changed: a bot sent to use something stops a little short when the thing's own body keeps it from getting closer, as with the extraction beacon.
+
 ## 1.38.1
 
 - Changed: a fighting bot fires only once it faces the target and has held on it a moment, so a shot doesn't leave on the way round, where a teammate may stand.

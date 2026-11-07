@@ -15,6 +15,7 @@
 -- right before the input component reads it, from a hook on its update: vectors made in the frame
 -- callback are a frame old by then, and read as NaN.
 local game = obsidian.module("lib/game")
+local mission = obsidian.module("lib/mission")
 local gear = obsidian.module("lib/gear")
 local stratagems = obsidian.module("lib/stratagems")
 local player = obsidian.module("lib/player")
@@ -178,7 +179,8 @@ end
 
 -- A new bot. opts: name (shown over the bot's head and in the HUD), bare (true for a unit with no record,
 -- false to refuse one when every record is taken), position (for a bare bot; next to the player by
--- default). The host or a player alone only: a client's local players join through the host.
+-- default), free_camera (true for a player bot the camera doesn't frame, as bot:camera(false)). The host or a
+-- player alone only: a client's local players join through the host.
 function M.add(opts)
 	opts = opts or {}
 	if opts.name ~= nil and (type(opts.name) ~= "string" or opts.name == "" or #opts.name > 32) then return nil, "bad_type" end
@@ -189,7 +191,10 @@ function M.add(opts)
 	local name = opts.name or ("Bot " .. (#M.list + 1))
 	if opts.bare ~= true then
 		local b = add_player(st, name)
-		if b then return b end
+		if b then
+			if opts.free_camera == true then b.free_camera = true end
+			return b
+		end
 		if opts.bare == false then return nil, "no_slot" end
 	end
 	return add_bare(st, name, opts.position)
@@ -328,7 +333,8 @@ end
 
 -- Aim at and shoot the nearest enemy within radius (25 metres), each frame. false stops. opts, all
 -- optional: weapon, a slot ("primary", "sidearm", "support" or the game's "primary_weapon" and so on) the
--- bot takes out and fights with, coming back to it after anything else it takes out; only, a function
+-- bot takes out and fights with, coming back to it after anything else it takes out, except while that
+-- weapon rests after a use_weapon with opts.rest; only, a function
 -- given an enemy unit that answers true for the enemies to shoot (the rest are left alone); secondary,
 -- true or a table to fire a vehicle seat's second weapon along with the first (the tank's machine gun,
 -- the first exosuit's rockets). The rockets go only while the exosuit faces the target. As a table:
@@ -1159,6 +1165,33 @@ function Bot:auto_helping()
 	return self.goals.auto_revive or false, self.goals.auto_heal or false
 end
 
+-- Whether the camera frames the bot. The game's camera frames every Helldiver whose camera target is on, and keeps
+-- each local player's body inside the screen (the mover's keep_inside_screen), so a player bot pulls the camera and is
+-- held at the edge of the screen. false takes the bot out of both with the game's own commands, kept so through a
+-- vehicle seat or a reinforcement (which switch the target on again): the bot walks anywhere on the map, the camera
+-- stays on the others, an arrow at the screen's edge points to the bot, and the HUD keeps the bot's slot. Downed out of
+-- view, it no longer dies after 4 seconds there (a bot downed 143 metres away got up by itself in a test). true, the
+-- default, puts the bot back in the framing and the leash: the camera can't show Helldivers much more than 40 metres
+-- apart, and while one stands outside the view it won't move away from them, so walk the bot back near the others
+-- first. A bare bot is never in the camera's framing. Answers the bot.
+function Bot:camera(on)
+	self.free_camera = on == false or nil
+	local unit = self:unit()
+	if unit and on ~= false then
+		local target = game.master(unit, "camera_target")
+		local h = health(unit)
+		if target and not target.active and not vehicles.seat_of(unit) and not (h and h.is_dead) then game.command(unit, "camera_target", "activate") end
+		local mover = game.master(unit, "mover")
+		if mover and mover.keep_inside_screen == false then game.command(unit, "mover", "keep_inside_screen", true) end
+	end
+	return self
+end
+
+-- Whether the camera frames the bot (bot:camera).
+function Bot:in_camera()
+	return not self.free_camera
+end
+
 -- Whether the bot is downed now.
 function Bot:downed()
 	local unit = self:unit()
@@ -1200,7 +1233,7 @@ function M.allow_interact(unit)
 	local ia = game.master(unit, "interactor")
 	local target, comp = ia and ia.interactable_unit, ia and ia.interactable_component
 	if b.task and b.task.kind == "revive" and target ~= nil and target ~= b.task.unit then return false end
-	if b.task and b.task.kind == "use" and target ~= nil then
+	if b.task and (b.task.kind == "use" or b.task.kind == "deliver" or b.task.kind == "operate") and target ~= nil then
 		if target ~= b.task.unit then return false end
 		if comp and PICKUPS[comp] and (b.pickup_cd or 0) > 0 then b.pickup_until = M.clock + b.pickup_cd end
 		return true
@@ -1280,6 +1313,40 @@ local USE_SETTLE = 1.5     -- seconds after a press for the game to show it took
 local USE_PICK = 2         -- seconds the interactor may offer something else before "picked_other"
 local IN_USE = { "CharacterStateInteract", "CharacterStateInteractObjective", "CharacterStateCarry", "CharacterStateSeated" }
 
+-- The interactable components a Helldiver uses with interact, by the game's names, the ones a teammate and a seat
+-- have among them. The first one the unit has is the one a use goes to.
+local INTERACTABLE = { "research_sample_pickup", "ammo_pickup", "weapon_pickup", "backpack_pickup", "hellbomb", "extract_beacon",
+	"objective_interact_object", "objective_defend_object", "objective_carry_object", "objective_convoy", "hidden_sweep_object", "npc_escort",
+	"interactable_character", "seat", "vehicle", "interactable_npc_dialogue", "custom_pickup" }
+
+local function interactable_state(unit, name)
+	local aux = game.global("EntityAux")
+	if not (aux and aux.state) then return nil end
+	local ok, st = pcall(aux.state, unit, name)
+	return ok and type(st) == "table" and st or nil
+end
+
+local function interactable_of(unit)
+	for _, name in ipairs(INTERACTABLE) do
+		if interactable_state(unit, name) then return name end
+	end
+	return nil
+end
+
+-- What the game's interactor hit on the thing, for a forced use: the actor the bot's own capsule found when it
+-- picked this thing, else the thing's first actor. The interactor sends the actor's index on to the thing's owner,
+-- so it has to be one of the thing's own.
+local function actor_for(unit, target)
+	local ia = game.master(unit, "interactor")
+	if ia and ia.interactable_unit == target and ia.interactable_actor ~= nil then return ia.interactable_actor end
+	local units = game.global("Unit")
+	if not (units.actor and units.num_actors) then return nil end
+	local ok, n = pcall(units.num_actors, target)
+	if not ok or type(n) ~= "number" or n < 1 then return nil end
+	local got, actor = pcall(units.actor, target, 0)
+	return got and actor or nil
+end
+
 local function use_step(b, unit, t, f, dt)
 	local task = b.task
 	local target = task.unit
@@ -1293,7 +1360,10 @@ local function use_step(b, unit, t, f, dt)
 	if task.time > task.limit then return end_task(b, false, "timeout") end
 	local dx, dy, d = flat(unit, target)
 	if d > task.reach + 1 then task.close = false end
-	if d > task.reach and not task.close then
+	-- Within a metre of reach and no closer for a second (the thing's own body in the way, as the extraction
+	-- beacon's): near enough.
+	task.near = d <= task.reach + 1 and (task.near or 0) + dt or 0
+	if d > task.reach and not task.close and task.near < 1 then
 		f.mx, f.my = direction({ x = dx, y = dy })
 		if not (b.fight_target and b.fight_near) then t.fire_button, f.ax, f.ay = 0, 0, 0 end
 		return
@@ -1312,9 +1382,19 @@ local function use_step(b, unit, t, f, dt)
 	if not calm(unit) then return end
 	task.turn = task.turn + dt
 	if not (faces(unit, dx, dy, 0.8) or task.turn > 0.5) then return end
+	-- Forced: the interactor is told the thing and uses it, with no wait for the capsule to pick it.
+	if task.force and target ~= unit then
+		local actor = actor_for(unit, target)
+		local comp = task.component or interactable_of(target)
+		if actor == nil or comp == nil then return end_task(b, false, "not_usable") end
+		task.tries = task.tries + 1
+		task.pressed, task.wait = true, USE_SETTLE
+		game.command(unit, "interactor", "force_interaction", { interactable_unit = target, interactable_component = comp, interactable_actor = actor })
+		return
+	end
 	-- With an empty weapon that the bot's own backpack can reload, the game offers the bot that reload
 	-- before anything else (InteractorComponent): with the primary in hand, the thing comes through.
-	if ia and offered == unit and not task.swapped then
+	if ia and offered == unit and target ~= unit and not task.swapped then
 		local inv = game.master(unit, "inventory")
 		if inv and alive(inv.primary_weapon) and inv.current_weapon ~= inv.primary_weapon then
 			task.swapped, task.pick = true, 0
@@ -1367,6 +1447,9 @@ local function vehicle_step(b, unit, t, f, dt)
 	if not board(unit, v, task.seat) then return end_task(b, false, "refused") end
 end
 
+-- The steps of the tasks set up further down: a terminal, a delivery, the shuttle, a satchel's detonation.
+local operate_step, deliver_step, board_step, detonate_step
+
 -- One frame of a help up or a heal: it writes this frame's sticks (f) and buttons (t), over what the
 -- orders left there.
 local function task_step(b, unit, t, f, dt)
@@ -1374,6 +1457,9 @@ local function task_step(b, unit, t, f, dt)
 	task.time, task.wait = task.time + dt, task.wait - dt
 	if task.kind == "vehicle" then return vehicle_step(b, unit, t, f, dt) end
 	if task.kind == "use" then return use_step(b, unit, t, f, dt) end
+	if task.kind == "operate" then return operate_step(b, unit, t, f, dt) end
+	if task.kind == "deliver" then return deliver_step(b, unit, t, f, dt) end
+	if task.kind == "board" then return board_step(b, unit, t, f, dt) end
 	local target = task.unit
 	if not alive(target) then return end_task(b, false, "dead") end
 	local h = health(target)
@@ -1762,6 +1848,7 @@ local KEEP_GAP = 1
 local function keep_weapon(b, unit, dt)
 	local slot = b.goals.fight and b.goals.fight.weapon
 	if not slot or b.task or b.job or b.rewield or b.in_seat then return end
+	if b.rests and b.rests[slot] and b.rests[slot] > M.clock then return end
 	b.keep_wait = (b.keep_wait or 0) - dt
 	if b.keep_wait > 0 then return end
 	local inv = game.master(unit, "inventory")
@@ -1907,15 +1994,51 @@ local USE_TIME = 10        -- seconds before a use_weapon gives up
 local AIM_COS = math.cos(math.rad(8)) -- how near the target the bot faces before it pulls the trigger
 local EMPTY_TIME = 1.5     -- seconds an empty weapon with no reload waits before "no_ammo"
 
+-- A weapon that fired rests for the use_weapon's opts.rest: put away, and taken out by neither use_weapon nor fight
+-- until then.
+local function other_slot(unit, slot)
+	local inv = game.master(unit, "inventory")
+	for _, s in ipairs({ "primary_weapon", "sidearm_weapon", "support_weapon" }) do
+		if s ~= slot and inv and alive(inv[s]) then return s end
+	end
+	return nil
+end
+
 local function finish_use(b, ok, why)
 	local job = b.job
+	local rests = job and job.rest and job.pulled
+	if rests then
+		b.rests = b.rests or {}
+		b.rests[job.slot] = M.clock + job.rest
+	end
 	if job and not job.keep then
 		local back = job.after or job.before
+		if rests and (back == nil or back == job.slot) then back = other_slot(b:unit(), job.slot) end
 		if back and back ~= job.slot then b.rewield = { slot = back, time = 0 } end
 	elseif job and job.after then
 		b.rewield = { slot = job.after, time = 0 }
 	end
 	finish(b, ok, why)
+end
+
+-- Seconds left before a slot's weapon may come out again after a use_weapon with opts.rest, or false.
+local function rest_left(b, slot)
+	local until_ = b.rests and b.rests[slot]
+	if not until_ then return false end
+	local left = until_ - M.clock
+	if left <= 0 then
+		b.rests[slot] = nil
+		return false
+	end
+	return left
+end
+
+-- How long the weapon in a slot still rests after a use_weapon with opts.rest: the seconds left, or false when it
+-- may come out. slot: as use_weapon takes it.
+function Bot:resting(slot)
+	local name = SLOTS[slot]
+	if not name then return false end
+	return rest_left(self, name)
 end
 
 -- A reload under way, or one the game would start now (an empty launcher with the backpack it reloads from on).
@@ -1927,7 +2050,8 @@ local function weapon_step(b, unit, t, f, dt)
 	local job = b.job
 	job.total, job.wait = job.total + dt, job.wait - dt
 	t.fire_button, t.throw, t.interact, t.interact_button = 0, 0, false, 0
-	f.mx, f.my = 0, 0
+	-- opts.move: the walking orders go on (follow, go_to, move) while the bot aims and fires.
+	if not job.move then f.mx, f.my = 0, 0 end
 	if job.cancel then return finish_use(b, false, "cancelled") end
 	if is_downed(unit) then return finish_use(b, false, "downed") end
 	if vehicles.seat_of(unit) then return finish_use(b, false, "seated") end
@@ -1974,12 +2098,15 @@ local function weapon_step(b, unit, t, f, dt)
 				return
 			end
 		end
+		-- On the move, the bot aims only while the weapon can shoot, and faces the way it walks through a reload.
 		if ws.is_reloading then
 			job.empty = 0
+			if job.move then f.ax, f.ay = 0, 0 end
 			return
 		end
 		if rounds == 0 then
 			job.empty = (job.empty or 0) + dt
+			if job.move then f.ax, f.ay = 0, 0 end
 			if not M.wants_reload(ws) and job.empty > EMPTY_TIME then return finish_use(b, false, "no_ammo") end
 			return
 		end
@@ -1998,12 +2125,18 @@ end
 -- an EAT or a recoilless rifle for one heavy enemy, while fight keeps to the rifle. slot: "primary",
 -- "sidearm", "support" or the game's "primary_weapon" and so on. opts, all optional: shots, how many shots
 -- before it's done (1; math.huge keeps firing until the target dies); time, seconds before it gives up
--- (10); keep, true to keep the weapon out afterwards. on_done may come in place of opts. The bot stands
--- still, faces the target and pulls the trigger only facing it, along a clear line and with no Helldiver in
--- the way; it reloads as auto_reload does, and an empty launcher the bot's backpack reloads is reloaded before
--- the weapon from before comes back, as a player does. Answers true once started, or false and a reason: "bad_slot",
--- "no_avatar", "busy" (calling a stratagem, throwing, using a weapon, or helping someone: stop_helping
--- first), "downed", "seated", "no_weapon" (nothing in that slot), "no_target". on_done(ok, reason): true
+-- (10); keep, true to keep the weapon out afterwards; move, true to keep walking on the bot's orders (follow,
+-- go_to, move) while it aims and fires, as fight does, rather than stand still; rest, seconds the weapon stays
+-- away once the use is over, if it fired: it goes back even when the bot held it before, and neither use_weapon
+-- nor fight's opts.weapon takes it out again until then (bot:resting). The game itself holds a Helldiver still while
+-- aiming or reloading the recoilless rifle and the missile launcher (their move_speed_aim and move_speed_reload are
+-- 0), so with those the bot stops to shoot, and on the move it faces the way it walks during the reload. on_done may
+-- come in place of opts. Without move, the bot stands still, faces the target and pulls the trigger only facing it,
+-- along a clear line and with no Helldiver in the way; it reloads as auto_reload does, and an empty launcher the
+-- bot's backpack reloads is reloaded before the weapon from before comes back, as a player does. Answers true once
+-- started, or false and a reason: "bad_slot", "no_avatar", "busy" (calling a stratagem, throwing, using a weapon, or
+-- helping someone: stop_helping first), "downed", "seated", "no_weapon" (nothing in that slot), "no_target",
+-- "resting" (the slot's weapon rests after an earlier use with opts.rest). on_done(ok, reason): true
 -- and "shots" (all fired), "killed" (the target died) or "spent" (the weapon went from the slot after
 -- firing, as the EAT does), or false and "no_switch" (the weapon wouldn't come out), "no_ammo",
 -- "no_weapon", "timeout", "downed", "seated", "cancelled" or "no_avatar".
@@ -2022,7 +2155,10 @@ function Bot:use_weapon(slot, target, opts, on_done)
 	if not alive(target) then return false, "no_target" end
 	local h = health(target)
 	if h and h.is_dead then return false, "no_target" end
+	if rest_left(self, name) then return false, "resting" end
 	opts = type(opts) == "table" and opts or {}
+	local rest = tonumber(opts.rest)
+	if rest and (rest ~= rest or rest <= 0) then rest = nil end
 	local shots = tonumber(opts.shots) or 1
 	if shots ~= shots or shots < 1 then shots = 1 end
 	local limit = tonumber(opts.time) or USE_TIME
@@ -2031,7 +2167,7 @@ function Bot:use_weapon(slot, target, opts, on_done)
 	local before = self.rewield and self.rewield.slot or current_slot(unit)
 	self.rewield = nil
 	self.job = { kind = "weapon", slot = name, weapon = weapon, unit = target, shots = shots, fired = 0, total = 0, limit = limit,
-		keep = opts.keep == true, before = before, on_done = on_done, tries = 0, wait = 0 }
+		keep = opts.keep == true, move = opts.move == true, rest = rest, before = before, on_done = on_done, tries = 0, wait = 0 }
 	return true
 end
 
@@ -2104,7 +2240,7 @@ function Bot:remove()
 		self.task = nil
 		if type(task.on_done) == "function" then pcall(task.on_done, false, "cancelled") end
 	end
-	self.rewield, self.leaving, self.ride, self.in_seat = nil, nil, nil, nil
+	self.rewield, self.leaving, self.ride, self.in_seat, self.detonating = nil, nil, nil, nil, nil
 	for i, b in ipairs(M.list) do
 		if b == self then
 			table.remove(M.list, i)
@@ -2346,35 +2482,53 @@ function M.usables(pos, radius, kinds)
 	return out
 end
 
--- Uses a thing the way a player does: the bot walks within reach, stands, faces it and presses interact
--- once the game offers it, the press a player's interact sends. A sample, an ammo box, a weapon or a
--- backpack lying about, a hellbomb, a terminal's first press, a thing to carry: a unit from usables, or a
--- teammate (a team reload of their launcher, from the bot's backpack). opts, all optional: reach, the
--- metres from the thing it stops at (1.2); time, the seconds before it gives up (20); presses, how many
--- presses it tries when one does nothing (1). on_done may come in place of opts. Answers true once
--- started, or false and a reason: "no_avatar", "busy" (calling a stratagem, throwing or using a weapon),
--- "downed", "seated", "no_target". on_done(ok, reason): true and "used", or false and "gone" (the thing
--- went before the bot got to it), "not_offered" (the game doesn't let this bot use it from there: an ammo
--- box with the bot's ammo full, for one), "picked_other" (something else stands in the way), "no_effect",
--- "downed", "timeout", "cancelled" or "no_avatar". A new use, revive or heal ends the one running. While it
--- runs the bot's other orders wait, but a bot that fights shoots back at enemies close by on the way.
-function Bot:use(unit, opts, on_done)
-	if type(opts) == "function" and on_done == nil then opts, on_done = nil, opts end
-	local me = self:unit()
-	if not me then return false, "no_avatar" end
-	if self.job then return false, "busy" end
-	if is_downed(me) then return false, "downed" end
-	if vehicles.seat_of(me) then return false, "seated" end
-	if not alive(unit) or unit == me then return false, "no_target" end
+local function start_use(b, kind, unit, opts, on_done)
 	opts = type(opts) == "table" and opts or {}
-	start_task(self, "use", unit, on_done, false)
-	local task = self.task
+	start_task(b, kind, unit, on_done, false)
+	local task = b.task
 	local reach = tonumber(opts.reach)
 	task.reach = (reach and reach > 0 and reach == reach) and reach or USE_REACH
 	local limit = tonumber(opts.time)
 	task.limit = (limit and limit > 0 and limit == limit) and limit or USE_LIMIT
 	local presses = tonumber(opts.presses)
 	task.presses = (presses and presses >= 1 and presses == presses) and math.floor(presses) or 1
+	task.force = opts.force == true
+	task.component = type(opts.component) == "string" and opts.component or nil
+	return task
+end
+
+local function can_start(b, me)
+	if not me then return false, "no_avatar" end
+	if b.job then return false, "busy" end
+	if is_downed(me) then return false, "downed" end
+	if vehicles.seat_of(me) then return false, "seated" end
+	return true
+end
+
+-- Uses a thing the way a player does: the bot walks within reach, stands, faces it and presses interact
+-- once the game offers it, the press a player's interact sends. A sample, an ammo box, a weapon or a
+-- backpack lying about, a hellbomb, a terminal's first press, a thing to carry: a unit from usables, or a
+-- teammate (a team reload of their launcher, from the bot's backpack). opts, all optional: reach, the
+-- metres from the thing it stops at (1.2); time, the seconds before it gives up (20); presses, how many
+-- presses it tries when one does nothing (1); force, true to have the game's interactor use the thing once
+-- the bot stands at it, with no wait for the game to offer it (the way the API seats a bot in a vehicle). A
+-- forced use skips the game's own check of whether this Helldiver may use the thing, so an ammo box goes to
+-- a bot with full ammo. component: the game's name of the part to use on a thing that has several (see
+-- usables), for force. on_done may come in place of opts. Answers true once started, or false and a reason:
+-- "no_avatar", "busy" (calling a stratagem, throwing or using a weapon), "downed", "seated", "no_target".
+-- on_done(ok, reason): true and "used", or false and "gone" (the thing went before the bot got to it),
+-- "not_offered" (the game doesn't let this bot use it from there: an ammo box with the bot's ammo full, for
+-- one), "picked_other" (something else stands in the way), "not_usable" (force on a thing with nothing to
+-- use), "no_effect", "downed", "timeout", "cancelled" or "no_avatar". A new use, revive or heal ends the one
+-- running. While it runs the bot's other orders wait, but a bot that fights shoots back at enemies close by on
+-- the way.
+function Bot:use(unit, opts, on_done)
+	if type(opts) == "function" and on_done == nil then opts, on_done = nil, opts end
+	local me = self:unit()
+	local ok, why = can_start(self, me)
+	if not ok then return false, why end
+	if not alive(unit) or unit == me then return false, "no_target" end
+	start_use(self, "use", unit, opts, on_done)
 	return true
 end
 
@@ -2388,6 +2542,332 @@ end
 function Bot:cancel_use()
 	if not (self.task and self.task.kind == "use") then return false end
 	end_task(self, false, "cancelled")
+	return true
+end
+
+-- Terminals: objective terminals, the extraction beacon and hidden objects take a first press of interact, then
+-- hold the Helldiver at them (CharacterStateInteractObjective) while each stage asks for arrows or for
+-- presses of interact. The host's copy of the terminal reads the input straight from the Helldiver's input
+-- table: an arrow true for one frame is one arrow in the code, and on a pad interact true for one frame is one
+-- press (ObjectiveInteractObjectComponent.update_masters, InteractUtility.handle_combo_input). A wrong arrow
+-- sets the code back to the start, and on a hidden object it fails the object. The Helldiver leaves the terminal
+-- on any stick, trigger, reload, melee, switch, sprint, dodge, map or stratagem input, so those stay at rest.
+-- Defaults of the tasks below, in one table: the file is near Lua's limit of local names.
+local NUM = {}
+local TERMINALS = { "objective_interact_object", "extract_beacon", "hidden_sweep_object" }
+NUM.OPERATE_TIME = 180   -- seconds before operate gives up, by default
+NUM.OPERATE_GAP = 0.06   -- seconds between arrows, by default
+NUM.OPERATE_MASH = 8     -- presses each second on a mash stage, by default
+NUM.OPERATE_TRIES = 3    -- times a code goes back to the start before "wrong_code", by default
+NUM.OPERATE_ENTER = 4    -- presses to get in before "refused"
+
+local function terminal_kind(unit)
+	for _, name in ipairs(TERMINALS) do
+		if interactable_state(unit, name) then return name end
+	end
+	return nil
+end
+
+-- One look at a terminal, from the host's copy: { done, failed, enabled, user, stage, type, code, progress, need }.
+local function console(unit, kind)
+	local ctx = game.masters(kind)[unit]
+	local st = ctx and ctx.state
+	if not st then return nil end
+	local v = { user = st.interacting_unit, enabled = st.enabled ~= false }
+	if kind == "objective_interact_object" then
+		local stage = st.current_stage or {}
+		v.done, v.failed = st.mission_state == "complete", st.mission_state == "failed"
+		v.stage, v.type = st.current_stage_index, stage.interact_type
+		v.code, v.progress = stage.combo, tonumber(st.progress) or 0
+		v.need = v.type == "combo" and type(stage.combo) == "table" and #stage.combo or tonumber(stage.target_interacts)
+		if (tonumber(st.event_duration) or 0) > 0 then v.enabled = false end
+	elseif kind == "extract_beacon" then
+		v.done, v.type, v.stage = st.activated == true, "combo", 1
+		v.code, v.progress = st.combo, tonumber(st.progress) or 0
+		v.need = type(st.combo) == "table" and #st.combo or tonumber(st.target_interacts)
+	else
+		v.done, v.failed, v.type, v.stage = st.state == 1, st.state == 2, "combo", 1
+		v.code, v.progress = st.combo, tonumber(st.interact_progress) or 0
+		v.need = type(st.combo) == "table" and #st.combo or 0
+		local shared = interactable_state(unit, kind)
+		if shared and shared.enabled == false then v.enabled = false end
+	end
+	return v
+end
+
+local function at_terminal(unit, target)
+	local cs = state_of(unit)
+	return cs ~= nil and in_state(cs, "CharacterStateInteractObjective") and (cs.current_interact_objective_unit == nil or cs.current_interact_objective_unit == target)
+end
+
+local function leave_terminal(unit)
+	game.command(unit, "character", "exit_interact_objective")
+end
+
+function operate_step(b, unit, t, f, dt)
+	local task = b.task
+	local target = task.unit
+	if not alive(target) then return end_task(b, false, "gone") end
+	if is_downed(unit) then return end_task(b, false, "downed") end
+	local inside = at_terminal(unit, target)
+	local function stop(ok, why)
+		if inside then leave_terminal(unit) end
+		return end_task(b, ok, why)
+	end
+	if task.time > task.limit then return stop(false, "timeout") end
+	local v = console(target, task.terminal)
+	if not v then return end_task(b, false, "not_owned") end
+	if v.done then return stop(true, "complete") end
+	if v.failed then return stop(false, "failed") end
+	if task.stages and v.stage and task.first_stage and v.stage - task.first_stage >= task.stages then return stop(true, "stages") end
+	task.first_stage = task.first_stage or v.stage
+	-- Nothing that would take the bot out of the terminal: this frame's buttons at rest, the presses of the
+	-- orders (a reload, a dodge) dropped.
+	t.fire_button, t.throw, t.reload_pressed, t.melee, t.interact_button = 0, 0, false, false, 0
+	t.sprint_button, t.sprint_pressed, t.dodge_pressed, t.stratagems_button, t.stratagems_pressed = 0, false, false, 0, false
+	if t.map_pressed ~= nil then t.map_pressed = false end
+	if t.switch_weapon_down ~= nil then t.switch_weapon_down, t.switch_weapon_up = false, false end
+	for _, d in ipairs(ARROWS) do t["stratagem_" .. d] = false end
+	b.presses.reload_pressed, b.presses.dodge_pressed, b.presses.melee = nil, nil, nil
+	if inside then
+		-- A press of interact here is a press on a mash stage, so only the ones below go through.
+		t.interact, b.presses.interact = false, nil
+	else
+		task.sent = nil
+		if v.user ~= nil and v.user ~= unit then
+			if alive(v.user) then return end_task(b, false, "busy") end
+		end
+		-- A stage that sends the Helldiver away (a countdown) or an event between stages: the bot waits by it.
+		local dx, dy, d = flat(unit, target)
+		task.near = d <= task.reach + 1 and task.near + dt or 0
+		if d > task.reach and task.near < 1 then
+			f.mx, f.my = dx / d, dy / d
+			if not (b.fight_target and b.fight_near) then f.ax, f.ay = 0, 0 end
+			return
+		end
+		f.mx, f.my = 0, 0
+		if d > 0.01 then f.ax, f.ay = dx / d, dy / d end
+		if not v.enabled or task.wait > 0 or not calm(unit) then return end
+		if task.enters >= NUM.OPERATE_ENTER then return end_task(b, false, "refused") end
+		local ia = game.master(unit, "interactor")
+		if ia and ia.interactable_unit ~= target and not task.force then
+			task.pick = task.pick + dt
+			if d > 0.01 then f.mx, f.my = dx / d * 0.6, dy / d * 0.6 end
+			if task.pick <= USE_PICK then return end
+			-- The terminal's panel can sit where the capsule ahead of a body standing by the terminal's middle
+			-- doesn't reach it (the antenna's): the interactor is told the terminal, as a forced use does.
+			local actor = actor_for(unit, target)
+			if actor == nil then return end_task(b, false, ia.interactable_unit ~= nil and "picked_other" or "not_offered") end
+			task.pick, task.wait = 0, USE_SETTLE
+			task.enters = task.enters + 1
+			game.command(unit, "interactor", "force_interaction", { interactable_unit = target, interactable_component = task.terminal, interactable_actor = actor })
+			return
+		end
+		task.pick = 0
+		task.enters, task.wait = task.enters + 1, USE_SETTLE
+		if task.force then
+			local actor = actor_for(unit, target)
+			if actor == nil then return end_task(b, false, "not_usable") end
+			game.command(unit, "interactor", "force_interaction", { interactable_unit = target, interactable_component = task.terminal, interactable_actor = actor })
+			return
+		end
+		press(b, "interact")
+		t.interact = true
+		return
+	end
+	task.enters = 0
+	f.mx, f.my, f.ax, f.ay = 0, 0, 0, 0
+	if not v.enabled then return end
+	if v.type == "carry_units" then return stop(false, "needs_carry") end
+	task.gap = task.gap - dt
+	if v.type == "buttonmash" then
+		if task.gap <= 0 then
+			task.gap = 1 / task.mash
+			t.interact = true
+		end
+		return
+	end
+	if v.type ~= "combo" or type(v.code) ~= "table" then return end
+	local p = v.progress
+	if task.sent ~= nil then
+		if p >= task.sent then
+			task.sent = nil
+		elseif p == 0 and task.sent > 1 then
+			-- Back to the start: an arrow the game counted wrong.
+			task.wrong, task.sent = task.wrong + 1, nil
+			if task.wrong >= task.tries then return stop(false, "wrong_code") end
+		elseif task.since > ARROW_WAIT then
+			task.sent = nil
+		else
+			task.since = task.since + dt
+			return
+		end
+	end
+	if p >= #v.code or task.gap > 0 then return end
+	local arrow = v.code[p + 1]
+	if not (arrow == "up" or arrow == "down" or arrow == "left" or arrow == "right") then return end
+	t["stratagem_" .. arrow] = true
+	task.sent, task.since, task.gap = p + 1, 0, task.arrow_gap
+end
+
+-- Works a terminal to the end, as a player does: the objective terminals (an antenna, a missile site, an oil
+-- pump), the extraction beacon and hidden objects. The bot walks to it and presses interact; when the game offers
+-- it nothing there within 2 seconds (the antenna's panel sits off the middle), the interactor is told the terminal,
+-- as bot:use does with force. Then the bot enters each stage's arrows one at a time, one frame each, checking each
+-- one counted before the next, or presses interact one frame at a time on the stages that ask for presses, and
+-- waits by it through the events between stages and the countdowns that send it away. unit: the terminal, from
+-- api.bots.usables. opts, all optional: arrow_gap, seconds between arrows (0.06); mash, presses each second (8);
+-- tries, times the code may go back to the start before it stops (3); stages, how many stages to do before it
+-- stops (all); reach, metres from the terminal to stand (1.2); time, seconds before it gives up (180); force, true
+-- to have the interactor told the terminal at once. on_done may come in place of opts. The terminal must be this
+-- machine's to work: the host's, where the bots are. Answers true once started, or false and a reason:
+-- "no_avatar", "busy", "downed", "seated", "no_target" (not a terminal), "not_owned" (another machine runs it),
+-- "complete" (already done). on_done(ok, reason): true and "complete" or "stages", or false and "failed" (the
+-- objective failed, or a wrong arrow failed a hidden object), "wrong_code", "needs_carry" (a stage asks for things
+-- to be carried to it: bot:deliver), "busy" (someone else is at it), "refused" (the bot couldn't get in),
+-- "not_usable", "picked_other", "not_offered", "gone", "downed", "timeout", "cancelled" or "no_avatar". The bot
+-- leaves the terminal when it stops.
+function Bot:operate(unit, opts, on_done)
+	if type(opts) == "function" and on_done == nil then opts, on_done = nil, opts end
+	local me = self:unit()
+	local ok, why = can_start(self, me)
+	if not ok then return false, why end
+	if not alive(unit) then return false, "no_target" end
+	local kind = terminal_kind(unit)
+	if not kind then return false, "no_target" end
+	local v = console(unit, kind)
+	if not v then return false, "not_owned" end
+	if v.done then return false, "complete" end
+	opts = type(opts) == "table" and opts or {}
+	local function num(x, default, least)
+		x = tonumber(x)
+		if x == nil or x ~= x or x < least then return default end
+		return x
+	end
+	start_task(self, "operate", unit, on_done, false)
+	local task = self.task
+	task.terminal = kind
+	task.arrow_gap = num(opts.arrow_gap, NUM.OPERATE_GAP, 0)
+	task.mash = num(opts.mash, NUM.OPERATE_MASH, 0.1)
+	task.tries = math.floor(num(opts.tries, NUM.OPERATE_TRIES, 1))
+	task.stages = opts.stages ~= nil and math.floor(num(opts.stages, 1, 1)) or nil
+	task.reach = num(opts.reach, USE_REACH, 0.1)
+	task.limit = num(opts.time, NUM.OPERATE_TIME, 0.1)
+	task.gap, task.wrong, task.enters = 0, 0, 0
+	task.force = opts.force == true
+	return true
+end
+
+-- The terminal the bot works (operate), the stage, what the stage asks ("combo", "buttonmash", "countdown",
+-- "carry_units") and how far along it is: unit, stage, type, progress. false while it works none.
+function Bot:operating()
+	if not (self.task and self.task.kind == "operate") then return false end
+	local v = console(self.task.unit, self.task.terminal) or {}
+	return self.task.unit, v.stage, v.type, v.progress
+end
+
+-- Stops operate. The bot steps out of the terminal.
+function Bot:cancel_operate()
+	if not (self.task and self.task.kind == "operate") then return false end
+	local unit = self:unit()
+	if unit and at_terminal(unit, self.task.unit) then leave_terminal(unit) end
+	end_task(self, false, "cancelled")
+	return true
+end
+
+-- What the game would do now with this bot's press on a Helldiver: "help_up", "assisted_reload",
+-- "self_service_reload" or nil, from the game's own rule on the Helldiver (InteractableCharacterComponent). The
+-- rule also leaves the prompt to draw over them for this frame, so that is put back as it was.
+local function offer_on(me, target)
+	local st = interactable_state(target, "interactable_character")
+	if not (st and type(st.can_interact) == "function") then return nil end
+	local name, reset = st.interact_info_name, st.has_reset_interact_info_name
+	local ok, what = pcall(st.can_interact, me)
+	st.interact_info_name, st.has_reset_interact_info_name = name, reset
+	return ok and what or nil
+end
+
+local function backpack_info(unit)
+	local inv = game.master(unit, "inventory") or interactable_state(unit, "inventory")
+	local pack = inv and inv.backpack
+	if not alive(pack) then return nil end
+	local lsm = game.global("LuaSettingsManager")
+	local ok, s = pcall(function() return lsm:get_settings_by_unit(pack) end)
+	return pack, ok and type(s) == "table" and s or nil
+end
+
+-- The uses left in a backpack, from the backpack interface: the owner's state, else the shared one.
+local function pack_uses(pack)
+	local aux = game.global("EntityAux")
+	for _, fn in ipairs({ "state_master_interface", "state_interface" }) do
+		if aux and aux[fn] then
+			local ok, st = pcall(aux[fn], pack, "backpack")
+			if ok and type(st) == "table" and st.num_uses ~= nil then return tonumber(st.num_uses) end
+		end
+	end
+	return nil
+end
+
+-- Loads a teammate's launcher from the bot's backpack, as a player's team reload: the recoilless rifle or the
+-- missile launcher, out and not full, with the bot wearing the backpack that launcher takes, with a rocket
+-- left. The bot walks to them and presses interact (bot:use). opts and on_done as bot:use. Answers true once
+-- started, or false and a reason: "no_avatar", "busy", "downed", "seated", "no_target", "no_backpack" (the bot
+-- wears no backpack for that launcher), "no_uses" (the backpack is empty), "not_loadable" (the teammate holds no
+-- launcher a teammate loads, or it is full or reloading).
+function Bot:load(unit, opts, on_done)
+	if type(opts) == "function" and on_done == nil then opts, on_done = nil, opts end
+	local me = self:unit()
+	local ok, why = can_start(self, me)
+	if not ok then return false, why end
+	if not alive(unit) or unit == me or not interactable_state(unit, "interactable_character") then return false, "no_target" end
+	if offer_on(me, unit) ~= "assisted_reload" then
+		local inv = game.master(unit, "inventory") or interactable_state(unit, "inventory")
+		local weapon = inv and inv.current_weapon
+		local lsm = game.global("LuaSettingsManager")
+		local got, s = pcall(function() return lsm:get_settings_by_unit(weapon) end)
+		local needs = got and type(s) == "table" and s.interact_info and s.interact_info.required_item
+		local pack = backpack_info(me)
+		if needs then
+			local units = game.global("Unit")
+			local fine, fits = false, false
+			if pack ~= nil and units.is_a then fine, fits = pcall(units.is_a, pack, needs) end
+			if not (fine and fits) then return false, "no_backpack" end
+			local uses = pack_uses(pack)
+			if uses and uses <= 0 then return false, "no_uses" end
+		end
+		return false, "not_loadable"
+	end
+	start_use(self, "use", unit, opts, on_done)
+	return true
+end
+
+-- Takes ammo as a player does with interact: from a teammate's ammo backpack (unit), or from the bot's own when
+-- unit is nil. The game lets a teammate's backpack refill a bot whose ammo isn't full, and the bot's own only
+-- once the weapon in hand has no magazine left. opts and on_done as bot:use. Answers true once started, or false
+-- and a reason: "no_avatar", "busy", "downed", "seated", "no_target", "no_ammo_pack" (no ammo backpack there),
+-- "no_uses" (the backpack is empty), "not_needed" (the bot's ammo is full, or with the bot's own backpack the
+-- weapon in hand still has a magazine).
+function Bot:take_ammo(unit, opts, on_done)
+	if type(opts) == "function" and on_done == nil then opts, on_done = nil, opts end
+	local me = self:unit()
+	local ok, why = can_start(self, me)
+	if not ok then return false, why end
+	local from = unit or me
+	if not alive(from) or not interactable_state(from, "interactable_character") then return false, "no_target" end
+	local pack, settings = backpack_info(from)
+	local info = settings and settings.backpack_info
+	if not (info and info.self_service) then return false, "no_ammo_pack" end
+	local uses = pack_uses(pack)
+	if uses and uses <= 0 then return false, "no_uses" end
+	if unit == nil or unit == me then
+		-- The game offers a Helldiver the own backpack only with an empty weapon (InteractorComponent).
+		local inv = game.master(me, "inventory")
+		local ws = inv and weapon_state(inv.current_weapon)
+		if not (ws and ws.num_mags == 0 and (tonumber(ws.magazines_max) or 0) > 0) then return false, "not_needed" end
+	elseif offer_on(me, unit) ~= "self_service_reload" then
+		return false, "not_needed"
+	end
+	start_use(self, "use", from, opts, on_done)
 	return true
 end
 
@@ -2407,6 +2887,353 @@ function Bot:drop()
 	if not self:carrying() then return false, "not_carrying" end
 	game.command(unit, "character", "drop_carry")
 	return true
+end
+
+-- Delivering a thing objectives ask to carry: picked up as bot:use picks it up, walked to the drop-off and put
+-- down there. The game counts a thing lying within 3 metres of a drop-off, a moment after it lands
+-- (ObjectiveCarryObjectComponent: complete_check_timer).
+NUM.DELIVER_AT = 1       -- metres from the drop-off where the bot puts the thing down, by default
+NUM.DELIVER_TIME = 90    -- seconds before a delivery gives up, by default
+NUM.DELIVER_CHECK = 3    -- seconds after the drop for the game to count it
+
+local function carried_by(thing)
+	local ctx = game.masters("objective_carry_object")[thing] or game.slaves("objective_carry_object")[thing]
+	local st = ctx and ctx.state
+	return st and st.carrier, st
+end
+
+local function nearest_drop_off(thing, here)
+	local best, best_d
+	for _, d in ipairs(mission.drop_offs(thing)) do
+		if d.ready ~= false then
+			local dx, dy = d.position.x - here.x, d.position.y - here.y
+			local dist = dx * dx + dy * dy
+			if not best_d or dist < best_d then best, best_d = d.position, dist end
+		end
+	end
+	return best
+end
+
+function deliver_step(b, unit, t, f, dt)
+	local task = b.task
+	local thing = task.unit
+	if task.time > task.limit then return end_task(b, false, "timeout") end
+	if not alive(thing) then return end_task(b, false, "gone") end
+	if is_downed(unit) then return end_task(b, false, "downed") end
+	local carrier, st = carried_by(thing)
+	if st and st.mission_state == "complete" then return end_task(b, true, "delivered") end
+	if task.phase == "pick" then
+		if b:carrying() == thing then
+			task.phase = "walk"
+		elseif alive(carrier) and carrier ~= unit then
+			return end_task(b, false, "taken")
+		else
+			-- The pickup is a use of the thing; the use's end comes back here.
+			local sub = task.sub
+			if not sub then
+				sub = { kind = "use", unit = thing, time = 0, wait = 0, tries = 0, turn = 0, near = 0, pick = 0, reach = USE_REACH, limit = task.limit,
+					presses = 3 }
+				task.sub = sub
+			end
+			sub.time, sub.wait = sub.time + dt, sub.wait - dt
+			b.task = sub
+			local result
+			sub.on_done = function(ok, why) result = { ok, why } end
+			use_step(b, unit, t, f, dt)
+			b.task = task
+			if result and not result[1] then return end_task(b, false, result[2]) end
+			if result then task.sub = nil end
+			return
+		end
+	end
+	if task.phase == "walk" then
+		if b:carrying() ~= thing then return end_task(b, false, "dropped") end
+		local here = game.global("Unit").world_position(unit, 0)
+		local to = task.pos or nearest_drop_off(thing, here)
+		if not to then return end_task(b, false, "no_drop_off") end
+		local dx, dy = to.x - here.x, to.y - here.y
+		local d = math.sqrt(dx * dx + dy * dy)
+		if d > task.at then
+			f.mx, f.my = dx / d, dy / d
+			if not (b.fight_target and b.fight_near) then t.fire_button, f.ax, f.ay = 0, 0, 0 end
+			return
+		end
+		f.mx, f.my = 0, 0
+		game.command(unit, "character", "drop_carry")
+		task.phase, task.wait = "check", NUM.DELIVER_CHECK
+		return
+	end
+	if task.phase == "check" then
+		f.mx, f.my = 0, 0
+		if b:carrying() == thing then
+			if task.wait < NUM.DELIVER_CHECK - 1 then
+				game.command(unit, "character", "drop_carry")
+				task.wait = NUM.DELIVER_CHECK
+			end
+			return
+		end
+		if task.wait <= 0 then return end_task(b, false, "not_delivered") end
+	end
+end
+
+-- Carries a thing an objective asks for (a hard drive, a missile for the artillery) to where it counts, as a
+-- player does: picks it up (bot:use), walks it there and puts it down. pos: where to put it down, or nil for the
+-- nearest drop-off of api.mission.drop_offs that asks for it. opts, all optional: at, the metres from pos where it
+-- puts it down (1; the game counts it within 3); time, the seconds before it gives up (90). on_done may come in
+-- place of opts. Answers true once started, or false and a reason: "no_avatar", "busy", "downed", "seated",
+-- "no_target" (not a thing to carry). on_done(ok, reason): true and "delivered" once the game counts it, or false
+-- and "taken" (another Helldiver has it), "dropped" (the bot let go of it on the way: downed, or hit), "gone",
+-- "no_drop_off", "not_delivered" (down, but not where the game counts it), "downed", "timeout", "cancelled" or
+-- "no_avatar". While carrying, the bot jogs and fights only with a one-handed weapon, as a player.
+function Bot:deliver(unit, pos, opts, on_done)
+	if type(pos) == "function" and opts == nil and on_done == nil then pos, on_done = nil, pos end
+	if type(opts) == "function" and on_done == nil then opts, on_done = nil, opts end
+	local me = self:unit()
+	if not me then return false, "no_avatar" end
+	if self.job then return false, "busy" end
+	if is_downed(me) then return false, "downed" end
+	if vehicles.seat_of(me) then return false, "seated" end
+	if not alive(unit) or not interactable_state(unit, "objective_carry_object") then return false, "no_target" end
+	opts = type(opts) == "table" and opts or {}
+	start_task(self, "deliver", unit, on_done, false)
+	local task = self.task
+	task.phase = self:carrying() == unit and "walk" or "pick"
+	task.pos = point(pos)
+	local at, limit = tonumber(opts.at), tonumber(opts.time)
+	task.at = (at and at > 0 and at == at) and at or NUM.DELIVER_AT
+	task.limit = (limit and limit > 0 and limit == limit) and limit or NUM.DELIVER_TIME
+	return true
+end
+
+-- The thing the bot is delivering (deliver) and the step it's at ("pick", "walk", "check"), or false.
+function Bot:delivering()
+	if not (self.task and self.task.kind == "deliver") then return false end
+	return self.task.unit, self.task.phase
+end
+
+-- Getting into the shuttle: the game boards every live Helldiver this machine owns that stands within 1.9 metres
+-- of the shuttle's door once it has landed (ObjectiveExtractLZComponent, overlap_callback_extract_players).
+NUM.BOARD_TIME = 120
+NUM.BOARD_AT = 0.5
+
+function board_step(b, unit, t, f, dt)
+	local task = b.task
+	if mission.aboard(unit) then
+		end_task(b, true, "aboard")
+		-- The game counts a bare bot aboard but has no record to take it out of the level with: it goes here.
+		if b.kind == "bare" then b:remove() end
+		return
+	end
+	if task.time > task.limit then return end_task(b, false, "timeout") end
+	if is_downed(unit) then return end_task(b, false, "downed") end
+	local ex = mission.extraction()
+	local s = ex and ex.shuttle
+	if not s or s.state == 0 or s.state == 7 then return end_task(b, false, "left") end
+	local to = s.door or s.position
+	if not to then return end
+	local here = game.global("Unit").world_position(unit, 0)
+	local dx, dy = to.x - here.x, to.y - here.y
+	local d = math.sqrt(dx * dx + dy * dy)
+	if d < 0.01 then dx, dy, d = 1, 0, 1 end
+	if not (b.fight_target and b.fight_near) then t.fire_button, f.ax, f.ay = 0, 0, 0 end
+	if s.landed then
+		f.mx, f.my = dx / d, dy / d
+	elseif d < 5 then
+		-- Before it lands, off the spot it comes down on.
+		f.mx, f.my = -dx / d, -dy / d
+	elseif d > 7 then
+		f.mx, f.my = dx / d, dy / d
+	else
+		f.mx, f.my = 0, 0
+	end
+end
+
+-- Gets into the extraction shuttle: the bot walks to the landing zone and waits 5 to 7 metres off the spot the
+-- shuttle comes down on, then walks in at the door once it has landed, where the game takes it aboard as a player.
+-- opts.time: the seconds before it gives up (120). on_done may come in place of opts. Answers true once started, or
+-- false and a reason: "no_avatar", "busy", "downed", "seated", "no_shuttle" (no shuttle called or on the way).
+-- on_done(ok, reason): true and "aboard", or false and "left" (the shuttle went without the bot), "downed",
+-- "timeout", "cancelled" or "no_avatar". A player bot aboard leaves the level with the shuttle, as a player does,
+-- and has no body after that. The game counts a bare bot aboard as well (the shuttle leaves with it, and that wins
+-- the mission even with no player aboard) but leaves the body standing, so the API removes a bare bot once aboard.
+function Bot:board(opts, on_done)
+	if type(opts) == "function" and on_done == nil then opts, on_done = nil, opts end
+	local me = self:unit()
+	local ok, why = can_start(self, me)
+	if not ok then return false, why end
+	local ex = mission.extraction()
+	local s = ex and ex.shuttle
+	if not s or s.state == 0 or s.state == 7 then return false, "no_shuttle" end
+	opts = type(opts) == "table" and opts or {}
+	start_task(self, "board", nil, on_done, false)
+	local limit = tonumber(opts.time)
+	self.task.limit = (limit and limit > 0 and limit == limit) and limit or NUM.BOARD_TIME
+	return true
+end
+
+-- Records the game brings back with the next reinforcement: every player whose Helldiver is dead, or who has
+-- none and hasn't left in the shuttle, as StateGame.on_stratagem_pre_activated lists them. { index, name, bot }
+-- each; bot is the Bot when it's one of this machine's bots.
+function M.dead()
+	local st = game.state()
+	local out = {}
+	if type(st) ~= "table" or type(st.players) ~= "table" or not game.in_mission() then return out end
+	for i, r in ipairs(st.players) do
+		local go = r.player_go
+		if go and go:exists() then
+			local avatar = go:get("avatar_unit")
+			local gone
+			if alive(avatar) then
+				local h = health(avatar)
+				gone = h ~= nil and h.is_dead == true
+			else
+				gone = not go:get("has_extracted")
+			end
+			if gone then
+				local mine
+				for _, b in ipairs(M.list) do
+					if b.record == r and not b.removed then mine = b end
+				end
+				out[#out + 1] = { index = go:get("index") or i, name = go:get("name"), bot = mine }
+			end
+		end
+	end
+	return out
+end
+
+-- Calls in the dead (api.bots.dead): the reinforce stratagem, entered and thrown toward pos as use_stratagem
+-- does, or at the bot's feet when pos is nil. Answers as use_stratagem, or false and "no_one_dead" with nobody to
+-- bring back: the game would give the stratagem back then.
+function Bot:reinforce(pos, on_done)
+	if type(pos) == "function" and on_done == nil then pos, on_done = nil, pos end
+	if #M.dead() == 0 then return false, "no_one_dead" end
+	if pos == nil then
+		pos = self:position()
+		if not pos then return false, "no_avatar" end
+	end
+	return self:use_stratagem("stratagem_reinforce", pos, on_done)
+end
+
+-- Satchel charges: fire throws one where the bot faces, and a press of reload with the satchel in hand sets off
+-- every one thrown (CharacterComponent.handle_special_reload: "trigger_child_units"). The game takes the satchel
+-- away at that press when none are left to throw.
+NUM.DETONATE_TIME = 3
+
+local function satchel_of(unit)
+	local inv = game.master(unit, "inventory")
+	if not inv then return nil end
+	for _, slot in ipairs(HEAL_SLOTS) do
+		local w = inv[slot]
+		if alive(w) then
+			local tw = game.master(w, "throwable_weapon")
+			if tw then return slot, w, tw end
+		end
+	end
+	return nil
+end
+
+-- Sets off the satchel charges the bot has thrown: the satchel comes out if it isn't in hand, and reload is
+-- pressed. Answers true, or false and a reason: "no_avatar", "busy", "downed", "seated", "no_satchel" (none in the
+-- bot's slots), "none_out" (none thrown yet).
+function Bot:detonate()
+	local unit = self:unit()
+	local ok, why = can_start(self, unit)
+	if not ok then return false, why end
+	local slot, weapon, tw = satchel_of(unit)
+	if not slot then return false, "no_satchel" end
+	if type(tw.child_units) ~= "table" or #tw.child_units == 0 then return false, "none_out" end
+	self.detonating = { slot = slot, weapon = weapon, time = 0, wait = 0 }
+	return true
+end
+
+-- How many satchel charges the bot has out, waiting for detonate: a number, or nil with no satchel.
+function Bot:charges_out()
+	local unit = self:unit()
+	if not unit then return nil end
+	local slot, _, tw = satchel_of(unit)
+	if not slot then return nil end
+	return type(tw.child_units) == "table" and #tw.child_units or 0
+end
+
+function detonate_step(b, unit, t, dt)
+	local d = b.detonating
+	d.time, d.wait = d.time + dt, d.wait - dt
+	local inv = game.master(unit, "inventory")
+	if d.time > NUM.DETONATE_TIME or not inv or not alive(d.weapon) or is_downed(unit) then
+		b.detonating = nil
+		return
+	end
+	if not calm(unit) or d.wait > 0 then return end
+	if inv.current_weapon ~= d.weapon then
+		d.wait = SWITCH_GAP
+		wield(unit, d.slot)
+		return
+	end
+	-- One frame: a second one would reach the weapon that comes out once the satchel is gone.
+	t.reload_pressed = true
+	b.detonating = nil
+end
+
+-- Dangers on the ground near a point, as the game sets them: { kind, unit, position, radius, time_left, active }
+-- each, nearest first. kind: "mine" (a mine, any Helldiver's own included, sets off on any live body within 0.3
+-- metres once armed; radius is the blast's), "fire" (napalm, lava, gas and the like: a burning area of radius
+-- metres for time_left seconds more, active once it burns), "hellbomb" (an armed hellbomb, time_left seconds
+-- before it goes off; the scripts give no radius for it, so radius is nil). pos: a position, or the player's;
+-- radius: metres around it (30); kinds: a list of those to keep, or nil for all.
+function M.hazards(pos, radius, kinds)
+	local units = game.global("Unit")
+	if not pos then
+		local me = game.my_unit()
+		if not me then return {} end
+		pos = units.world_position(me, 0)
+	end
+	local ok, px, py = pcall(function() return pos.x, pos.y end)
+	if not (ok and type(px) == "number" and type(py) == "number") then return {} end
+	radius = tonumber(radius) or 30
+	local want
+	if type(kinds) == "table" then
+		want = {}
+		for _, k in ipairs(kinds) do want[k] = true end
+	end
+	local lsm = game.global("LuaSettingsManager")
+	local out = {}
+	local function add(kind, unit, r, left, active)
+		if want and not want[kind] then return end
+		local at = units.world_position(unit, 0)
+		local dx, dy = at.x - px, at.y - py
+		local d = math.sqrt(dx * dx + dy * dy)
+		if d <= radius then
+			out[#out + 1] = { kind = kind, unit = unit, position = { x = at.x, y = at.y, z = at.z }, radius = r, time_left = left, active = active, d = d }
+		end
+	end
+	local function blast(unit, ctx)
+		local info = ctx and ctx.settings and ctx.settings.explosive_info
+		if not info then
+			local got, s = pcall(function() return lsm:get_settings_by_unit(unit) end)
+			info = got and type(s) == "table" and s.explosive_info
+		end
+		return info and tonumber(info.blast_radius)
+	end
+	for unit, ctx in pairs(game.slaves("mine")) do
+		if alive(unit) then
+			local st = (game.masters("mine")[unit] or ctx).state or {}
+			if not st.has_exploded then add("mine", unit, blast(unit, ctx), nil, st.armed == true) end
+		end
+	end
+	for unit, ctx in pairs(game.slaves("spawn_area_effect")) do
+		local st = ctx.state or {}
+		if alive(unit) then
+			local info = st.explosive_info
+			add("fire", unit, info and tonumber(info.blast_radius), tonumber(st.time_until_end), st.field_active == true)
+		end
+	end
+	for unit, ctx in pairs(game.slaves("hellbomb")) do
+		local st = (game.masters("hellbomb")[unit] or ctx).state or {}
+		if alive(unit) and st.is_armed then add("hellbomb", unit, nil, tonumber(st.detonation_timer), true) end
+	end
+	table.sort(out, function(a, b) return a.d < b.d end)
+	for _, h in ipairs(out) do h.d = nil end
+	return out
 end
 
 -- A voice line with the words over the bot's head, as a player's d-pad sends them: "yes", "no", "stay",
@@ -2569,6 +3396,12 @@ local function drive(b, unit, dt)
 		end
 	end
 	t.is_active = true
+	-- Out of the camera's framing (bot:camera): kept so through whatever switches it on again.
+	if b.free_camera then
+		local target, mover = game.master(unit, "camera_target"), game.master(unit, "mover")
+		if target and target.active then game.command(unit, "camera_target", "deactivate") end
+		if mover and mover.keep_inside_screen then game.command(unit, "mover", "keep_inside_screen", false) end
+	end
 	local seat = seat_view(b, unit)
 	if seat and seat.kind == "exosuit" then b.mech_at = M.clock end
 	if b.orders.fire then t.fire_button = 1 end
@@ -2612,6 +3445,7 @@ local function drive(b, unit, dt)
 	end
 	if b.goals.avoid and not seat and not b.job and not b.leap and not is_downed(unit) then avoid_step(b, unit, here, f, dt) end
 	if b.leap and not seat then jump_step(b, unit, t, f, dt) end
+	if b.detonating and not seat and not b.job and not b.task then detonate_step(b, unit, t, dt) end
 	if seat then
 		-- In a seat that steers, the orders' walking drives the vehicle.
 		if seat.steers then steer(b, t, f) end
@@ -2695,7 +3529,7 @@ function M.drive_all()
 			if b.job then finish(b, false, "no_avatar") end
 			if b.leap then end_jump(b, false, "no_avatar") end
 			if b.task then end_task(b, false, "no_avatar") end
-			b.rewield, b.leaving, b.in_seat = nil, nil, nil
+			b.rewield, b.leaving, b.in_seat, b.detonating = nil, nil, nil, nil
 			b.fight_target, b.fight_face = nil, nil
 		end
 	end
