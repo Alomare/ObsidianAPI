@@ -2,6 +2,10 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## Next
+
+- Changed: the label of the F6 key says "Open in-game menu" in French, Spanish, Portuguese and Chinese too, as in English since 1.36.2.
+
 ## 1.39.0
 
 - New: `bot:operate(unit, opts, on_done)` works a terminal to the end: objective terminals, the extraction beacon and hidden objects. Arrows go in one frame each, checked before the next, and presses come at a set rate. `bot:operating()` and `bot:cancel_operate()` go with it.

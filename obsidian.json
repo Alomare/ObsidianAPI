@@ -58,10 +58,10 @@
       "pad": "pad_open",
       "label": {
         "en": "Open in-game menu",
-        "pt-BR": "Abrir o menu",
-        "zh-CN": "打开菜单",
-        "fr": "Ouvrir le menu",
-        "es": "Abrir el menú"
+        "pt-BR": "Abrir menu do jogo",
+        "zh-CN": "打开游戏内菜单",
+        "fr": "Ouvrir le menu en jeu",
+        "es": "Abrir menú del juego"
       }
     }
   ],
