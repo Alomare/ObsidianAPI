@@ -2,7 +2,7 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
-## Next
+## 1.39.1
 
 - Changed: the label of the F6 key says "Open in-game menu" in French, Spanish, Portuguese and Chinese too, as in English since 1.36.2.
 
