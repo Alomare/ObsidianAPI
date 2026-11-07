@@ -2,7 +2,7 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
-## Next
+## 1.39.0
 
 - New: `bot:operate(unit, opts, on_done)` works a terminal to the end: objective terminals, the extraction beacon and hidden objects. Arrows go in one frame each, checked before the next, and presses come at a set rate. `bot:operating()` and `bot:cancel_operate()` go with it.
 - New: `bot:deliver(unit, pos, opts, on_done)` carries a thing an objective asks for to the drop-off and puts it down there. `bot:delivering()` goes with it.
