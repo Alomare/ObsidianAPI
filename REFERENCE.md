@@ -1518,6 +1518,8 @@ In a seat, the orders work the seat's controls:
 - `fight` aims the seat's gun and fires it. A seat with no gun fights nothing. `fight(25, { secondary = true })` also fires the second gun: the tank's machine gun, an exosuit's left arm or the first exosuit's grenades. `bot:fire_secondary(on)` holds that trigger by hand.
 - In the seat that steers, `go_to` and `follow` drive: the APC and the bike speed up on the trigger and steer on the stick, the tank drives a track on each stick.
 
+`bot:mech_friendly_fire(false)` keeps the mech a bot pilots from hurting Helldivers: its shots cost players and other bots no health, and enemies take them as before. Shells still in the air count for 2 seconds after the bot gets out. It works while session mods run, and only on health: a knockdown or a status effect from a shot isn't held back.
+
 ```lua
 -- Into the exosuit the player clicked, then fight with both arms.
 local mech = api.vehicles.nearest(api.world.cursor(), 4)
@@ -1903,6 +1905,7 @@ Bots: Helldivers this machine plays. A bot is a local co-op player on a pad nobo
 - `bot:seat()`: The vehicle the bot sits in and the seat's index, or nil.
 - `bot:boarding()`: The vehicle and seat the bot is on its way to (enter_vehicle), or false.
 - `bot:ride_along(on)`: Rides along with a Helldiver: when they sit in a vehicle with a seat free that doesn't steer, the bot gets in (enter_vehicle), and once they're out it gets out of that vehicle too. on: true for the unit the bot follows (the player when it follows no one), a unit, or false to stop (the default).
+- `bot:mech_friendly_fire(on)`: Hits from the mech the bot pilots cost Helldivers no health while on is false, and for 2 seconds after it gets out, for a shell still in the air. Every Helldiver counts, other players and bots alike, on any machine: the game takes the lower of what the bot's machine and theirs work out. Enemies take the hits as before. true, the game's own way, is the default.
 - `bot:auto_get_up(on)`: Downed, the bot holds interact by itself until up: true by default. false leaves it down for a teammate, fighting from the ground with what it holds.
 - `bot:auto_revive(radius, opts)`: Helps up downed Helldivers within radius (15 metres) by itself, between other orders, while it follows or fights. Of the bots that do, only the free one nearest to a downed Helldiver goes. false stops. opts.retry: seconds before it tries again someone it failed to help up (5).
 - `bot:auto_heal(radius, opts)`: Heals hurt Helldivers within radius (20 metres) by itself with the REP-80, when it carries one with ammo, then takes back the weapon it held. One bot heals each Helldiver, the nearest free one. false stops. opts.below: the share of health under which it starts on someone, from 0 to 1 (0.8, so under 80% health). opts.retry: seconds before it tries again someone a heal failed on (5).

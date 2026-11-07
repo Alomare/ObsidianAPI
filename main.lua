@@ -101,6 +101,7 @@ end)
 if game.session_mode then
 	obsidian.on_require("foundation/lua/debug/debug", console.install)
 	bots.install()
+	combat.spare_with(bots.spares)
 	custom.install()
 	obsidian.on_frame(console.install)
 
@@ -112,6 +113,8 @@ if game.session_mode then
 		else
 			effects.pause()
 			edits.pause()
+			-- The input hook stops here, so each bot gets a still input of its own.
+			bots.rest_all()
 		end
 	end)
 

@@ -1038,6 +1038,15 @@ function Bot:ride_along(on)
 	return self
 end
 
+-- Hits from the mech the bot pilots cost Helldivers no health while on is false, and for 2 seconds after
+-- it gets out, for a shell still in the air. Every Helldiver counts, other players and bots alike, on any
+-- machine: the game takes the lower of what the bot's machine and theirs work out. Enemies take the hits
+-- as before. true, the game's own way, is the default.
+function Bot:mech_friendly_fire(on)
+	self.mech_spares = on == false or nil
+	return self
+end
+
 -- Downed, the bot holds interact by itself until up: true by default. false leaves it down for a
 -- teammate, fighting from the ground with what it holds.
 function Bot:auto_get_up(on)
@@ -2316,6 +2325,7 @@ local function drive(b, unit, dt)
 	end
 	t.is_active = true
 	local seat = seat_view(b, unit)
+	if seat and seat.kind == "exosuit" then b.mech_at = M.clock end
 	if b.orders.fire then t.fire_button = 1 end
 	if b.orders.fire2 and seat then t.throw = 1 end
 	if b.orders.sprint then t.sprint_button, t.sprint_pressed = 1, true end
@@ -2387,6 +2397,37 @@ function M.tick()
 	end
 	M.list = kept
 	if st.game_state == "game_over" then M.remove_all() end
+end
+
+-- While session mods are off, the input hook doesn't run, and the game would go on reading each bot's
+-- last input every frame: buttons held, and sticks made of engine vectors that last one frame, so they
+-- read as NaN later. A table at rest instead: the game resets the character's input and skips it until
+-- the next drive gives it a live one. main.lua calls this when the session stops being cleared.
+function M.rest_all()
+	for _, b in ipairs(M.list) do
+		local unit = b:unit()
+		local input = unit and game.master(unit, "input")
+		if input then
+			local t = blank_input()
+			t.is_active = false
+			input.input_data = t
+		end
+	end
+end
+
+local MECH_GRACE = 2
+
+-- Whether a hit of owner on victim costs nothing (mech_friendly_fire): a Helldiver hit by a bot that
+-- sits in a mech, or got out of one in the last 2 seconds. A mech's guns name the Helldiver in the seat
+-- as the owner of what they fire (SeatComponent, rpc_firearm_new_owner_unit).
+function M.spares(owner, victim)
+	if owner == nil or #M.list == 0 then return false end
+	for _, b in ipairs(M.list) do
+		if b.mech_spares and b.mech_at and M.clock - b.mech_at <= MECH_GRACE and b:unit() == owner then
+			return game.global("EntityAux").has_component(victim, "character") and true or false
+		end
+	end
+	return false
 end
 
 -- Right before the game's input component reads its players' input.

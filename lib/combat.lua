@@ -73,6 +73,10 @@ function M.health(original, unit, ...)
 	if not (scale or here) then return original(unit, ...) end
 	local damage, zone, kills = original(unit, ...)
 	if here then here.priced = true end
+	if here and here.spare then
+		here.damage = 0
+		return 0, zone, false
+	end
 	if damage <= 0 then return damage, zone, kills end
 	local state = game.global("EntityAux").state(unit, "health")
 	if scale then
@@ -107,19 +111,25 @@ local function position_of(data)
 	return { x = x, y = y, z = z }
 end
 
+-- Whether a hit costs nothing at all: main.lua sets it to the bots' mech_friendly_fire check.
+local function spares() return false end
+function M.spare_with(fn) spares = fn end
+
 -- Hearing hits changes nothing in the game, so it runs in any lobby, for client mods too. Sparing a
--- player changes the game, so only where session mods are cleared.
+-- player changes the game, so only where session mods are cleared. A hit on a player another machine
+-- runs is worked out here too, and that machine takes the lower of its own sum and this one.
 local function command(master)
 	return function(original, self, unit, ctx, name, data, ...)
-		if name ~= "do_damage" or type(data) ~= "table" or (#hit_list == 0 and #fatal_list == 0) then
-			return original(self, unit, ctx, name, data, ...)
-		end
+		if name ~= "do_damage" or type(data) ~= "table" then return original(self, unit, ctx, name, data, ...) end
+		local ok, sure = pcall(spares, data.owner_unit, unit)
+		local spare = ok and sure and (not game.session_mode or obsidian.session.cleared())
+		if #hit_list == 0 and #fatal_list == 0 and not spare then return original(self, unit, ctx, name, data, ...) end
 		local cleared = not game.session_mode or obsidian.session.cleared()
 		local hitter = #hit_list > 0 and own_player(data.owner_unit)
 		local fatal = cleared and master and #fatal_list > 0 and own_player(unit)
-		if not (hitter or fatal) then return original(self, unit, ctx, name, data, ...) end
+		if not (hitter or fatal or spare) then return original(self, unit, ctx, name, data, ...) end
 		local outer = current
-		current = { unit = unit, fatal = fatal }
+		current = { unit = unit, fatal = fatal, spare = spare }
 		local a, b, c = original(self, unit, ctx, name, data, ...)
 		local done = current
 		current = outer

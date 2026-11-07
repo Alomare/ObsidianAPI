@@ -2,6 +2,11 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## Next
+
+- New: `bot:mech_friendly_fire(false)` keeps the mech a bot pilots from hurting Helldivers. Enemies still take the hits.
+- Fixed: bots stand still while session mods are off. Before, each one kept the last buttons and sticks it was given, and the game went on reading those every frame.
+
 ## 1.37.0
 
 - New: `bot:use(unit, opts, on_done)` uses a thing the way a player does: samples, ammo boxes, weapons and backpacks lying about, hellbombs, the first press on a terminal, things to carry, and a team reload on a teammate. `bot:using()` and `bot:cancel_use()` go with it.
