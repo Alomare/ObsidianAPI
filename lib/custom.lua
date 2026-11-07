@@ -671,11 +671,12 @@ function M.is_hidden(name)
 	return hidden[name] ~= nil
 end
 
--- Carried stratagems: one more entry in every player's mission inventory, after the eight slots. The
--- game builds the inventory in InventoryComponent.set_loadout, and the "loadout" command that calls it
--- sends every entry to the other machines right after (broadcast_stratagem_cooldown), so they see it
+-- Carried stratagems: one more entry in every player's mission inventory, right after the
+-- always-present ones (Reinforce, SOS Beacon, Hellbomb, Metal Detector), so the HUD lists it with them.
+-- The game builds the inventory in InventoryComponent.set_loadout, and the "loadout" command that calls
+-- it sends every entry to the other machines right after (broadcast_stratagem_cooldown), so they see it
 -- too. A respawn copies the old entries back by index over a new list built the same way, so the
--- carried one keeps the same place and cooldown.
+-- carried one keeps the same place and cooldown; an old list without it gets it in the same place first.
 
 -- Whether a name is a stratagem now, or a custom one waiting for the game's list.
 local function known(name)
@@ -711,27 +712,76 @@ end
 
 -- After the game built a player's list from a loadout. The level goes into this inventory's copy of
 -- the player's upgrades too, as the call-in and the cooldown read it there by the stratagem's name.
+-- The place after the last always-present stratagem in a player's list.
+local function after_statics(entries)
+	local s = settings()
+	local ids = {}
+	for _, name in ipairs(s and type(s.static_stratagems) == "table" and s.static_stratagems or {}) do
+		local e = catalog.stratagem(name)
+		if e then ids[e.id] = true end
+	end
+	local at = 0
+	for i, e in ipairs(entries) do
+		if type(e) == "table" and ids[e.id] then at = i end
+	end
+	return at + 1
+end
+
+-- id -> name for the carried stratagems the game has.
+local function carried_ids()
+	local out = {}
+	for _, name in ipairs(carried_order) do
+		local e = catalog.stratagem(name)
+		if e then out[e.id] = name end
+	end
+	return out
+end
+
 local function add_carried(state)
 	if #carried_order == 0 or not cleared() or type(state) ~= "table" or type(state.stratagems) ~= "table" then return end
 	local s = settings()
 	if not s or type(s.get_upgraded_stratagem) ~= "function" then return end
 	local upgrades = type(state.item_upgrades) == "table" and state.item_upgrades or nil
+	local at = after_statics(state.stratagems)
 	for _, name in ipairs(carried_order) do
 		local e = catalog.stratagem(name)
 		if e and not holds(state.stratagems, e.id) then
 			local level = carried_level(name, e, upgrades)
 			if upgrades then upgrades[name] = level end
 			local info = s.get_upgraded_stratagem(e.id, level)
-			state.stratagems[#state.stratagems + 1] = { id = e.id, cooldown_timer = 0, uses_left = info and info.num_uses,
-				upgrade_value = level, loadout_info = info }
+			table.insert(state.stratagems, math.min(at, #state.stratagems + 1), { id = e.id, cooldown_timer = 0,
+				uses_left = info and info.num_uses, upgrade_value = level, loadout_info = info })
+			at = at + 1
 		end
 	end
 end
 
+-- The respawn's "stratagems" command copies a dead player's old entries by index onto the new list. An
+-- old list without a carried entry (carried after that player spawned) gets it in the new list's place,
+-- so the entries after it keep theirs. Answers the list to copy.
+local function align_restore(state, old)
+	if #carried_order == 0 or not cleared() or type(old) ~= "table" or type(state) ~= "table" or type(state.stratagems) ~= "table" then return old end
+	local ids = carried_ids()
+	local out
+	for i, e in ipairs(state.stratagems) do
+		if type(e) == "table" and ids[e.id] and not holds(out or old, e.id) then
+			if not out then
+				out = {}
+				for k, v in ipairs(old) do out[k] = v end
+			end
+			table.insert(out, math.min(i, #out + 1), { id = e.id, cooldown_timer = e.cooldown_timer, uses_left = e.uses_left,
+				upgrade_value = e.upgrade_value, loadout_info = e.loadout_info })
+		end
+	end
+	return out or old
+end
+
 -- Another machine's player, as this one sees them: a custom stratagem arrives as the base, so the
--- carried entry shows the base's icon and words. The carried one is the last of that player's list, so
--- of the entries holding a carried custom's base, the last goes back to the custom, and any before it
--- stay the base. Customs carried on one base take the last places in the order they were carried.
+-- carried entry shows the base's icon and words. The carried one sits right after the always-present
+-- stratagems, before every slot of the loadout, so of the entries holding a carried custom's base, the
+-- first goes back to the custom, and any after it stay the base. Customs carried on one base take the
+-- first places in the order they were carried. The entries arrive in order, so the first one is known
+-- as soon as it comes.
 local function relabel(state)
 	if #carried_order == 0 or not cleared() or type(state) ~= "table" or type(state.stratagems) ~= "table" then return end
 	local s = settings()
@@ -751,9 +801,9 @@ local function relabel(state)
 		for i, e in pairs(state.stratagems) do
 			if type(i) == "number" and type(e) == "table" and ids[e.id] then at[#at + 1] = i end
 		end
-		table.sort(at, function(a, b) return a > b end)
+		table.sort(at)
 		for k, i in ipairs(at) do
-			local d = list[#list - k + 1]
+			local d = list[k]
 			local want = d and d.id or base_id
 			local e = state.stratagems[i]
 			if e.id ~= want then
@@ -765,8 +815,8 @@ local function relabel(state)
 	end
 end
 
--- Every player carries a stratagem in every mission, as one more entry after the eight slots of their
--- loadout, until uncarry(name). A player whose loadout already holds it gets no second one. Every
+-- Every player carries a stratagem in every mission, as one more entry beside the always-present ones
+-- (Reinforce and the like), until uncarry(name). The HUD lists it with them. A player whose loadout already holds it gets no second one. Every
 -- player in the session needs the same call, so make it from a mod every player runs. It takes effect
 -- at each player's next spawn, and in a lobby that isn't cleared nothing is added. A carried custom
 -- stratagem leaves the Arsenal and the Loadout screen, and a saved loadout naming it gets another
@@ -821,8 +871,9 @@ local SLACK = 2          -- seconds a player's entry may be short of the squad's
 local SETTLE = 4         -- seconds an entry is watched before a jump counts: a respawn copies old times in
 local READY = 1          -- an entry this close to ready could have been thrown
 local JUMP = 5           -- and one that is now this long was
+local ADOPT = 6          -- seconds a new entry of this machine takes on the squad's remaining time
 local thrown = {}        -- id -> the longest time thrown on this machine since the last frame
-local watched = setmetatable({}, { __mode = "k" }) -- another machine's entry -> { time, age }
+local watched = setmetatable({}, { __mode = "k" }) -- an entry -> { time, age, set }
 
 -- id -> true for the shared stratagems the game has.
 local function shared_ids()
@@ -866,6 +917,12 @@ local function behind_of(now, squad)
 	return now < squad - SLACK
 end
 
+local function set_time(unit, id, time)
+	if game.command(unit, "inventory", "set_stratagem_info", { id = id, cooldown_timer = time }) then
+		game.command(unit, "inventory", "broadcast_stratagem_cooldown")
+	end
+end
+
 -- Sets the entry on every player of this machine that is short of the squad's time, and tells the
 -- other machines.
 local function catch_up(id, time)
@@ -873,14 +930,31 @@ local function catch_up(id, time)
 		local state = inventory_state(ctx)
 		local behind = false
 		for _, e in pairs(state and type(state.stratagems) == "table" and state.stratagems or {}) do
-			if type(e) == "table" and e.id == id and behind_of(cooldown_of(e), time) then behind = true end
+			if type(e) == "table" and e.id == id and behind_of(cooldown_of(e), time) then
+				behind = true
+				local w = watched[e]
+				if w then w.set = time end
+			end
 		end
-		if behind and game.command(unit, "inventory", "set_stratagem_info", { id = id, cooldown_timer = time }) then
-			game.command(unit, "inventory", "broadcast_stratagem_cooldown")
+		if behind then set_time(unit, id, time) end
+	end
+end
+
+-- Each entry of a shared stratagem, with the unit holding it: fn(unit, entry). mine: this machine's players.
+local function each_entry(ids, mine, fn)
+	for unit, ctx in pairs(game[mine and "masters" or "slaves"]("inventory")) do
+		local state = (mine or not game.master(unit, "inventory")) and inventory_state(ctx)
+		for _, e in pairs(state and type(state.stratagems) == "table" and state.stratagems or {}) do
+			if type(e) == "table" and ids[e.id] then fn(unit, e) end
 		end
 	end
 end
 
+-- Two things are told apart here. A throw on another machine is an entry going from ready to a long
+-- time, once that entry has been watched a while. A new entry of this machine (a player joining, a
+-- respawn) takes the squad's remaining time at once: the longest of every entry this machine knows,
+-- of the players here and on the other machines, and tells the others. A player joining another machine
+-- gets the time there the same way, from this machine's players as that machine sees them.
 watch_shared = function(dt)
 	if #shared_order == 0 or not cleared() then
 		thrown = {}
@@ -890,27 +964,42 @@ watch_shared = function(dt)
 	if not ids then return end
 	local times = thrown
 	thrown = {}
-	for unit, ctx in pairs(game.slaves("inventory")) do
-		local state = not game.master(unit, "inventory") and inventory_state(ctx)
-		for _, e in pairs(state and type(state.stratagems) == "table" and state.stratagems or {}) do
-			if type(e) == "table" and ids[e.id] then
-				local now, w = cooldown_of(e), watched[e]
-				if w then
-					if jumped(w.time, now, w.age) and now > (times[e.id] or 0) then times[e.id] = now end
-					w.time, w.age = now, w.age + dt
-				else
-					watched[e] = { time = now, age = 0 }
-				end
-			end
+	local squad, fresh = {}, {}
+	local function seen(e, now)
+		if now > (squad[e.id] or 0) then squad[e.id] = now end
+		local w = watched[e]
+		if not w then
+			w = { time = now, age = 0 }
+			watched[e] = w
+		end
+		return w
+	end
+	each_entry(ids, false, function(_, e)
+		local now = cooldown_of(e)
+		local w = seen(e, now)
+		if jumped(w.time, now, w.age) and now > (times[e.id] or 0) then times[e.id] = now end
+		w.time, w.age = now, w.age + dt
+	end)
+	each_entry(ids, true, function(unit, e)
+		local now = cooldown_of(e)
+		local w = seen(e, now)
+		if w.age < ADOPT then fresh[#fresh + 1] = { unit = unit, entry = e, w = w } end
+		w.time, w.age = now, w.age + dt
+	end)
+	for id, time in pairs(times) do catch_up(id, time) end
+	for _, f in ipairs(fresh) do
+		local id, target = f.entry.id, squad[f.entry.id] or 0
+		if not times[id] and behind_of(cooldown_of(f.entry), target) and not (f.w.set and f.w.set >= target - SLACK) then
+			f.w.set = target
+			set_time(f.unit, id, target)
 		end
 	end
-	for id, time in pairs(times) do catch_up(id, time) end
 end
 
 -- Makes a stratagem's cooldown the squad's: when any player throws it, every player's entry for it
 -- waits the same time, until unshare_cooldown(name). Every player in the session needs the same call,
 -- so make it from a mod every player runs. Players on one machine share it too. A player who joins
--- during a mission starts with it ready, and is caught up at the next throw. In a lobby that isn't
+-- during a mission, or spawns again, takes the squad's remaining time at once. In a lobby that isn't
 -- cleared each player's cooldown is their own. A custom stratagem is recognised on other machines
 -- when it is carried (carry), since a custom one travels as the base; a game's one always is.
 -- Returns true, or false and why: "not_available", "not_cleared".
@@ -1065,9 +1154,14 @@ function M.install()
 	obsidian.hook("MenuScreenLoadout", "setup_loadout", function(original, self, slot, ...)
 		clean_saved_loadouts(self, slot)
 		local r = { original(self, slot, ...) }
-		local players = type(self.parent) == "table" and self.parent.players
-		local player = type(players) == "table" and players[slot]
-		local items = type(player) == "table" and type(player.available_items) == "table" and player.available_items.stratagems
+		-- The screen keeps each player's lists in option_menus[slot] (menu_screen_loadout.lua:142, 441),
+		-- which every later read of the screen uses: the selection, the random loadout and the drawing.
+		local menus = type(self.option_menus) == "table" and self.option_menus[slot]
+		if type(menus) ~= "table" or type(menus.available_items) ~= "table" then
+			local players = type(self.parent) == "table" and self.parent.players
+			menus = type(players) == "table" and players[slot]
+		end
+		local items = type(menus) == "table" and type(menus.available_items) == "table" and menus.available_items.stratagems
 		if type(items) == "table" then
 			beside_bases(items.groups, named, group_holds)
 			filter_groups(items.groups)
@@ -1092,6 +1186,7 @@ function M.install()
 		return unpack(r)
 	end)
 	obsidian.hook("InventoryComponent", "command_master", function(original, self, unit, ctx, name, data, ...)
+		if name == "stratagems" then data = align_restore(inventory_state(ctx), data) end
 		local r = { original(self, unit, ctx, name, data, ...) }
 		if name == "throw_stratagem" then note_throw(inventory_state(ctx), data) end
 		return unpack(r)

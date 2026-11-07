@@ -8,6 +8,7 @@ New, changed or removed capabilities, one line each, brief and direct. A release
 - New: `api.stratagems.carry(name)` gives every player a stratagem as an extra entry in missions, beyond the 8 loadout slots, and other players' HUDs show it; `uncarry` and `is_carried` go with it.
 - New: `api.stratagems.share_cooldown(name)` puts the whole squad on one cooldown for a stratagem; `unshare_cooldown` and `is_shared` go with it.
 - Changed: when several stratagems share an arrow code, the one the player holds and can use wins.
+- Changed: the Loadout screen filters and orders the lists the game reads, so a custom stratagem sits beside the base there too.
 
 ## 1.39.1
 
