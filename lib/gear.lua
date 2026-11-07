@@ -28,46 +28,18 @@ local function alive(unit)
 	return unit and game.global("Unit").alive(unit)
 end
 
--- Infinite ammunition is the player's: guns, flamethrowers and launchers each have a flag of their own
--- (FirearmComponent and the others read state.infinite_ammo beside the component's), so the bots on
--- this machine keep counting rounds. Beam weapons and grenades have only the component's flag, which
--- covers every one of them on this machine.
-local OWN_FLAG = { "firearm", "flameweapon", "launcher" }
-local SHARED_FLAG = { "beamweapon", "throwable_weapon" }
-local unlimited = setmetatable({}, { __mode = "k" }) -- a weapon's state -> the weapon's flag before
-
+-- Every weapon this machine runs, the bots' included.
 effects.define({ id = "infinite_ammo",
 	apply = function()
-		for _, name in ipairs(SHARED_FLAG) do
+		for _, name in ipairs(AMMO_COMPONENTS) do
 			local c = game.component(name)
 			if c then c.infinite_ammo = true end
 		end
 	end,
-	frame = function(ctx)
-		local inv = ctx.unit and inventory(ctx.unit)
-		if not inv then return end
-		for _, slot in ipairs(WEAPON_SLOTS) do
-			local weapon = inv[slot]
-			if alive(weapon) then
-				for _, name in ipairs(OWN_FLAG) do
-					local master = game.masters(name)[weapon]
-					local st = master and master.state
-					if st and unlimited[st] == nil then
-						unlimited[st] = st.infinite_ammo or false
-						st.infinite_ammo = true
-					end
-				end
-			end
-		end
-	end,
 	remove = function()
-		for _, name in ipairs(SHARED_FLAG) do
+		for _, name in ipairs(AMMO_COMPONENTS) do
 			local c = game.component(name)
 			if c then c.infinite_ammo = false end
-		end
-		for st, before in pairs(unlimited) do
-			st.infinite_ammo = before
-			unlimited[st] = nil
 		end
 	end,
 })

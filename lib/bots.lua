@@ -1918,6 +1918,11 @@ local function finish_use(b, ok, why)
 	finish(b, ok, why)
 end
 
+-- A reload under way, or one the game would start now (an empty launcher with the backpack it reloads from on).
+local function reload_pending(ws)
+	return type(ws) == "table" and (ws.is_reloading == true or (tonumber(ws.rounds) == 0 and M.wants_reload(ws)))
+end
+
 local function weapon_step(b, unit, t, f, dt)
 	local job = b.job
 	job.total, job.wait = job.total + dt, job.wait - dt
@@ -1936,6 +1941,13 @@ local function weapon_step(b, unit, t, f, dt)
 	end
 	local target = job.unit
 	local h = alive(target) and health(target)
+	-- Done (the shots fired, or the target dead), the weapon goes back once a reload the backpack
+	-- gives has played out, as a player reloads before stowing: it comes out loaded next time.
+	if not job.done and job.pulled and (not alive(target) or (h and h.is_dead)) then job.done, job.result = true, "killed" end
+	if job.done then
+		if job.total <= job.limit and inv.current_weapon == weapon and reload_pending(weapon_state(weapon)) then return end
+		return finish_use(b, true, job.result)
+	end
 	if not alive(target) or (h and h.is_dead) then return finish_use(b, true, "killed") end
 	if job.total > job.limit then return finish_use(b, false, "timeout") end
 	local dx, dy, d = flat(unit, target)
@@ -1957,7 +1969,10 @@ local function weapon_step(b, unit, t, f, dt)
 		job.rounds, job.timer = rounds, timer
 		if shot > 0 then
 			job.fired = job.fired + shot
-			if job.fired >= job.shots then return finish_use(b, true, "shots") end
+			if job.fired >= job.shots then
+				job.done, job.result = true, "shots"
+				return
+			end
 		end
 		if ws.is_reloading then
 			job.empty = 0
@@ -1985,7 +2000,8 @@ end
 -- before it's done (1; math.huge keeps firing until the target dies); time, seconds before it gives up
 -- (10); keep, true to keep the weapon out afterwards. on_done may come in place of opts. The bot stands
 -- still, faces the target and pulls the trigger only facing it, along a clear line and with no Helldiver in
--- the way; it reloads as auto_reload does. Answers true once started, or false and a reason: "bad_slot",
+-- the way; it reloads as auto_reload does, and an empty launcher the bot's backpack reloads is reloaded before
+-- the weapon from before comes back, as a player does. Answers true once started, or false and a reason: "bad_slot",
 -- "no_avatar", "busy" (calling a stratagem, throwing, using a weapon, or helping someone: stop_helping
 -- first), "downed", "seated", "no_weapon" (nothing in that slot), "no_target". on_done(ok, reason): true
 -- and "shots" (all fired), "killed" (the target died) or "spent" (the weapon went from the slot after

@@ -10,7 +10,7 @@ New, changed or removed capabilities, one line each, brief and direct. A release
 - Changed: a dead body in the way no longer stops a bot's shot.
 - Changed: `bot:use` takes out the primary when the game offers the bot a reload of the bot's own first (an empty recoilless with the recoilless backpack), so the thing it was sent to use comes through.
 - Changed: a new `fight` order looks for a target at once.
-- Changed: `infinite_ammo` covers the player's guns, flamethrowers and launchers only. Bots on the same machine count their rounds. Beam weapons and grenades stay machine-wide.
+- Changed: `bot:use_weapon` reloads an empty launcher that the bot's backpack reloads before taking back the weapon from before, so the reload plays and the launcher comes out loaded next time.
 - Fixed: with `freeze` on, a killed enemy falls and despawns while the rest stay frozen.
 - Fixed: effects no longer log an error each time they're switched on outside a mission.
 
