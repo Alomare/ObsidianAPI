@@ -2,6 +2,18 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## Next
+
+- Changed: a fighting bot fires only once it faces the target and has held on it a moment, so a shot doesn't leave on the way round, where a teammate may stand.
+- Changed: in a mech, the bot lines up the gun on the mech's arm with the target, not the mech's middle.
+- Changed: a driving bot eases off near the point it drives to and stops within 4 meters of it, or when the point ends up close behind, instead of circling it.
+- Changed: a dead body in the way no longer stops a bot's shot.
+- Changed: `bot:use` takes out the primary when the game offers the bot a reload of the bot's own first (an empty recoilless with the recoilless backpack), so the thing it was sent to use comes through.
+- Changed: a new `fight` order looks for a target at once.
+- Changed: `infinite_ammo` covers the player's guns, flamethrowers and launchers only. Bots on the same machine count their rounds. Beam weapons and grenades stay machine-wide.
+- Fixed: with `freeze` on, a killed enemy falls and despawns while the rest stay frozen.
+- Fixed: effects no longer log an error each time they're switched on outside a mission.
+
 ## 1.38.0
 
 - New: `bot:hurts(target, slot)` and `api.gear.hurts(weapon, target)` answer the damage one hit does to a target after armor: square, glancing and on the weak spot, launchers included. An enemy the rifle gets 0 against is one for the anti-tank weapon.

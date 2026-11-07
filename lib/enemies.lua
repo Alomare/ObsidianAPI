@@ -482,6 +482,32 @@ local function set_frozen(on)
 	end
 end
 
+-- Frozen, the enemy component is paused whole, and an enemy's death runs in that update: the Dead
+-- state, the decay that despawns the body (EnemyComponent.update_masters), the collision taken off and
+-- the death animation (update_slaves). Each frame this runs those two for the dead ones only, so a
+-- kill falls and goes while the rest stay frozen. Their commands wait, as the living ones' do.
+local function dead_only(map)
+	local out = {}
+	for unit, ctx in pairs(map or {}) do
+		local h = type(ctx) == "table" and type(ctx.state) == "table" and ctx.state.health_state
+		if type(h) == "table" and h.is_dead then out[unit] = ctx end
+	end
+	return out
+end
+
+local deaths_failed = false
+
+local function frozen_deaths(dt)
+	local comp = game.component("enemy")
+	local em = comp and comp.entity_manager
+	if not (em and em:has_entities("enemy")) then return end
+	local masters, slaves = dead_only(em:get_master_entities("enemy")), dead_only(em:get_slave_entities("enemy"))
+	if next(masters) == nil and next(slaves) == nil then return end
+	comp:update_masters(masters, dt)
+	comp:write_game_objects(masters, slaves)
+	comp:update_slaves(slaves, dt)
+end
+
 effects.define({ id = "freeze",
 	apply = function() set_frozen(true) end,
 	remove = function() set_frozen(false) end,
@@ -552,6 +578,13 @@ end
 
 -- From the frame callback. The units are gone with the world by the first frame off a mission.
 function M.tick()
+	if frozen then
+		local ok, err = pcall(frozen_deaths, rawget(_G, "ENGINE_DT") or 0.016)
+		if not ok and not deaths_failed then
+			deaths_failed = true
+			obsidian.log("freeze: deaths: " .. tostring(err))
+		end
+	end
 	if next(loaded) == nil or game.in_mission() then return end
 	local packages = game.global("Boot").package_manager
 	for path in pairs(loaded) do

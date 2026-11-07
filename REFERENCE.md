@@ -339,7 +339,7 @@ Most of these have a friendlier call in their own section, such as `api.combat.s
 | `hide_model` | `true` | Hides the player's model |
 | `heavy_armor_look` | `true` | The heavy armor perk's look, without its armor. Shows in missions only |
 | `outline_color` | `{ r, g, b }` | The outline the player shows through walls. `api.player.set_outline` sets it |
-| `infinite_ammo` | `true` | Weapons never run dry |
+| `infinite_ammo` | `true` | The player's weapons never run dry. Bots keep counting rounds, apart from beam weapons and grenades, whose flag covers every one on this machine |
 | `instant_reload` | `true` | Reloads finish at once |
 | `no_cooldown` | `true` | Stratagems come back at once |
 | `free_stratagems` | `true` | No cooldowns, uses or grenades spent |
@@ -348,7 +348,7 @@ Most of these have a friendlier call in their own section, such as `api.combat.s
 | `ignore_jammers` | `true` | Stratagems work inside no-stratagem zones |
 | `any_arrow` | `true` | Any first arrow calls the stratagem picked with `api.stratagems.select` |
 | `no_spawns` | `true` | No new enemies |
-| `freeze` | `true` | Enemies stand still |
+| `freeze` | `true` | Enemies stand still. The ones killed fall and go as usual |
 | `blind` | `true` | Enemies can't see |
 | `host_owns_enemies` | `true` | Every new enemy stays on the host, so the host's edits reach all of them |
 | `protect_objectives` | `true` | Convoys and escorted people take no damage |

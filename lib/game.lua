@@ -116,7 +116,10 @@ end
 function M.component(name)
 	local aux = global("EntityAux")
 	if not aux or not aux.get_component then return nil end
-	return aux.get_component(name)
+	-- On the ship and in menus there's no component map yet: nothing to find, not an error.
+	local ok, c = pcall(aux.get_component, name)
+	if not ok then return nil end
+	return c
 end
 
 -- Everyone's units in this session: the local one first.

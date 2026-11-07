@@ -351,6 +351,8 @@ function Bot:fight(radius, opts)
 		end
 		self.goals.fight = { radius = radius or 25, weapon = SLOTS[opts.weapon], only = type(opts.only) == "function" and opts.only or nil,
 			secondary = secondary }
+		-- New orders look for a target at once.
+		self.look = 0
 	end
 	return self
 end
@@ -1310,6 +1312,16 @@ local function use_step(b, unit, t, f, dt)
 	if not calm(unit) then return end
 	task.turn = task.turn + dt
 	if not (faces(unit, dx, dy, 0.8) or task.turn > 0.5) then return end
+	-- With an empty weapon that the bot's own backpack can reload, the game offers the bot that reload
+	-- before anything else (InteractorComponent): with the primary in hand, the thing comes through.
+	if ia and offered == unit and not task.swapped then
+		local inv = game.master(unit, "inventory")
+		if inv and alive(inv.primary_weapon) and inv.current_weapon ~= inv.primary_weapon then
+			task.swapped, task.pick = true, 0
+			wield(unit, "primary_weapon")
+			return
+		end
+	end
 	if ia and offered ~= target then
 		task.pick = task.pick + dt
 		if task.pick > USE_PICK then return end_task(b, false, offered ~= nil and "picked_other" or "not_offered") end
@@ -1524,10 +1536,17 @@ local function line_clear(unit, enemy, skip)
 	local ok, hits = pcall(physics.immediate_raycast, pw, from, v3.normalize(to - from), length, "all", "collision_filter", "damage_ray")
 	if not ok or type(hits) ~= "table" then return true end
 	local first, first_unit = nil, nil
+	local aux = game.global("EntityAux")
+	-- A body that died stays a while, longer while enemies are frozen; it stops no shot worth taking.
+	local function dead(u)
+		if u == nil or u == enemy then return false end
+		local ok, h = pcall(aux.state, u, "health")
+		return ok and type(h) == "table" and h.is_dead == true
+	end
 	for _, h in ipairs(hits) do
 		local got, u = pcall(actor_unit.unit, h[4])
 		u = got and u or nil
-		if u ~= unit and not (skip and u ~= nil and skip[u]) and (first == nil or h[2] < first) then first, first_unit = h[2], u end
+		if u ~= unit and not (skip and u ~= nil and skip[u]) and not dead(u) and (first == nil or h[2] < first) then first, first_unit = h[2], u end
 	end
 	if first == nil or first_unit == enemy then return true end
 	return first >= length - 0.75
@@ -1643,6 +1662,50 @@ end
 
 -- In a seat with no gun (the APC's or the bike's driver, a passenger seat with none), the sticks and the
 -- triggers drive or do nothing, so fight leaves them alone.
+-- A fighting bot pulls the trigger only once it faces the target this closely, and after this long on
+-- the target, so a shot doesn't leave on the way round (where a teammate may stand).
+local FIGHT_FACING = math.cos(math.rad(10))
+local FIGHT_SETTLE = 0.15
+local GUN_FACING = math.rad(4)
+
+-- An exosuit's gun sits on an arm and fires along that arm's node, from the weapon's own offset
+-- (FirearmComponent: world_position + rotate(rotation at attach_node, ray_source_offset), toward that
+-- node's forward). The way the exosuit should face so that line runs through p, and how far off the
+-- gun's line is now (radians). nil without the gun's state.
+local function gun_aim(v, p)
+	local ctx = game.masters("firearm")[v]
+	local st = ctx and ctx.state
+	if not (st and st.ray_source_offset) then return nil end
+	local ok, x, y, off = pcall(function()
+		local units, quat = game.global("Unit"), game.global("Quaternion")
+		local rot = units.world_rotation(v, st.attach_node or 0)
+		local base = units.world_position(v, 0)
+		local o = quat.rotate(rot, game.unbox(st.ray_source_offset))
+		local g = quat.forward(rot)
+		local hx, hy = forward_of(v)
+		if not hx then return nil end
+		local want = math.atan2(p.y - (base.y + o.y), p.x - (base.x + o.x))
+		local gun = math.atan2(g.y, g.x)
+		local diff = math.atan2(math.sin(want - gun), math.cos(want - gun))
+		local turn = math.atan2(hy, hx) + diff
+		return math.cos(turn), math.sin(turn), math.abs(diff)
+	end)
+	if not ok or not x then return nil end
+	return x, y, off
+end
+
+-- Whether the bot's aim has come round to the target: on foot it faces it, settled; in an exosuit the
+-- gun's line runs through it; a turret or a tank aims the gun on a mount of the gun's own.
+local function on_target(b, unit, seat, face, dx, dy, dt)
+	if b.aimed_at ~= face then b.aimed_at, b.aim_time = face, 0 end
+	b.aim_time = b.aim_time + dt
+	if seat then
+		if seat.kind ~= "exosuit" then return true end
+		return b.gun_off == nil or b.gun_off <= GUN_FACING
+	end
+	return b.aim_time >= FIGHT_SETTLE and faces(unit, dx, dy, FIGHT_FACING)
+end
+
 local function fight_step(b, unit, here, t, dt)
 	local fight = b.goals.fight
 	local seat = b.in_seat
@@ -1671,14 +1734,21 @@ local function fight_step(b, unit, here, t, dt)
 		b.second_hold = b.second_hold > 1 and b.second_hold - 1 or nil
 	end
 	t.fire_button = 0
+	b.gun_off = nil
 	if face then
 		local p = units.world_position(face, 0)
 		b.axes.aim[1], b.axes.aim[2] = direction({ x = p.x - here.x, y = p.y - here.y })
+		-- An exosuit turns so the gun on the arm, not the exosuit's middle, lines up with the target.
+		if seat and seat.kind == "exosuit" and seat.primary then
+			local gx, gy, off = gun_aim(seat.vehicle, p)
+			if gx then b.axes.aim[1], b.axes.aim[2], b.gun_off = gx, gy, off end
+		end
 		if b.fight_target == face then
 			local dx, dy = p.x - here.x, p.y - here.y
 			b.fight_near = dx * dx + dy * dy <= THREAT * THREAT
 			if no_one_in_the_way(unit, here, p.x, p.y, seat and seat.vehicle) then
-				if (not seat or seat.primary) and (not seat or not fight.only or picks(b, fight.only, face)) then pull(b, unit, t) end
+				local primary = (not seat or seat.primary) and (not seat or not fight.only or picks(b, fight.only, face))
+				if primary and on_target(b, unit, seat, face, dx, dy, dt) then pull(b, unit, t) end
 				if seat and seat.secondary and fight.secondary then second_trigger(b, seat, fight, face, dx, dy, t) end
 			end
 		end
@@ -2049,6 +2119,21 @@ end
 
 -- The orders: walking to a point or after a unit, facing a point, fighting. They write the orders'
 -- sticks (b.axes) and the trigger.
+-- Driving to a point: wheels can't stop on a spot, and turn wide. A driving bot arrives within 4
+-- metres, eases off the throttle from 12 metres out, and takes a point that ended up close behind the
+-- vehicle as reached rather than circling for it.
+local DRIVE_ARRIVE, DRIVE_SLOW, DRIVE_MIN, DRIVE_BEHIND = 4, 12, 0.35, 10
+
+-- The share of full speed toward a point d metres away, and whether the bot is there.
+local function drive_toward(b, dx, dy, d, distance)
+	local seat = b.in_seat
+	if not (seat and seat.steers) then return 1, d <= distance end
+	if d <= math.max(distance, DRIVE_ARRIVE) then return 0, true end
+	local fx, fy = forward_of(seat.vehicle)
+	if fx and d < DRIVE_BEHIND and (fx * dx + fy * dy) / d < -0.3 then return 0, true end
+	return math.max(DRIVE_MIN, math.min(1, d / DRIVE_SLOW)), false
+end
+
 local function think(b, unit, t, dt)
 	local units = game.global("Unit")
 	local here = units.world_position(unit, 0)
@@ -2056,8 +2141,9 @@ local function think(b, unit, t, dt)
 	if go_to then
 		local dx, dy = go_to.x - here.x, go_to.y - here.y
 		local d = math.sqrt(dx * dx + dy * dy)
-		if d > go_to.distance then
-			b.axes.move[1], b.axes.move[2] = dx / d, dy / d
+		local speed, there = drive_toward(b, dx, dy, d, go_to.distance)
+		if not there then
+			b.axes.move[1], b.axes.move[2] = dx / d * speed, dy / d * speed
 		else
 			b.axes.move[1], b.axes.move[2] = 0, 0
 			b.goals.go_to = nil
@@ -2074,8 +2160,9 @@ local function think(b, unit, t, dt)
 			local there = units.world_position(target, 0)
 			local dx, dy = there.x - here.x, there.y - here.y
 			local d = math.sqrt(dx * dx + dy * dy)
-			if d > follow.distance then
-				b.axes.move[1], b.axes.move[2] = dx / d, dy / d
+			local speed, there = drive_toward(b, dx, dy, d, follow.distance)
+			if not there then
+				b.axes.move[1], b.axes.move[2] = dx / d * speed, dy / d * speed
 			else
 				b.axes.move[1], b.axes.move[2] = 0, 0
 			end
