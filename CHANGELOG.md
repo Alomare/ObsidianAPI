@@ -2,7 +2,7 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
-## Next
+## 1.38.1
 
 - Changed: a fighting bot fires only once it faces the target and has held on it a moment, so a shot doesn't leave on the way round, where a teammate may stand.
 - Changed: in a mech, the bot lines up the gun on the mech's arm with the target, not the mech's middle.
