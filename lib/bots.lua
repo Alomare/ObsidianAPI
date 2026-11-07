@@ -211,6 +211,14 @@ function Bot:alive()
 	return self:unit() ~= nil
 end
 
+-- Where the bot stands, as { x, y, z }, or nil while it has no body.
+function Bot:position()
+	local unit = self:unit()
+	if not unit then return nil end
+	local p = game.global("Unit").world_position(unit, 0)
+	return { x = p.x, y = p.y, z = p.z }
+end
+
 local function direction(dir)
 	if dir == nil then return 0, 0 end
 	local x, y = dir.x or dir[1] or 0, dir.y or dir[2] or 0

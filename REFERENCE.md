@@ -1875,6 +1875,7 @@ Bots: Helldivers this machine plays. A bot is a local co-op player on a pad nobo
 - `api.bots.add(opts)`: A new bot. opts: name (shown over the bot's head and in the HUD), bare (true for a unit with no record, false to refuse one when every record is taken), position (for a bare bot; next to the player by default). The host or a player alone only: a client's local players join through the host.
 - `bot:unit()`: The bot's unit while alive: a player bot has none in the hellpod or while dead.
 - `bot:alive()`
+- `bot:position()`: Where the bot stands, as { x, y, z }, or nil while it has no body.
 - `bot:move(dir)`: Where to walk, as a world direction; the length is the speed, up to 1. nil stops.
 - `bot:go_to(pos, distance)`: Walk to a position and stop within distance (1.5 metres) of it. nil stops.
 - `bot:hold()`: Stay where it stands: no following and no walking.

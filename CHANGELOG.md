@@ -8,6 +8,7 @@ New, changed or removed capabilities, one line each, brief and direct. A release
 - New: `api.enemies.charging(unit)` reads an enemy about to shoot (the Hunter's beam, the Cyborg IFV's laser sight, the Hulk's wind-up): when it fires and where the aim line runs.
 - New: `bot:avoid_shots(true)` gets the bot out of that line, with a dive just before the shot. `bot:avoiding()` goes with it.
 - New: `fight`'s `secondary` takes `only` and `every`.
+- New: `bot:position()` answers where the bot stands.
 - New: `bot:mech_friendly_fire(false)` keeps the mech a bot pilots from hurting Helldivers. Enemies still take the hits.
 - Changed: a bot in an exosuit fires the rockets one each second, and only while it faces the target. Before, it emptied the rack at once.
 - Changed: `bot:throw()` does nothing in a vehicle seat, where the button fires the vehicle's second weapon.
