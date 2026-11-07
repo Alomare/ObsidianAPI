@@ -2,7 +2,7 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
-## Next
+## 1.38.0
 
 - New: `bot:hurts(target, slot)` and `api.gear.hurts(weapon, target)` answer the damage one hit does to a target after armor: square, glancing and on the weak spot, launchers included. An enemy the rifle gets 0 against is one for the anti-tank weapon.
 - New: `api.enemies.charging(unit)` reads an enemy about to shoot (the Hunter's beam, the Cyborg IFV's laser sight, the Hulk's wind-up): when it fires and where the aim line runs.
