@@ -179,7 +179,7 @@ end
 
 -- A Helldiver with no record, from the spawn manager with a listener of its own, wearing the main
 -- player's loadout.
-local function add_bare(st, name, pos)
+local function add_bare(st, name, pos, default_loadout)
 	local me = game.my_unit()
 	local units = game.global("Unit")
 	if not pos then
@@ -201,7 +201,11 @@ local function add_bare(st, name, pos)
 	local listener = {
 		on_entity_spawned = function(_, unit)
 			b.body = unit
-			game.command(unit, "inventory", "loadout", { loadout_prefix = "loadout_", pad_number = main })
+			-- With no pad named, the game reads no save and gives LoadoutSettings.default_loadout
+			-- (InventoryComponent.set_loadout): the Liberator, the pistol and the default perk.
+			local data = { loadout_prefix = "loadout_", pad_number = main }
+			if default_loadout then data = { loadout_prefix = "loadout_" } end
+			game.command(unit, "inventory", "loadout", data)
 			local colors = settings.player_colors
 			if colors and colors[2] then game.command(unit, "customization", "set_silhouette_color", colors[2]) end
 		end,
@@ -257,7 +261,9 @@ end
 -- bot:camera(false)), look (as bot:set_look), guest (true for a bare bot that helps the squad and stays out
 -- of the counts of the mission: other machines draw the name, the check of the host for a lost mission leaves
 -- it out, it never boards before a player and never works an objective), require_pad (true to answer nil and
--- "no_pad" rather than a bare bot that would stand still), on_death (fn(bot), once, when the body dies). A
+-- "no_pad" rather than a bare bot that would stand still), on_death (fn(bot), once, when the body dies), loadout (for a bare bot:
+-- "player", the main player's saved loadout, by default; "default", the game's default loadout, the
+-- Liberator and the pistol, with nothing of the player's to drop when the bot gets other gear). A
 -- player bot comes from the host or a player alone only, since the local players of a client join through
 -- the host; a bare bot comes from any machine, which owns it. Answers the bot, or nil and "bad_type",
 -- "bad_value", "not_in_mission", "host_only", "no_slot", "no_pad" or "no_avatar".
@@ -265,6 +271,7 @@ function M.add(opts)
 	opts = opts or {}
 	if opts.name ~= nil and (type(opts.name) ~= "string" or opts.name == "" or #opts.name > 32) then return nil, "bad_type" end
 	if opts.on_death ~= nil and type(opts.on_death) ~= "function" then return nil, "bad_type" end
+	if opts.loadout ~= nil and opts.loadout ~= "default" and opts.loadout ~= "player" then return nil, "bad_type" end
 	local look = nil
 	if opts.look ~= nil then
 		look = P.check_look(opts.look)
@@ -288,7 +295,7 @@ function M.add(opts)
 	if not b then
 		if opts.require_pad == true and not free_pad(st) then return nil, "no_pad" end
 		local why
-		b, why = add_bare(st, name, opts.position)
+		b, why = add_bare(st, name, opts.position, opts.loadout == "default")
 		if not b then return nil, why end
 		if opts.guest == true then b.is_guest = true end
 	end
@@ -517,10 +524,15 @@ function Bot:fighting()
 	return self.goals.fight and self.goals.fight.radius or false
 end
 
--- Aim at and shoot the nearest enemy within radius (25 metres), each frame. false stops. opts, all
+-- Aim at and shoot the nearest enemy within radius (25 metres) and within the range of the weapon it
+-- fights with (bot:weapon_range), each look, a quarter second apart. A target that dies, leaves that
+-- range or goes out of sight is dropped at the next look for the nearest one in sight; with none in
+-- sight, the bot faces the nearest for a second at most and then lets the aim go. false stops. opts, all
 -- optional: weapon, a slot ("primary", "sidearm", "support" or the game's "primary_weapon" and so on) the
 -- bot takes out and fights with, coming back to it after anything else it takes out, except while that
--- weapon rests after a use_weapon with opts.rest; only, a function
+-- weapon rests after a use_weapon with opts.rest, or "best": for each target, the support weapon where it
+-- hurts the target clearly more than the primary does, else the primary while it has ammunition, else the
+-- sidearm, each only within the range of that weapon; only, a function
 -- given an enemy unit that answers true for the enemies to shoot (the rest are left alone); secondary,
 -- true or a table to fire a vehicle seat's second weapon along with the first (the tank's machine gun,
 -- the first exosuit's rockets). The rockets go only while the exosuit faces the target. As a table:
@@ -531,6 +543,10 @@ function Bot:fight(radius, opts)
 	if radius == false then
 		self.goals.fight = nil
 		self:fire(false)
+		if self.fight_aimed then
+			self.fight_aimed = false
+			self.axes.aim[1], self.axes.aim[2] = 0, 0
+		end
 	else
 		opts = type(opts) == "table" and opts or {}
 		local secondary = nil
@@ -541,8 +557,8 @@ function Bot:fight(radius, opts)
 			secondary = { only = type(opts.secondary.only) == "function" and opts.secondary.only or nil,
 				every = every and every == every and every >= 0 and every or nil }
 		end
-		self.goals.fight = { radius = radius or 25, weapon = SLOTS[opts.weapon], only = type(opts.only) == "function" and opts.only or nil,
-			secondary = secondary }
+		self.goals.fight = { radius = radius or 25, weapon = SLOTS[opts.weapon], best = opts.weapon == "best",
+			only = type(opts.only) == "function" and opts.only or nil, secondary = secondary }
 		-- New orders look for a target at once.
 		self.look = 0
 	end
@@ -1942,8 +1958,8 @@ end
 
 -- What fight shoots at: the enemies within its radius that its only() picks, nearest first.
 -- In a seat whose second weapon has a separate only(), the enemies that one picks count too.
-local function targets(b, fight, here)
-	local found = enemies.near(fight.radius, here)
+local function targets(b, fight, here, radius)
+	local found = enemies.near(radius or fight.radius, here)
 	if not fight.only then return found end
 	local seat = b.in_seat
 	local second = seat and seat.secondary and fight.secondary and fight.secondary.only
@@ -2021,25 +2037,131 @@ local function on_target(b, unit, seat, face, dx, dy, dt)
 	return b.aim_time >= FIGHT_SETTLE and faces(unit, dx, dy, FIGHT_FACING)
 end
 
+-- How far a weapon reaches, in metres, from the state the game sets up from the weapon settings: a firearm or a
+-- laser the range there (20 and 100 when the settings give none, as FirearmComponent and BeamweaponComponent
+-- take them), a flamethrower the longest flame (max_range). nil for a launcher and anything else, whose
+-- shot flies on.
+P.RANGE_COMPONENTS = { "firearm", "beamweapon", "flameweapon", "launcher" }
+P.DEFAULT_RANGE = { firearm = 20, beamweapon = 100, flameweapon = 10 }
+
+function P.weapon_range(weapon)
+	if not alive(weapon) then return nil end
+	for _, c in ipairs(P.RANGE_COMPONENTS) do
+		local ctx = game.masters(c)[weapon]
+		if ctx then
+			if c == "launcher" then return nil end
+			local st = type(ctx.state) == "table" and ctx.state or {}
+			local info = type(st.weapon_info) == "table" and st.weapon_info or {}
+			if c == "flameweapon" then return tonumber(info.max_range) or P.DEFAULT_RANGE[c] end
+			return tonumber(st.range) or tonumber(info.range) or P.DEFAULT_RANGE[c]
+		end
+	end
+	return nil
+end
+
+-- Rounds in the magazine or a magazine to load, or a laser with a radiator to swap. True when the game
+-- gives no state to read.
+function P.has_ammo(weapon)
+	local ws = weapon_state(weapon)
+	if not ws then return true end
+	if type(ws.heat) == "number" and ws.magazine_capacity == nil then return ws.heat < 1 or (tonumber(ws.num_mags) or 0) > 0 end
+	return (tonumber(ws.rounds) or 1) > 0 or (tonumber(ws.num_mags) or 0) > 0
+end
+
+-- The slot fight's "best" takes out for a target d metres away (no target: nil): the support weapon where
+-- it hurts the target a quarter more than the primary, else the primary while it has ammunition, else the
+-- sidearm, else whatever has ammunition. A weapon counts only within the range of that weapon, and not while it rests.
+P.BEST_MARGIN = 1.25
+
+function P.best_slot(b, unit, target, d)
+	local inv = game.master(unit, "inventory")
+	if not inv then return nil end
+	local function ready(slot)
+		local w = inv[slot]
+		if not (alive(w) and P.has_ammo(w)) then return false end
+		if b.rests and b.rests[slot] and b.rests[slot] > M.clock then return false end
+		local r = P.weapon_range(w)
+		return d == nil or r == nil or d <= r
+	end
+	local function hurt(slot)
+		local ok, square = pcall(gear.hurts, inv[slot], target)
+		return ok and tonumber(square) or 0
+	end
+	if target and ready("support_weapon") then
+		local support = hurt("support_weapon")
+		local primary = ready("primary_weapon") and hurt("primary_weapon") or 0
+		if support > 0 and support >= primary * P.BEST_MARGIN then return "support_weapon" end
+	end
+	for _, slot in ipairs({ "primary_weapon", "sidearm_weapon", "support_weapon" }) do
+		if ready(slot) then return slot end
+	end
+	return alive(inv.primary_weapon) and "primary_weapon" or nil
+end
+
+-- The radius fight looks in: the order's own, no further than the weapon it fights with reaches, or for
+-- "best" the furthest-reaching weapon with ammunition. A seat's guns keep the order's radius.
+function P.fight_radius(b, unit, fight)
+	local r = fight.radius
+	local inv = not b.in_seat and game.master(unit, "inventory")
+	if not inv then return r end
+	local reach
+	if fight.best then
+		for _, slot in ipairs(HEAL_SLOTS) do
+			local w = inv[slot]
+			if alive(w) and P.has_ammo(w) then
+				local wr = P.weapon_range(w)
+				if wr == nil then return r end
+				reach = math.max(reach or 0, wr)
+			end
+		end
+	else
+		local w = fight.weapon and inv[fight.weapon] or inv.current_weapon
+		if alive(w) then reach = P.weapon_range(w) end
+	end
+	if reach and reach < r then return reach end
+	return r
+end
+
+-- Seconds the bot keeps facing an enemy it can't see before it lets the aim go.
+P.SIGHT_GRACE = 1
+
 local function fight_step(b, unit, here, t, dt)
 	local fight = b.goals.fight
 	local seat = b.in_seat
 	b.look = (b.look or 0) - dt
-	if b.look <= 0 or (b.fight_target and not alive(b.fight_target)) then
+	if b.look <= 0 or (b.fight_target and (not alive(b.fight_target) or dead_unit(b.fight_target))) then
 		b.look = LOOK_EVERY
 		b.fight_target, b.fight_face = nil, nil
-		local found = targets(b, fight, here)
+		local found = targets(b, fight, here, P.fight_radius(b, unit, fight))
 		for i = 1, math.min(#found, LINE_CHECKS) do
 			if line_clear(unit, found[i], seat and seat.parts) then
 				b.fight_target = found[i]
 				break
 			end
 		end
-		b.fight_face = b.fight_target or found[1]
+		-- None in sight: the nearest is faced a moment, in case it steps out, then let go.
+		if b.fight_target or not found[1] then
+			b.fight_blind = 0
+		else
+			b.fight_blind = (b.fight_blind or 0) + LOOK_EVERY
+		end
+		b.fight_face = b.fight_target or ((b.fight_blind or 0) <= P.SIGHT_GRACE and found[1] or nil)
+		if fight.best and not seat then
+			local d = nil
+			if b.fight_target then
+				local _, _, dist = flat(unit, b.fight_target)
+				d = dist
+			end
+			fight.chosen = P.best_slot(b, unit, b.fight_target, d)
+		end
 	end
 	local units = game.global("Unit")
 	local face = b.fight_face
-	if face and not alive(face) then face, b.fight_face = nil, nil end
+	if face and (not alive(face) or dead_unit(face)) then face, b.fight_face = nil, nil end
+	if not face and b.fight_aimed then
+		b.fight_aimed = false
+		if not b.goals.aim_at then b.axes.aim[1], b.axes.aim[2] = 0, 0 end
+	end
 	b.fight_near = false
 	if seat and not seat.armed then return end
 	-- A paced second weapon: one press, held a few frames, then the wait.
@@ -2053,6 +2175,7 @@ local function fight_step(b, unit, here, t, dt)
 	if face then
 		local p = units.world_position(face, 0)
 		b.axes.aim[1], b.axes.aim[2] = direction({ x = p.x - here.x, y = p.y - here.y })
+		b.fight_aimed = true
 		-- An exosuit turns so the gun on the arm, not the exosuit's middle, lines up with the target.
 		if seat and seat.kind == "exosuit" and seat.primary then
 			local gx, gy, off = gun_aim(seat.vehicle, p)
@@ -2063,6 +2186,12 @@ local function fight_step(b, unit, here, t, dt)
 			b.fight_near = dx * dx + dy * dy <= THREAT * THREAT
 			if no_one_in_the_way(unit, here, p.x, p.y, seat and seat.vehicle) then
 				local primary = (not seat or seat.primary) and (not seat or not fight.only or picks(b, fight.only, face))
+				-- Never past what the weapon in hand reaches, while the right one comes out.
+				if primary and not seat then
+					local inv = game.master(unit, "inventory")
+					local reach = inv and P.weapon_range(inv.current_weapon)
+					if reach and dx * dx + dy * dy > reach * reach then primary = false end
+				end
 				if primary and on_target(b, unit, seat, face, dx, dy, dt) then pull(b, unit, t) end
 				if seat and seat.secondary and fight.secondary then second_trigger(b, seat, fight, face, dx, dy, t) end
 			end
@@ -2075,7 +2204,8 @@ end
 local KEEP_GAP = 1
 
 local function keep_weapon(b, unit, dt)
-	local slot = b.goals.fight and b.goals.fight.weapon
+	local fight = b.goals.fight
+	local slot = fight and (fight.weapon or fight.chosen)
 	if not slot or b.task or b.job or b.rewield or b.in_seat then return end
 	if b.rests and b.rests[slot] and b.rests[slot] > M.clock then return end
 	b.keep_wait = (b.keep_wait or 0) - dt
@@ -2094,6 +2224,23 @@ function Bot:sees(target)
 	local unit = self:unit()
 	if not (unit and alive(target)) then return false end
 	return line_clear(unit, target, self.in_seat and self.in_seat.parts)
+end
+
+-- How far the weapon in a slot reaches, in metres, as fight keeps to it: a firearm or a laser the range in
+-- the settings (20 and 100 when they give none), a flamethrower the longest flame. slot: as wield takes it,
+-- or nil for the weapon in hand. Answers the metres, or nil and "no_limit" for a launcher, whose shot flies
+-- on, or "bad_slot", "no_avatar" or "no_weapon".
+function Bot:weapon_range(slot)
+	local name = slot ~= nil and SLOTS[slot]
+	if slot ~= nil and not name then return nil, "bad_slot" end
+	local unit = self:unit()
+	if not unit then return nil, "no_avatar" end
+	local inv = game.master(unit, "inventory")
+	local w = inv and (name and inv[name] or inv.current_weapon)
+	if not alive(w) then return nil, "no_weapon" end
+	local r = P.weapon_range(w)
+	if r == nil then return nil, "no_limit" end
+	return r
 end
 
 -- Living enemies within radius (25 metres) that the bot sees, nearest first. only: a function given an
@@ -2573,6 +2720,10 @@ local function think(b, unit, t, dt)
 		fight_step(b, unit, here, t, dt)
 	else
 		b.fight_target, b.fight_face, b.fight_near = nil, nil, false
+		if b.fight_aimed then
+			b.fight_aimed = false
+			if not b.goals.aim_at then b.axes.aim[1], b.axes.aim[2] = 0, 0 end
+		end
 	end
 	return here
 end

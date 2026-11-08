@@ -190,6 +190,7 @@ local function check(def, s)
 		end
 	end
 	if def.type ~= nil and not TYPES[def.type] then return "bad_type" end
+	if def.after ~= nil and (type(def.after) ~= "string" or def.after == def.name) then return "bad_type" end
 	if def.subtypes ~= nil and not is_list_of_strings(def.subtypes, 8) then return "bad_type" end
 	if def.icon ~= nil and type(def.icon) ~= "string" then return "bad_type" end
 	if def.icon_material ~= nil and (type(def.icon_material) ~= "string" or def.icon == nil) then return "bad_type" end
@@ -358,18 +359,57 @@ local function gui_args(n, args)
 	return out, k
 end
 
--- Puts each custom stratagem in list right after its base, in the order they were made. key(item): the
--- name an item is listed under; holds(item, name): whether it is, or holds, that stratagem. Customs
--- whose base isn't in the list stay where they are.
+-- The type of a stratagem by name, from the game's list: "supply", "offensive", "defensive" or "special".
+local function type_of_name(name)
+	local s = settings()
+	for _, e in ipairs(s and s.stratagems or {}) do
+		if e.name == name then return e.stratagem_type end
+	end
+	return nil
+end
+
+-- Where a custom stratagem goes in a menu list (M.anchor), as the item it follows: the one def.after
+-- names when the list has it; else, for a custom of another type than the base, the last of the game's
+-- own stratagems of that type, so it sits with the others of that colour; else the base. Pure: items
+-- with their names and types, the custom's record. nil when the list has none of those.
+function M.anchor(items, r)
+	local base, last_of_type, named_after = nil, nil, nil
+	for _, it in ipairs(items) do
+		if not it.custom then
+			if r.after and it.holds(r.after) and not named_after then named_after = it end
+			if not base and it.holds(r.base) then base = it end
+			if it.type == r.type then last_of_type = it end
+		end
+	end
+	if named_after then return named_after end
+	if r.type ~= nil and r.type ~= r.base_type and last_of_type then return last_of_type end
+	return base
+end
+
+-- Puts each custom stratagem in list where M.anchor says, in the order they were made. key(item): the
+-- name an item is listed under; holds(item, name): whether it is, or holds, that stratagem. A custom
+-- with no place in the list stays where it is. Only the menus' lists move: the ids in
+-- LoadoutSettings.stratagems, which the network and the saves use, stay as they are.
 local function beside_bases(list, key, holds)
 	if #order == 0 or type(list) ~= "table" then return end
 	local moved, after = {}, {}
+	local items = {}
+	for i, item in ipairs(list) do
+		local name = key(item)
+		local kind = name and type_of_name(name)
+		-- A group of the Loadout screen has the type of the stratagems it holds.
+		local inner = not kind and type(item) == "table" and type(item.items) == "table" and item.items[1]
+		if type(inner) == "table" then kind = type_of_name(inner.name) end
+		items[i] = { item = item, custom = name ~= nil and defs[name] ~= nil, type = kind,
+			holds = function(n) return holds(item, n) end }
+	end
 	for _, r in ipairs(order) do
-		local own, base
+		local own
 		for _, item in ipairs(list) do
 			if key(item) == r.name then own = item end
-			if not base and holds(item, r.base) then base = item end
 		end
+		local at = own and M.anchor(items, r)
+		local base = at and at.item
 		if own and base and own ~= base then
 			moved[own] = true
 			after[base] = after[base] or {}
@@ -1140,8 +1180,8 @@ function M.install()
 			return original(world, ...)
 		end)
 	end
-	-- The Arsenal and the Loadout screen list a custom stratagem right after its base, where the game
-	-- would put it at the end. Both lists are made in one call and read later, by name.
+	-- The Arsenal and the Loadout screen list a custom stratagem by type or beside the base (M.anchor),
+	-- where the game would put it at the end. Both lists are made in one call and read later, by name.
 	obsidian.hook("MenuScreenArmoryUnlocks", "on_enter", function(original, self, ...)
 		local r = { original(self, ...) }
 		local items = type(self.available_items) == "table" and self.available_items.stratagems
@@ -1229,10 +1269,14 @@ end
 --                upgrade. Answer false to drop nothing.
 --   unlock       "base" (with its base, as when nil), "free" (from the start), { rank = n } (from rank n)
 --                or "manual" (once api.stratagems.unlock(name) is called)
+--   after        the name of a stratagem the Arsenal and the Loadout screen list it right after
+--                (nil: with the stratagems of the same type, below)
 -- Answers { name, id }, or nil and a reason. Before the game has its stratagem list, as in a mod's
 -- main chunk, it answers { name, pending = true } and makes the stratagem once the list is there,
 -- before the save's loadout is read. A pending one that can't be made then is logged. The Arsenal and
--- the Loadout screen list a custom stratagem right after its base.
+-- the Loadout screen list a custom stratagem right after the one `after` names; else, when the type
+-- isn't the type of the base, after the last of the game's own stratagems of that type, with the others
+-- of that colour; else right after the base. Only those lists move: ids stay as they are.
 function M.define(def)
 	local s = settings()
 	local why = check(def, s)
@@ -1297,7 +1341,8 @@ make = function(def, entry, s)
 	s.stratagems[id] = e
 
 	-- entry runs as the mod that made it, and not at all once that mod is off, as events are.
-	local record = { name = name, base = def.base, base_id = base_id, id = id, unlock = def.unlock, entry = entry }
+	local record = { name = name, base = def.base, base_id = base_id, id = id, unlock = def.unlock, entry = entry,
+		type = e.stratagem_type, base_type = base.stratagem_type, after = def.after }
 	defs[name], by_id[id] = record, record
 	order[#order + 1] = record
 	install_direct()

@@ -19,7 +19,7 @@ INTERNAL = {
              "encode_guests", "decode_guests"},
     "combat": {"health", "shield", "command_master", "filter_slave_command", "spare_with"},
     "console": {"install"},
-    "custom": {"install", "get", "tick"},
+    "custom": {"install", "get", "tick", "anchor"},
     "effects": {"tick", "pause", "resume"},
     "edits": {"pause", "resume"},
     "enemies": {"tick", "note_animation", "install"},
