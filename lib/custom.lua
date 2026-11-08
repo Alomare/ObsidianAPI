@@ -139,12 +139,15 @@ local function level_title(title, n)
 	return out
 end
 
--- Words: a string, or a table of them by language with English in it.
-local function is_words(v)
-	if type(v) == "string" then return v ~= "" and #v <= 200 end
+-- Words: a string, or a table of them by language with English in it, each at most max characters
+-- (200 for titles; descriptions take 600, as the game's own run past 400 and an upgrade's restates the
+-- base description with the change worked in).
+local function is_words(v, max)
+	max = max or 200
+	if type(v) == "string" then return v ~= "" and #v <= max end
 	if type(v) ~= "table" or type(v.en) ~= "string" then return false end
 	for _, s in pairs(v) do
-		if type(s) ~= "string" or #s > 200 then return false end
+		if type(s) ~= "string" or #s > max then return false end
 	end
 	return true
 end
@@ -182,7 +185,7 @@ local function check(def, s)
 	end
 	-- A base has to be a stratagem every game has.
 	if defs[def.base] then return "not_available" end
-	if not is_words(def.title) or (def.description ~= nil and not is_words(def.description)) then return "bad_type" end
+	if not is_words(def.title) or (def.description ~= nil and not is_words(def.description, 600)) then return "bad_type" end
 	if def.code ~= nil then
 		if type(def.code) ~= "table" or #def.code < 1 or #def.code > 10 then return "bad_code" end
 		for _, arrow in ipairs(def.code) do
@@ -206,7 +209,7 @@ local function check(def, s)
 		for _, u in ipairs(def.upgrades) do
 			if type(u) ~= "table" then return "bad_type" end
 			if u.title ~= nil and not is_words(u.title) then return "bad_type" end
-			if u.description ~= nil and not is_words(u.description) then return "bad_type" end
+			if u.description ~= nil and not is_words(u.description, 600) then return "bad_type" end
 			if u.cost ~= nil and not (type(u.cost) == "number" and u.cost >= 0 and u.cost <= 100) then return "out_of_range" end
 		end
 	end
