@@ -2,7 +2,8 @@
 -- Every table stays the same table: entities and shot callbacks hold direct references to them.
 -- A journal keeps each old value once, so undoing is exact and tells false from absent. Weapons
 -- have a deep-cloned table per upgrade, which a change to the base table would miss, so each unit
--- edit recomputes those clones in place from the edited base.
+-- edit recomputes those clones in place from the edited base. A clone under an upgrade value the game
+-- never makes is a mod's own and stays as the mod made it.
 local game = obsidian.module("lib/game")
 
 local M = { journal = {}, records = {}, paused = false, next_id = 1 }
@@ -83,6 +84,16 @@ local function active_upgrades(base, mask)
 	return out
 end
 
+-- Whether the game makes a variant at this mask (LoadoutSettings.create_upgrade_settings_permutations):
+-- 1 to 2^n for a bitmask of n upgrades, 1 to n for levels bought in order. A variant past those is a
+-- mod's own, such as a stratagem's settings under a spare upgrade value, and an edit leaves it as it is.
+local function game_variant(base, mask)
+	local info = base.upgrade_info
+	if type(info) ~= "table" or type(mask) ~= "number" or mask < 1 then return false end
+	if info.type == "bitmask" then return mask <= 2 ^ #info end
+	return mask <= #info
+end
+
 -- One settings file can serve several unit paths, and each owns separate upgrade tables.
 local function rebuild_variants(settings_path)
 	local lsm = game.global("LuaSettingsManager")
@@ -94,11 +105,13 @@ local function rebuild_variants(settings_path)
 		if sp == settings_path then
 			local variants = lsm.unit_path_to_modified_settings[unit_path]
 			for mask, t in pairs(variants or {}) do
-				local fresh = clone(base)
-				for _, upgrade in ipairs(active_upgrades(base, mask)) do
-					aux.recursive_override(fresh, upgrade)
+				if game_variant(base, mask) then
+					local fresh = clone(base)
+					for _, upgrade in ipairs(active_upgrades(base, mask)) do
+						aux.recursive_override(fresh, upgrade)
+					end
+					merge_in_place(raw(t), fresh)
 				end
-				merge_in_place(raw(t), fresh)
 			end
 		end
 	end

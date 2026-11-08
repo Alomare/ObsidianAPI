@@ -615,6 +615,78 @@ function M.shoot(from, to, opts)
 	return true, landed, best_unit
 end
 
+-- The projectiles a mod may fire, by name: the game's own homing missiles. The game spawns each of
+-- these units by path in every mission, so the package is always loaded (a unit that isn't stops the
+-- game). air_support_missile is the one Close Air Support fires, launcher_missile the MLS-4X
+-- Commando's, about half as strong.
+M.PROJECTILES = {
+	air_support_missile = "gameobjects/gameobject_airsupport_missile",
+	launcher_missile = "gameobjects/gameobject_homing_missile_01",
+}
+
+-- Fires one of api.world.PROJECTILES from a point, as the game's launchers do: a game object every
+-- machine sees, and the game runs the flight, the homing and the explosion. The missile turns toward
+-- enemies near it, and the explosion hurts Helldivers as the game's own does. name: a key of
+-- api.world.PROJECTILES. pos: the start, a vector or { x, y, z }. opts.direction: where the missile
+-- flies, { x, y, z } (straight down when left out); opts.speed: metres per second, above 0 and up to 100
+-- (the missile's own launch speed when left out); opts.owner: the unit the hits and kills count for,
+-- this player's when left out, false for nobody (a unit that's gone counts as nobody). Answers the
+-- missile's unit, or nil and a reason.
+function M.projectile(name, pos, opts)
+	opts = type(opts) == "table" and opts or {}
+	if type(name) ~= "string" then return nil, "bad_type" end
+	local path = M.PROJECTILES[name]
+	if not path then return nil, "bad_value" end
+	local at = vector(pos)
+	if not at then return nil, "bad_type" end
+	local dx, dy, dz = 0, 0, -1
+	if opts.direction ~= nil then
+		local ok, x, y, z = pcall(function() return opts.direction.x, opts.direction.y, opts.direction.z end)
+		if z == nil then z = 0 end
+		if not (ok and finite(x) and finite(y) and finite(z)) then return nil, "bad_type" end
+		local length = math.sqrt(x * x + y * y + z * z)
+		if length < 0.0001 then return nil, "bad_value" end
+		dx, dy, dz = x / length, y / length, z / length
+	end
+	if opts.speed ~= nil and not (finite(opts.speed) and opts.speed > 0 and opts.speed <= 100) then return nil, "out_of_range" end
+	local owner = opts.owner
+	if owner == nil then
+		owner = game.my_unit()
+	elseif owner == false then
+		owner = nil
+	else
+		local ok, alive = pcall(game.global("Unit").alive, owner)
+		if not (ok and alive) then owner = nil end
+	end
+	local st = game.state()
+	if not (type(st) == "table" and st.entity_spawner and game.in_mission()) then return nil, "not_in_mission" end
+	local speed = opts.speed
+	if speed == nil then
+		-- As the launchers work it out: the start speed, and up to the random amount on top.
+		local lsm = game.global("LuaSettingsManager")
+		local ok, settings = pcall(lsm.get_settings_by_unit_path, lsm, path)
+		local homing = ok and type(settings) == "table" and type(settings.homing_info) == "table" and settings.homing_info or {}
+		local extra = tonumber(homing.start_velocity_random_amount) or 0
+		speed = (tonumber(homing.start_velocity) or 15) + math.random() * extra
+	end
+	local v3, q = game.global("Vector3"), game.global("Quaternion")
+	-- The game's launchers face a missile against the direction of flight. A line straight up or down
+	-- has no sideways, so the world's forward stands in for up there.
+	local up = math.abs(dz) > 0.999 and v3(0, 1, 0) or v3(0, 0, 1)
+	local looked, rotation = pcall(q.look, v3(-dx, -dy, -dz), up)
+	if not looked or rotation == nil then rotation = q.identity() end
+	local spawned, unit = pcall(st.entity_spawner.spawn_entity, st.entity_spawner, path, at, rotation, nil, { owner_unit = owner })
+	if not spawned or unit == nil then return nil, "not_available" end
+	-- Only the commands these components know: a name they don't stops the game. A missile spawned here
+	-- is this machine's, so the master commands reach it at once.
+	local aux = game.global("EntityAux")
+	if aux.has_component_master(unit, "homing") then
+		pcall(aux.queue_command_master, unit, "homing", "set_velocity", game.box(v3(dx * speed, dy * speed, dz * speed)))
+	end
+	if aux.has_component_master(unit, "explosive") then pcall(aux.queue_command_master, unit, "explosive", "arm") end
+	return unit
+end
+
 -- The effects a mod may draw, by name. Each is in mission_common, which every mission loads: a
 -- particle effect that isn't loaded crashes the game. arc and tesla are bolts, drawn from one point to
 -- another (the arc weapons' lightning, and the Tesla Tower's); shock and enemy_shock are the crackle the
