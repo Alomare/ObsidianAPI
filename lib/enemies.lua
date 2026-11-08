@@ -255,6 +255,87 @@ function M.charging(unit)
 	return { time = math.max(left, 0), from = from, to = to, effect = effect }
 end
 
+-- Attacks seen starting: the animation events the enemies' state machines play when one starts, kept per
+-- unit with the time. The owner plays them (EntityStateMachine.animation_event) and sends them to every
+-- other machine (EnemyComponent.rpc_animation_event), so each machine sees the same ones.
+local ATTACK_EVENTS = {
+	attack = "melee", attack_downed = "melee", attack_aoe = "melee", melee = "melee", melee_enter = "melee", charge_attack = "melee",
+	jump_charge = "lunge", jump = "lunge",
+	charge = "charge", rush = "charge", rush_enter = "charge",
+}
+local STOP_EVENTS = { charge_abort = true, charge_stop = true, no_animation = true }
+local attacks = setmetatable({}, { __mode = "k" })
+local clock = 0
+
+-- From the two hooks in install: the start or the end of an attack on this machine.
+function M.note_animation(unit, event)
+	if unit == nil or type(event) ~= "string" then return end
+	local kind = ATTACK_EVENTS[event]
+	if kind then
+		attacks[unit] = { kind = kind, event = event, at = clock }
+	elseif STOP_EVENTS[event] then
+		attacks[unit] = nil
+	end
+end
+
+local function settings_of(unit)
+	local ok, settings = pcall(function() return game.global("LoadoutSettings").get_upgraded_settings(unit) end)
+	if ok and type(settings) == "table" then return settings end
+	return {}
+end
+
+-- How far the attack reaches, and in how many seconds it lands, from the enemy's settings
+-- (EnemyUtility.walk_towards_target_and_melee, MeleeComponent, the jump states of the Stalker and the
+-- Brood Commander, the charges of the Bug Tank and the Cyborg dog).
+local function reach_and_lead(kind, settings)
+	local ei = type(settings.enemy_info) == "table" and settings.enemy_info or {}
+	local mi = type(settings.melee_info) == "table" and settings.melee_info or {}
+	if kind == "lunge" then
+		local lead = (tonumber(ei.jump_charge_time) or 0.5) + (tonumber(ei.jump_duration) or 0.5)
+		return tonumber(ei.jump_range_max) or 10, lead, lead + 0.4
+	elseif kind == "charge" then
+		return 15, 0.5, 2.5
+	end
+	local reach = (tonumber(mi.center_distance) or 1) + (tonumber(mi.radius) or 1)
+	local range = tonumber(ei.attack_range)
+	if range and range + 1 > reach then reach = range + 1 end
+	local lead = tonumber(mi.delay) or 0.3
+	return reach, lead, lead + (tonumber(mi.duration) or 0.5)
+end
+
+-- An enemy that has started a close attack, while it lasts: a bite, a claw or a stomp ("melee"), a leap at
+-- someone ("lunge": the Stalker and the Brood Commander), or a run at someone ("charge": the Bug Tank and
+-- the Cyborg dog). On every machine: the owner plays the attack and sends it to the others. Answers
+-- { kind, time, reach, target, from } or nil. time: seconds until the attack lands (0 once due). reach:
+-- metres from the enemy the attack covers. target: the unit it goes for, known only on the machine that
+-- owns the enemy, nil elsewhere. from ({ x, y, z }): where the enemy stands.
+function M.attacking(unit)
+	if not alive_enemy(unit) then return nil end
+	local p = game.global("Unit").world_position(unit, 0)
+	local from = { x = p.x, y = p.y, z = p.z }
+	local enemy = game.master(unit, "enemy")
+	local target = enemy and enemy.target_unit or nil
+	local melee = game.master(unit, "melee")
+	local timer = melee and tonumber(melee.melee_delay_timer)
+	local settings = nil
+	-- The owner's own clock for a blow already wound up.
+	if timer and timer >= 0 then
+		settings = settings_of(unit)
+		local reach = reach_and_lead("melee", settings)
+		return { kind = "melee", time = timer, reach = reach, target = melee.target_unit or target, from = from }
+	end
+	local seen = attacks[unit]
+	if not seen then return nil end
+	settings = settings_of(unit)
+	local reach, lead, last = reach_and_lead(seen.kind, settings)
+	local age = clock - seen.at
+	if age > last then
+		attacks[unit] = nil
+		return nil
+	end
+	return { kind = seen.kind, time = math.max(0, lead - age), reach = reach, target = target, from = from }
+end
+
 -- The closest living enemy to a position, or to the player, and how far it is.
 function M.nearest(pos)
 	local units, v3 = game.global("Unit"), game.global("Vector3")
@@ -578,6 +659,7 @@ end
 
 -- From the frame callback. The units are gone with the world by the first frame off a mission.
 function M.tick()
+	clock = clock + (rawget(_G, "ENGINE_DT") or 0.016)
 	if frozen then
 		local ok, err = pcall(frozen_deaths, rawget(_G, "ENGINE_DT") or 0.016)
 		if not ok and not deaths_failed then
@@ -726,6 +808,20 @@ function M.force_wave(name, pos)
 		for _, g in ipairs(event.groups or {}) do em:spawn_group(pos, groups[g.group], nil, wave.cost) end
 	end
 	return true
+end
+
+-- The hooks attacking reads, from main.lua with the session mods: the owner's state machine plays an
+-- attack's animation event, and every other machine gets it by rpc. Both run the game's own function
+-- after noting the event.
+function M.install()
+	obsidian.hook("EntityStateMachine", "animation_event", function(original, unit, event, ...)
+		M.note_animation(unit, event)
+		return original(unit, event, ...)
+	end)
+	obsidian.hook("EnemyComponent", "rpc_animation_event", function(original, self, sender, unit, event, ...)
+		M.note_animation(unit, event)
+		return original(self, sender, unit, event, ...)
+	end)
 end
 
 return M

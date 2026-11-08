@@ -46,6 +46,9 @@ obsidian.on_frame(function()
 	if not ran then obsidian.log("mod_settings: " .. tostring(why)) end
 	pcall(custom.tick, dt)
 	pcall(world.tick)
+	-- Who left the lobby, and the last values they shared, once a second.
+	ran, why = pcall(lobby.tick, dt)
+	if not ran then obsidian.log("lobby: " .. tostring(why)) end
 	-- Other machines' api.player.damage on this machine's players.
 	ran, why = pcall(player.tick)
 	if not ran then obsidian.log("player damage: " .. tostring(why)) end
@@ -101,6 +104,7 @@ end)
 if game.session_mode then
 	obsidian.on_require("foundation/lua/debug/debug", console.install)
 	bots.install()
+	enemies.install()
 	combat.spare_with(bots.spares)
 	custom.install()
 	obsidian.on_frame(console.install)
@@ -161,7 +165,7 @@ return {
 	player = guard(player, { "lives" }),
 	gear = guard(gear),
 	stratagems = guard(stratagems),
-	enemies = guard(enemies, { "available", "list", "count", "carried", "room", "info", "charging", "nearest", "near", "chain", "max_enemies", "waves" }),
+	enemies = guard(enemies, { "available", "list", "count", "carried", "room", "info", "charging", "attacking", "nearest", "near", "chain", "max_enemies", "waves" }),
 	mission = guard(mission, { "objectives", "params", "drop_offs", "extraction", "aboard", "areas" }),
 	progress = guard(progress, { "samples", "max_samples", "loadout", "upgrades", "upgrade_limit", "rank", "owned_cosmetics" }),
 	events = guard(events, { "on", "off" }),
@@ -170,7 +174,7 @@ return {
 	lobby = lobby,
 	ui = guard(ui, { "hint", "open", "close", "menus" }),
 	map = map,
-	bots = guard(bots, { "all", "dead", "hazards" }),
+	bots = guard(bots, { "all", "dead", "hazards", "free_pads", "humans", "guests", "player_aboard" }),
 	audio = audio,
 	music = music,
 	mod_settings = mod_settings,

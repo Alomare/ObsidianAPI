@@ -179,8 +179,19 @@ api.game.command(unit, "health", "reset")   -- full health, as the game heals
 | `players()` | A list of `{ peer, name, ping, host, me }`, you included. `ping` is in milliseconds. Teammates have names only during a mission |
 | `share(name, value)` | Puts a text of up to 200 characters where every other machine can read it, under your mod's id. Answers `false, "not_available"` without a lobby |
 | `shared(name)` | What each other machine shares under that name, as `peer → text`. A machine that shares nothing is left out |
+| `last_shared(name, peer)` | The last text that peer shared under that name in this mission, kept after the peer leaves. `nil` when none was read |
+| `on_leave(fn)` | `fn(peer)` runs once for each peer that leaves the lobby, within about a second |
 
 Steam passes a shared text on within about a second, so it suits things that change now and then, like a score or a vote. It's too slow for every frame.
+
+A player who leaves takes their member data along, and the lobby may not give it out after that. So the API reads every name a mod has asked about once a second and keeps the last value of each peer for the mission: `last_shared` answers from that, and `on_leave` says who went. An `on_leave` function runs as your mod, so `last_shared` inside it reads your names.
+
+```lua
+api.lobby.on_leave(function(peer)
+  local last = api.lobby.last_shared("score", peer)
+  if last then banked = banked + (tonumber(last) or 0) end
+end)
+```
 
 ```lua
 api.lobby.share("score", tostring(my_score))
@@ -746,6 +757,8 @@ end)
 | `carried()` | Everything the map is carrying: the living, corpses that haven't decayed yet, and the spawn queue |
 | `room()` | How many more fit under `MAX_SAFE` |
 | `available(enemy)` | Whether an enemy from the catalog can spawn right now, which needs its package loaded |
+| `charging(unit)` | An enemy about to shoot: see [Getting out of a shot](#getting-out-of-a-shot) |
+| `attacking(unit)` | An enemy that has started a close attack: see [Getting out of a shot](#getting-out-of-a-shot) |
 
 ```lua
 local bug, metres = api.enemies.nearest()
@@ -1425,7 +1438,7 @@ Commands that reach the shared backend, wipe saves or achievements, or unlock pa
 
 ## Bots
 
-`api.bots.add(opts)` makes a Helldiver this machine plays. It needs the host, or a player alone, in a mission, and answers `nil, "host_only"` or `nil, "not_in_mission"` otherwise.
+`api.bots.add(opts)` makes a Helldiver this machine plays, in a mission, and answers `nil, "not_in_mission"` elsewhere. A bot with a player slot needs the host, or a player alone, and answers `nil, "host_only"` on a client. A bare Helldiver (`bare = true` or `guest = true`) comes from any machine, which then owns and drives it.
 
 ```lua
 local alpha = api.bots.add({ name = "Alpha" })
@@ -1438,6 +1451,10 @@ alpha:fight(25)     -- shoot anything within 25 metres
 - `name`: shown over its head and in the HUD. "Bot 1", "Bot 2" and so on when left out.
 - `bare`: `true` for a bare Helldiver, `false` to refuse one when every player slot is taken.
 - `position`: where a bare Helldiver appears, next to the player when left out.
+- `guest`: `true` for a bare Helldiver that helps the squad and stays out of the counts of the mission. See [Guests](#guests).
+- `look`: what it wears, as `bot:set_look` takes it.
+- `require_pad`: `true` to answer `nil, "no_pad"` rather than a bare Helldiver with no game pad, which would stand still. `api.bots.free_pads()` answers how many more this machine can drive.
+- `on_death`: `fn(bot)`, once, when the body dies.
 
 ### Two kinds of bot
 
@@ -1451,7 +1468,7 @@ Bots leave before a mission's results, so they never reach the end screens or an
 
 | Call | What the bot does |
 |---|---|
-| `follow(unit, distance)` | Keeps near a unit, the player's by default, walking to it when it's further than `distance` (6 metres) |
+| `follow(unit, distance)` | Keeps near a unit, the player's by default, walking to it when further than `distance` (6 metres). `unit` may be a function `fn(bot)` that answers the unit to keep near, or `nil` to stand still; the function is asked every half second, and `ride_along(true)` follows the same unit |
 | `go_to(pos, distance)` | Walks to a position and stops within `distance` (1.5 metres). The order ends when it gets there |
 | `hold()` | Stays where it stands |
 | `aim_at(pos)` | Faces a position, while it has nothing to fight. `nil` lets it face where it walks |
@@ -1545,6 +1562,8 @@ end)
 
 `bot:avoid_shots(true, opts)` uses it: while a line runs within `opts.width` metres of the bot (2), the bot walks straight out of it to the side it's on, and dives just before the shot if it's still in the line. It looks at enemies within `opts.radius` metres (40). `opts.dodge = false` walks out only, and `bot:avoiding()` says whether it's getting out of one now. It waits while the bot sits in a vehicle, is downed, calls a stratagem or throws.
 
+`api.enemies.attacking(unit)` answers an enemy that has started a close attack, while it lasts: `{ kind, time, reach, target, from }`. `kind` is `"melee"` (a bite, a claw, a stomp), `"lunge"` (the Stalker and the Brood Commander leaping) or `"charge"` (the Bug Tank and the Cyborg dog running at someone). `time` is the seconds until it lands, `reach` the metres it covers, and `from` where the enemy stands. It reads the animation the attack plays, which the owner of the enemy sends to every machine, so it works everywhere; `target`, the unit the attack goes for, is known only on the machine that owns the enemy. With `opts.melee = true`, `avoid_shots` gets out of these too: from a blow aimed at the bot, or anywhere within reach in front of the enemy where the target isn't known, it steps straight back, and from a leap or a charge to the side, diving just before the attack lands.
+
 A semi-automatic weapon fires once per trigger pull, so a fighting bot pulls and lets go. A launcher with an assisted reload, such as the recoilless rifle, reloads by itself only while the bot wears the backpack it needs; otherwise the reload is a teammate's. `bot:refill_backpack()` fills that backpack.
 
 ### Vehicles
@@ -1628,6 +1647,46 @@ medic:give_weapon("support_weapon", "equipment/wep_repairtool_01")
 medic:follow():fight(25):auto_revive(15):auto_heal(20)
 ```
 
+`bot:auto_pickup(opts)` picks things up by itself between other orders, while it follows or fights: the nearest thing it wants within `opts.radius` metres (12), one at a time, looked for every `opts.every` seconds (1). `opts.kinds` lists the kinds to take, of `"research_sample_pickup"`, `"ammo_pickup"`, `"weapon_pickup"` and `"backpack_pickup"` (samples and ammo boxes by default); objectives are never among them. `opts.want(item, bot)`, given an entry of `usables`, answers `true` for a thing to take. A thing the bot failed to pick up waits `opts.retry` seconds (10). Two bots never go for the same thing, helping someone up comes first, and the pickup cooldown still holds. `auto_pickup(false)` stops.
+
+```lua
+-- Samples always; an ammo box only with the primary under half.
+alpha:auto_pickup({ kinds = { "research_sample_pickup", "ammo_pickup" }, want = function(item, bot)
+  return item.kind == "research_sample_pickup" or low_on_ammo(bot)
+end })
+```
+
+### Guests
+
+A guest (`guest = true`) is a bare Helldiver for a squad: a soldier a stratagem calls down, say. Any machine can add one, and that machine owns it. Every machine running Obsidian API knows about every guest:
+
+- **Names.** Each machine shares the names and game object ids of the guests it owns in the lobby, once a second. Every other machine draws the name over the body, so all players see who it is.
+- **A lost mission.** The host ends a mission once no Helldiver is left alive. A guest alive doesn't count there, so the last player dying still loses the mission, and a solo player keeps the solo respawn.
+- **Objectives.** A guest never uses an objective, a hellbomb, the extraction beacon, a hidden object or an escort, whatever presses it.
+- **The shuttle.** `board()` answers `false, "not_ready"` until a player is aboard: the game counts a bare Helldiver aboard as a win, so a guest alone could end the mission. `api.bots.player_aboard()` says whether one is.
+- `api.bots.guests()` lists them, this machine's and the others': `{ unit, name, peer, mine }` each, the others about a second late.
+
+A guest has no player record, so it has no HUD slot, costs no lives, isn't brought back by a reinforcement and doesn't count in the score. Bots that help each other up (`auto_revive`) help guests of every machine, and guests help everyone.
+
+| Call | What it does |
+|---|---|
+| `set_look(look)` | What the bot wears: `{ helmet, body, cape, gender, color }`, each optional. `helmet`, `body` and `cape` are indexes of `api.catalog.cosmetics`, `gender` 1 or 2, `color` an outline colour such as `GameSettings.player_colors[2]`. Every machine draws it, and it goes on again after a respawn. `false, "bad_value"` for an index the game doesn't list |
+| `set_health(share)` | Health as a share of the most, above 0 and up to 1, through the command of the game |
+| `dead()` | `true` for a corpse. A bare bot keeps the corpse until removed |
+| `remove({ decay = seconds })` | A bare bot's body stays that long and sinks away, the way the game clears a player who left. A living body dies first |
+| `api.bots.humans()` | Every living player's Helldiver, without this machine's player bots |
+
+The game kills a Helldiver whose body moves to another machine, so a guest can't change hands when the machine that owns it leaves: `api.lobby.on_leave` and `last_shared` let another machine spawn a new one in place of the old.
+
+```lua
+local soldier = api.bots.add({ guest = true, require_pad = true, name = "SEAF 1", position = spot,
+  look = { helmet = 4, body = 4, cape = 12, gender = 1 },
+  on_death = function(bot) bot:remove({ decay = 5 }) end })
+if soldier then
+  soldier:follow(function() return api.bots.humans()[1] end):fight(25):auto_revive(15)
+end
+```
+
 ### Stratagems by code
 
 `call` drops a stratagem straight in. `use_stratagem(name, pos, on_done)` calls one the way a player does: the bot holds the stratagem button, presses the code's arrows one at a time, faces `pos` and throws the flare there, with the charge a mouse player gets by aiming at that point. It only works for a stratagem in the bot's slots, and the call spends the cooldown and a use as a player's does. Other players see the bot enter the code and throw.
@@ -1678,8 +1737,9 @@ For anything the orders don't cover, a bot takes the same inputs a game pad give
 | Call | Answers |
 |---|---|
 | `unit()` | The bot's body, or nil while it has none |
-| `alive()` | `true` while it has a body |
-| `remove()` | Takes it out of the mission |
+| `alive()` | `true` while it has a living body |
+| `dead()` | `true` for a corpse |
+| `remove(opts)` | Takes it out of the mission; `opts.decay` (seconds) lets a bare bot's body sink away |
 | `api.bots.all()` | Every bot |
 | `api.bots.remove_all()` | Takes them all out |
 
@@ -1904,7 +1964,7 @@ A session mod's hooks, frame functions, effects and edits stop while the lobby i
 
 <!-- Everything below is generated by tools/reference.py from the source. Don't edit it by hand. -->
 
-## Every call (Obsidian API 1.40.0)
+## Every call (Obsidian API 1.41.0)
 
 Each table of `api`, its calls in the order of the source, and the comment above each one. `bot:`, `drone:`, `prop:`, `marker:` and `page:` are methods of what `api.bots.add`, `api.gear.add_drone`, `api.world.prop`, `api.map.marker` and `api.mod_settings.page` answer, and under `api.menu`, of the page a build gets. Where this list and the guide above disagree, this list is right.
 
@@ -1919,11 +1979,17 @@ Sound. All of it is local: other players hear their own game.
 
 ### api.bots
 
-Bots: Helldivers this machine plays. A bot is a local co-op player on a pad nobody holds, joined the way the host joins a second controller, so it has everything a player has: a HUD slot, a name, revives, reinforcements. Its character reads an input table this file owns and refills each frame. With every player record taken, a bot can be a bare Helldiver instead: a unit with no record, no HUD and no respawn, for a body to fight beside or shoot at. The input code skips a character with no pad, and its filter commands look the pad up in the pad manager, so a pad number the game doesn't have is an error there. A bare bot takes a pad of the game's that no player and no controller uses, and stands still when there's none left. The input table copies the pad mapping in ControllerSettings, so each field has the type the game's input code compares it as: an axis is a vector, a button a number from 0 to 1, a press or a filter a boolean. A wrong type is an error inside the game's update, outside any pcall. Vectors last one frame in this engine, so the table holds plain numbers and gets new vectors right before the input component reads it, from a hook on its update: vectors made in the frame callback are a frame old by then, and read as NaN.
+Bots: Helldivers this machine plays. A bot is a local co-op player on a pad nobody holds, joined the way the host joins a second controller, so it has everything a player has: a HUD slot, a name, revives, reinforcements. Its character reads an input table this file owns and refills each frame. With every player record taken, a bot can be a bare Helldiver instead: a unit with no record, no HUD and no respawn, for a body to fight beside or shoot at. The input code skips a character with no pad, and its filter commands look the pad up in the pad manager, so a pad number the game doesn't have is an error there. A bare bot takes a pad of the game's that no player and no controller uses, and stands still when there's none left. The input table copies the pad mapping in ControllerSettings, so each field has the type the game's input code compares it as: an axis is a vector, a button a number from 0 to 1, a press or a filter a boolean. A wrong type is an error inside the game's update, outside any pcall. Vectors last one frame in this engine, so the table holds plain numbers and gets new vectors right before the input component reads it, from a hook on its update: vectors made in the frame callback are a frame old by then, and read as NaN. A bare bot can come from any machine, which then owns it, as each machine spawns the bodies of the players it has. A guest is a bare bot that helps the squad and stays out of the mission's own counts: every machine reads the guests of the others from the lobby, draws their names, and leaves them out of the host's check for a lost mission.
 
-- `api.bots.add(opts)`: A new bot. opts: name (shown over the bot's head and in the HUD), bare (true for a unit with no record, false to refuse one when every record is taken), position (for a bare bot; next to the player by default), free_camera (true for a player bot the camera doesn't frame, as bot:camera(false)). The host or a player alone only: a client's local players join through the host.
+- `api.bots.free_pads()`: How many more bots this machine can drive now: the game's pads that no player, no controller and no bare bot uses. A bare bot added past that stands still (add's require_pad refuses one instead). 0 out of a mission.
+- `api.bots.add(opts)`: A new bot. opts: name (shown over the head of the bot and in the HUD, 32 characters at most), bare (true for a unit with no record, false to refuse one when every record is taken), position (for a bare bot; next to the player by default), free_camera (true for a player bot the camera doesn't frame, as bot:camera(false)), look (as bot:set_look), guest (true for a bare bot that helps the squad and stays out of the counts of the mission: other machines draw the name, the check of the host for a lost mission leaves it out, it never boards before a player and never works an objective), require_pad (true to answer nil and "no_pad" rather than a bare bot that would stand still), on_death (fn(bot), once, when the body dies). A player bot comes from the host or a player alone only, since the local players of a client join through the host; a bare bot comes from any machine, which owns it. Answers the bot, or nil and "bad_type", "bad_value", "not_in_mission", "host_only", "no_slot", "no_pad" or "no_avatar".
+- `api.bots.humans()`: Every living Helldiver of a player: the record avatars, less the player bots of this machine. A player bot of another machine is a record like the one of any player, so it counts here. Units, the local player first.
 - `bot:unit()`: The bot's unit while alive: a player bot has none in the hellpod or while dead.
-- `bot:alive()`
+- `bot:alive()`: Whether the bot has a living body: false in a hellpod, once removed, and for a corpse.
+- `bot:dead()`: Whether the body of the bot is a corpse. A bare bot keeps the corpse until removed (remove{ decay }).
+- `bot:set_look(look)`: The look of the bot, with the commands of the game, so every machine draws it: { helmet, body, cape, gender, color }, each optional. helmet, body and cape are indexes of the cosmetics of the game (api.catalog.cosmetics), gender 1 or 2, color an outline colour such as GameSettings.player_colors[2]. Fields left out keep what the body wears. It goes on again after a respawn. Answers true, or false and "bad_value".
+- `bot:set_health(share)`: The health of the bot as a share of the most it can have, above 0 and up to 1, through the command of the game. Answers true, or false and "out_of_range" or "no_avatar" (no body, or a corpse).
+- `bot:guest()`: Whether the bot is a guest (add with guest = true).
 - `bot:position()`: Where the bot stands, as { x, y, z }, or nil while it has no body.
 - `bot:move(dir)`: Where to walk, as a world direction; the length is the speed, up to 1. nil stops.
 - `bot:go_to(pos, distance)`: Walk to a position and stop within distance (1.5 metres) of it. nil stops.
@@ -1939,7 +2005,7 @@ Bots: Helldivers this machine plays. A bot is a local co-op player on a pad nobo
 - `bot:interact()`
 - `bot:throw()`: A grenade: the throw button is held a moment and let go, a short throw ahead. throw_at aims one. In a vehicle seat it does nothing: that button fires the vehicle's second weapon there.
 - `bot:switch()`: The pad's switch button tapped: the primary weapon and the support weapon take turns, and the sidearm goes back to the primary. wield(slot) takes out a chosen one. The game's input reads a press with no release within 0.2 seconds as the button held, which takes out the sidearm, and from the sidearm the support weapon (InputComponent.update_masters, "toggle_sidearm"): a press alone swaps between those two without end. The press and the release go in the same frame, which the game reads as a tap ("toggle_weapon").
-- `bot:follow(unit, distance)`: Keep near a unit, a player's by default: walk to it when further than distance (6 metres).
+- `bot:follow(unit, distance)`
 - `bot:fighting()`: The radius it fights in, or false.
 - `bot:fight(radius, opts)`: Aim at and shoot the nearest enemy within radius (25 metres), each frame. false stops. opts, all optional: weapon, a slot ("primary", "sidearm", "support" or the game's "primary_weapon" and so on) the bot takes out and fights with, coming back to it after anything else it takes out, except while that weapon rests after a use_weapon with opts.rest; only, a function given an enemy unit that answers true for the enemies to shoot (the rest are left alone); secondary, true or a table to fire a vehicle seat's second weapon along with the first (the tank's machine gun, the first exosuit's rockets). The rockets go only while the exosuit faces the target. As a table: secondary.only, a function given an enemy unit that answers true for the enemies the second weapon is for (the vehicle then also turns to them when only leaves them out); secondary.every, the seconds between shots, one press each: 1 for the exosuit's rockets by default, held for the rest.
 - `bot:fire_secondary(on)`: In a vehicle seat, holds the second trigger until fire_secondary(false): the tank's machine gun, an exosuit's left arm, the first exosuit's grenades. On foot that button throws a grenade, so it does nothing there.
@@ -1971,7 +2037,7 @@ Bots: Helldivers this machine plays. A bot is a local co-op player on a pad nobo
 - `bot:boarding()`: The vehicle and seat the bot is on its way to (enter_vehicle), or false.
 - `bot:ride_along(on)`: Rides along with a Helldiver: when they sit in a vehicle with a seat free that doesn't steer, the bot gets in (enter_vehicle), and once they're out it gets out of that vehicle too. on: true for the unit the bot follows (the player when it follows no one), a unit, or false to stop (the default).
 - `bot:mech_friendly_fire(on)`: Hits from the mech the bot pilots cost Helldivers no health while on is false, and for 2 seconds after it gets out, for a shell still in the air. Every Helldiver counts, other players and bots alike, on any machine: the game takes the lower of what the bot's machine and theirs work out. Enemies take the hits as before. true, the game's own way, is the default.
-- `bot:avoid_shots(on, opts)`: Gets out of the line of an enemy about to shoot (api.enemies.charging: the Hunter's beam, the Cyborg IFV's laser sight, the Hulk's wind-up): while the line runs within opts.width metres of the bot (2), it walks straight out to the side it's on, and dives just before the shot if still in it. It looks at enemies within opts.radius metres (40). opts.dodge: false to walk out only. Not in a seat, while downed or while calling a stratagem or throwing. false stops (the default).
+- `bot:avoid_shots(on, opts)`: Gets out of the line of an enemy about to shoot (api.enemies.charging: the Hunter's beam, the Cyborg IFV's laser sight, the Hulk's wind-up): while the line runs within opts.width metres of the bot (2), it walks straight out to the side the bot stands on, and dives just before the shot if still in it. It looks at enemies within opts.radius metres (40). opts.dodge: false to walk out only. opts.melee: true to get out of close attacks too (api.enemies.attacking): a bite or a claw aimed at the bot, by stepping back and diving just before it lands, and a leap or a charge, by stepping and diving to the side. Not in a seat, while downed or while calling a stratagem or throwing. false stops (the default).
 - `bot:avoiding()`: Whether the bot is getting out of a line now: true and the enemy, or false.
 - `bot:auto_get_up(on)`: Downed, the bot holds interact by itself until up: true by default. false leaves it down for a teammate, fighting from the ground with what it holds.
 - `bot:auto_revive(radius, opts)`: Helps up downed Helldivers within radius (15 metres) by itself, between other orders, while it follows or fights. Of the bots that do, only the free one nearest to a downed Helldiver goes. false stops. opts.retry: seconds before it tries again someone it failed to help up (5).
@@ -1982,6 +2048,7 @@ Bots: Helldivers this machine plays. A bot is a local co-op player on a pad nobo
 - `bot:downed()`: Whether the bot is downed now.
 - `bot:pickup_cooldown(seconds)`: After a bot picks up a weapon or a backpack, it picks up neither for this many seconds (20 by default). Taking one drops what the bot held in that slot right there, so a bot that keeps pressing interact would pick the dropped one up again, and so on. 0 or false lets it pick up at any time.
 - `bot:next_pickup()`: Seconds left before the bot can pick up a weapon or a backpack again: 0 when it can now.
+- `bot:auto_pickup(opts)`
 - `bot:sees(target)`: Whether a straight line from the bot's chest reaches the unit before anything else does: a wall, a rock, another body. In a seat, the bot's own vehicle and its guns don't count. True when the game gives no physics to ask.
 - `bot:enemies_in_sight(radius, only)`: Living enemies within radius (25 metres) that the bot sees, nearest first. only: a function given an enemy unit that answers true for the ones to count, or nil for all. Each enemy costs a ray, so a mod that looks every second or so rather than every frame spends little.
 - `bot:throw_at(pos, on_done)`: Throws a grenade at a point: the bot faces it, charges the throw to the distance and lets go, as a player does. Answers true once started, or false and a reason: "no_avatar", "no_position", "busy" (calling a stratagem or throwing already), "no_grenades". on_done(ok, reason): true once thrown, or false and "interrupted" (downed, knocked down, a vehicle seat), "cancelled" or "timeout". While it runs the bot stands and holds fire, and its other orders wait.
@@ -1992,7 +2059,7 @@ Bots: Helldivers this machine plays. A bot is a local co-op player on a pad nobo
 - `bot:using_weapon()`: The slot and the target of the weapon the bot is using (use_weapon), or false.
 - `bot:cancel_weapon()`: Stops a use_weapon. The weapon from before comes back, as when it ends.
 - `bot:auto_reload(on)`: Reloads by itself, as a player would: an empty magazine with a spare left, or an overheated laser with a radiator left. true by default; false leaves reloads to the orders (reload()).
-- `bot:remove()`
+- `bot:remove(opts)`: Takes the bot out of the mission. A bare bot goes at once, or with opts.decay (seconds) the body stays that long and then sinks away the way the game clears a dropped player: a living body dies first, as the game does to a player who leaves. A player bot leaves the way a controller does.
 - `api.bots.all()`
 - `api.bots.remove_all()`
 - `api.bots.usables(pos, radius, kinds)`: Things a Helldiver can use within radius (15 metres) of a position, or of the player, nearest first: { unit, kind, position, enabled } each. kind is the game's name for it, as above; enabled is false while the game lets no one use it. kinds: a list of those names to keep, or nil for all.
@@ -2009,6 +2076,7 @@ Bots: Helldivers this machine plays. A bot is a local co-op player on a pad nobo
 - `bot:deliver(unit, pos, opts, on_done)`: Carries a thing an objective asks for (a hard drive, a missile for the artillery) to where it counts, as a player does: picks it up (bot:use), walks it there and puts it down. pos: where to put it down, or nil for the nearest drop-off of api.mission.drop_offs that asks for it. opts, all optional: at, the metres from pos where it puts it down (1; the game counts it within 3); time, the seconds before it gives up (90). on_done may come in place of opts. Answers true once started, or false and a reason: "no_avatar", "busy", "downed", "seated", "no_target" (not a thing to carry). on_done(ok, reason): true and "delivered" once the game counts it, or false and "taken" (another Helldiver has it), "dropped" (the bot let go of it on the way: downed, or hit), "gone", "no_drop_off", "not_delivered" (down, but not where the game counts it), "downed", "timeout", "cancelled" or "no_avatar". While carrying, the bot jogs and fights only with a one-handed weapon, as a player.
 - `bot:delivering()`: The thing the bot is delivering (deliver) and the step it's at ("pick", "walk", "check"), or false.
 - `bot:board(opts, on_done)`: Gets into the extraction shuttle: the bot walks to the landing zone and waits 5 to 7 metres off the spot the shuttle comes down on, then walks in at the door once it has landed, where the game takes it aboard as a player. opts.time: the seconds before it gives up (120). on_done may come in place of opts. Answers true once started, or false and a reason: "no_avatar", "busy", "downed", "seated", "no_shuttle" (no shuttle called or on the way). on_done(ok, reason): true and "aboard", or false and "left" (the shuttle went without the bot), "downed", "timeout", "cancelled" or "no_avatar". A player bot aboard leaves the level with the shuttle, as a player does, and has no body after that. The game counts a bare bot aboard as well (the shuttle leaves with it, and that wins the mission even with no player aboard) but leaves the body standing, so the API removes a bare bot once aboard.
+- `api.bots.player_aboard()`: Whether a player is aboard the extraction shuttle: a record marked as extracted, or a record avatar the landing zone took aboard. Guests board only after that.
 - `api.bots.dead()`: Records the game brings back with the next reinforcement: every player whose Helldiver is dead, or who has none and hasn't left in the shuttle, as StateGame.on_stratagem_pre_activated lists them. { index, name, bot } each; bot is the Bot when it's one of this machine's bots.
 - `bot:reinforce(pos, on_done)`: Calls in the dead (api.bots.dead): the reinforce stratagem, entered and thrown toward pos as use_stratagem does, or at the bot's feet when pos is nil. Answers as use_stratagem, or false and "no_one_dead" with nobody to bring back: the game would give the stratagem back then.
 - `bot:detonate()`: Sets off the satchel charges the bot has thrown: the satchel comes out if it isn't in hand, and reload is pressed. Answers true, or false and a reason: "no_avatar", "busy", "downed", "seated", "no_satchel" (none in the bot's slots), "none_out" (none thrown yet).
@@ -2017,6 +2085,7 @@ Bots: Helldivers this machine plays. A bot is a local co-op player on a pad nobo
 - `bot:say(word)`
 - `bot:jump(dir, on_done)`
 - `bot:jumping()`: Whether a jump is under way.
+- `api.bots.guests()`: Every guest bot in the mission, this machine's and the others': { unit, name, peer, mine } each. Bots of other machines come from the lobby, about a second late.
 
 ### api.capture
 
@@ -2132,6 +2201,7 @@ Enemies: spawning them, stopping them, getting rid of them. The host runs the en
 - `api.enemies.kill(unit)`
 - `api.enemies.info(unit)`: What the game knows about one enemy: { key, name, faction, boss, hitpoints, max_hitpoints, owned, armor_min, armor_max, large }. armor_min and armor_max are the game's armor numbers for the enemy: a weapon's hit gets through by its power against them (api.gear.weapons_of lists a weapon's power). large is the game's own mark for its biggest enemies (the Tank, the Impaler, the IFV among them). The catalog fields are nil for a unit it doesn't list.
 - `api.enemies.charging(unit)`: An enemy that holds fire a moment before a shot, while it holds it: the Hunter's beam (3 seconds), the Cyborg IFV's laser sight, the Hulk's wind-up. On every machine, owner or not: the game runs the shot on each. Answers { time, from, to, effect } or nil (not about to shoot, dead, not an enemy). time: seconds until it fires. from and to ({ x, y, z }): where the aim line runs, ending at what it hits. effect: the line the game draws ("effects/illuminate_hunter_beam", the IFV's laser sight), nil for an enemy that draws none.
+- `api.enemies.attacking(unit)`: An enemy that has started a close attack, while it lasts: a bite, a claw or a stomp ("melee"), a leap at someone ("lunge": the Stalker and the Brood Commander), or a run at someone ("charge": the Bug Tank and the Cyborg dog). On every machine: the owner plays the attack and sends it to the others. Answers { kind, time, reach, target, from } or nil. time: seconds until the attack lands (0 once due). reach: metres from the enemy the attack covers. target: the unit it goes for, known only on the machine that owns the enemy, nil elsewhere. from ({ x, y, z }): where the enemy stands.
 - `api.enemies.nearest(pos)`: The closest living enemy to a position, or to the player, and how far it is.
 - `api.enemies.apply_status(unit, template)`: A hit of no power that carries the status, the way weapons do it, so it reaches the owner from any peer. The status command itself fails on an enemy this peer doesn't own.
 - `api.enemies.stun_near(radius)`
@@ -2219,6 +2289,8 @@ Who's in the lobby. Read only. Names live on the mission's player objects, so a 
 - `api.lobby.players()`: { peer, name, ping, host, me }, the local player included.
 - `api.lobby.share(name, value)`
 - `api.lobby.shared(name)`: What each other machine shares under `name`, by peer. A machine that shares nothing is left out.
+- `api.lobby.last_shared(name, peer)`: The last text a peer shared under `name` in this mission, read while that peer was still here: shared reads it, and so does a look once a second at every name a mod has asked for. A peer that left keeps the last value read before it went, which a peer's own member data may no longer give. nil when none was read.
+- `api.lobby.on_leave(fn)`: fn(peer) runs once for each peer that leaves the lobby, within about a second of it going. The lobby is looked at once a second while the game runs. Answers true.
 
 ### api.map
 

@@ -14,6 +14,11 @@
 -- Vectors last one frame in this engine, so the table holds plain numbers and gets new vectors
 -- right before the input component reads it, from a hook on its update: vectors made in the frame
 -- callback are a frame old by then, and read as NaN.
+--
+-- A bare bot can come from any machine, which then owns it, as each machine spawns the bodies of the
+-- players it has. A guest is a bare bot that helps the squad and stays out of the mission's own counts: every
+-- machine reads the guests of the others from the lobby, draws their names, and leaves them out of the
+-- host's check for a lost mission.
 local game = obsidian.module("lib/game")
 local mission = obsidian.module("lib/mission")
 local gear = obsidian.module("lib/gear")
@@ -23,6 +28,8 @@ local enemies = obsidian.module("lib/enemies")
 local vehicles = obsidian.module("lib/vehicles")
 
 local M = { list = {} }
+-- Helpers and numbers of the parts added later, in one table: a chunk holds at most 200 locals.
+local P = {}
 
 local HELLDIVER = "characters/helldiver_private_01/helldiver_private_01"
 
@@ -91,7 +98,7 @@ local function free_record(st)
 	end
 end
 
-local function free_pad(st)
+function P.free_pad_list(st)
 	local used = {}
 	for _, r in ipairs(st.players) do
 		if r.player_go:exists() and r.player_go:owned() then used[r.pad_number] = true end
@@ -102,10 +109,39 @@ local function free_pad(st)
 	local pads = game.global("PadManager")
 	local keyboard = game.global("KEYBOARD_MOUSE_PAD_NUMBER")
 	local count = type(game.global("Pads")) == "table" and #game.global("Pads") or 4
+	local out = {}
 	for pad = 1, math.max(count, 4) do
 		local active = pads and pads.is_pad_active and pads:is_pad_active(pad)
-		if not used[pad] and pad ~= keyboard and not active then return pad end
+		if not used[pad] and pad ~= keyboard and not active then out[#out + 1] = pad end
 	end
+	return out
+end
+
+local function free_pad(st)
+	return P.free_pad_list(st)[1]
+end
+
+-- How many more bots this machine can drive now: the game's pads that no player, no controller and no
+-- bare bot uses. A bare bot added past that stands still (add's require_pad refuses one instead). 0 out
+-- of a mission.
+function M.free_pads()
+	if not game.in_mission() then return 0 end
+	local st = game.state()
+	if type(st) ~= "table" or type(st.players) ~= "table" then return 0 end
+	return #P.free_pad_list(st)
+end
+
+-- Health of a unit, as the game keeps it, or nil.
+local function health_of(unit)
+	local aux = game.global("EntityAux")
+	if not (unit and aux and aux.state) then return nil end
+	local ok, h = pcall(aux.state, unit, "health")
+	return ok and type(h) == "table" and h or nil
+end
+
+local function dead_unit(unit)
+	local h = health_of(unit)
+	return h ~= nil and h.is_dead == true
 end
 
 -- The input table is built again each frame (see drive): orders keeps what the bot holds until told
@@ -177,27 +213,105 @@ local function add_bare(st, name, pos)
 	return b
 end
 
--- A new bot. opts: name (shown over the bot's head and in the HUD), bare (true for a unit with no record,
--- false to refuse one when every record is taken), position (for a bare bot; next to the player by
--- default), free_camera (true for a player bot the camera doesn't frame, as bot:camera(false)). The host or a
--- player alone only: a client's local players join through the host.
+-- A look checked against the lists of the game: helmet, body and cape are indexes of the lists in
+-- CustomizationSettings, gender of the genders there, color an outline colour as GameSettings.player_colors
+-- holds them. Fields left out stay as they are. Answers a copy, or nil.
+P.LOOK_SLOTS = { "helmet", "body", "cape", "gender" }
+
+function P.check_look(look)
+	if type(look) ~= "table" then return nil end
+	local settings = game.global("CustomizationSettings")
+	local out = {}
+	for _, slot in ipairs(P.LOOK_SLOTS) do
+		local v = look[slot]
+		if v ~= nil then
+			local list = type(settings) == "table" and settings[slot]
+			if type(v) ~= "number" or v ~= math.floor(v) or type(list) ~= "table" or list[v] == nil then return nil end
+			out[slot] = v
+		end
+	end
+	if look.color ~= nil then
+		if type(look.color) ~= "table" then return nil end
+		local c = {}
+		for k, v in pairs(look.color) do c[k] = v end
+		out.color = c
+	end
+	return out
+end
+
+-- The look queued on the body of the bot with the game's own commands, which every machine then draws.
+function P.apply_look(b, unit)
+	b.outfit_unit = unit
+	local look = b.outfit
+	local parts, any = {}, false
+	for _, slot in ipairs(P.LOOK_SLOTS) do
+		if look[slot] ~= nil then parts[slot], any = look[slot], true end
+	end
+	if any then game.command(unit, "customization", "set_customization", parts) end
+	if look.color then game.command(unit, "customization", "set_silhouette_color", look.color) end
+end
+
+-- A new bot. opts: name (shown over the head of the bot and in the HUD, 32 characters at most), bare (true
+-- for a unit with no record, false to refuse one when every record is taken), position (for a bare bot; next
+-- to the player by default), free_camera (true for a player bot the camera doesn't frame, as
+-- bot:camera(false)), look (as bot:set_look), guest (true for a bare bot that helps the squad and stays out
+-- of the counts of the mission: other machines draw the name, the check of the host for a lost mission leaves
+-- it out, it never boards before a player and never works an objective), require_pad (true to answer nil and
+-- "no_pad" rather than a bare bot that would stand still), on_death (fn(bot), once, when the body dies). A
+-- player bot comes from the host or a player alone only, since the local players of a client join through
+-- the host; a bare bot comes from any machine, which owns it. Answers the bot, or nil and "bad_type",
+-- "bad_value", "not_in_mission", "host_only", "no_slot", "no_pad" or "no_avatar".
 function M.add(opts)
 	opts = opts or {}
 	if opts.name ~= nil and (type(opts.name) ~= "string" or opts.name == "" or #opts.name > 32) then return nil, "bad_type" end
+	if opts.on_death ~= nil and type(opts.on_death) ~= "function" then return nil, "bad_type" end
+	local look = nil
+	if opts.look ~= nil then
+		look = P.check_look(opts.look)
+		if not look then return nil, "bad_value" end
+	end
 	if not game.in_mission() then return nil, "not_in_mission" end
-	if not game.is_host() then return nil, "host_only" end
+	local bare_only = opts.bare == true or opts.guest == true
+	if not game.is_host() and not bare_only then return nil, "host_only" end
 	local st = game.state()
 	if type(st) ~= "table" or type(st.players) ~= "table" or st.game_state == "game_over" then return nil, "not_in_mission" end
 	local name = opts.name or ("Bot " .. (#M.list + 1))
-	if opts.bare ~= true then
-		local b = add_player(st, name)
+	local b
+	if not bare_only then
+		b = add_player(st, name)
 		if b then
 			if opts.free_camera == true then b.free_camera = true end
-			return b
+		elseif opts.bare == false then
+			return nil, "no_slot"
 		end
-		if opts.bare == false then return nil, "no_slot" end
 	end
-	return add_bare(st, name, opts.position)
+	if not b then
+		if opts.require_pad == true and not free_pad(st) then return nil, "no_pad" end
+		local why
+		b, why = add_bare(st, name, opts.position)
+		if not b then return nil, why end
+		if opts.guest == true then b.is_guest = true end
+	end
+	b.outfit = look
+	b.on_death = opts.on_death
+	if look and b:unit() then P.apply_look(b, b:unit()) end
+	return b
+end
+
+-- Every living Helldiver of a player: the record avatars, less the player bots of this machine. A player bot
+-- of another machine is a record like the one of any player, so it counts here. Units, the local player first.
+function M.humans()
+	local mine, out = {}, {}
+	for _, b in ipairs(M.list) do
+		if b.kind == "player" then
+			local u = b:unit()
+			if u then mine[u] = true end
+		end
+	end
+	for _, a in ipairs(game.all_avatars()) do
+		if not mine[a.unit] and not dead_unit(a.unit) then out[#out + 1] = a.unit end
+	end
+	return out
 end
 
 -- The bot's unit while alive: a player bot has none in the hellpod or while dead.
@@ -212,8 +326,50 @@ function Bot:unit()
 	return nil
 end
 
+-- Whether the bot has a living body: false in a hellpod, once removed, and for a corpse.
 function Bot:alive()
-	return self:unit() ~= nil
+	local unit = self:unit()
+	return unit ~= nil and not dead_unit(unit)
+end
+
+-- Whether the body of the bot is a corpse. A bare bot keeps the corpse until removed (remove{ decay }).
+function Bot:dead()
+	local unit = self:unit()
+	return unit ~= nil and dead_unit(unit)
+end
+
+-- The look of the bot, with the commands of the game, so every machine draws it: { helmet, body, cape,
+-- gender, color }, each optional. helmet, body and cape are indexes of the cosmetics of the game
+-- (api.catalog.cosmetics), gender 1 or 2, color an outline colour such as GameSettings.player_colors[2].
+-- Fields left out keep what the body wears. It goes on again after a respawn. Answers true, or false and
+-- "bad_value".
+function Bot:set_look(look)
+	local checked = P.check_look(look)
+	if not checked then return false, "bad_value" end
+	self.outfit = checked
+	self.outfit_unit = nil
+	local unit = self:unit()
+	if unit then P.apply_look(self, unit) end
+	return true
+end
+
+-- The health of the bot as a share of the most it can have, above 0 and up to 1, through the command of the
+-- game. Answers true, or false and "out_of_range" or "no_avatar" (no body, or a corpse).
+function Bot:set_health(share)
+	if type(share) ~= "number" or share ~= share or share <= 0 or share > 1 then return false, "out_of_range" end
+	local unit = self:unit()
+	if not unit then return false, "no_avatar" end
+	local h = health_of(unit)
+	if not h or h.is_dead then return false, "no_avatar" end
+	local most = tonumber(h.max_hitpoints)
+	if not (most and most > 0) then return false, "no_avatar" end
+	if not game.command(unit, "health", "set_hitpoints", most * share) then return false, "no_avatar" end
+	return true
+end
+
+-- Whether the bot is a guest (add with guest = true).
+function Bot:guest()
+	return self.is_guest == true
 end
 
 -- Where the bot stands, as { x, y, z }, or nil while it has no body.
@@ -319,11 +475,41 @@ function Bot:switch()
 	return self
 end
 
--- Keep near a unit, a player's by default: walk to it when further than distance (6 metres).
+-- Keep near a unit, the player by default: walk to it when further than distance (6 metres). unit may be a
+-- function, fn(bot), that answers the unit to keep near or nil; it is asked again every half second, and
+-- the bot stands still while it answers nil. ride_along follows the same unit.
+P.FOLLOW_EVERY = 0.5
+
 function Bot:follow(unit, distance)
 	self.goals.go_to = nil
-	self.goals.follow = { unit = unit, distance = distance or 6 }
+	if type(unit) == "function" then
+		self.goals.follow = { fn = unit, distance = distance or 6, next = 0 }
+	else
+		self.goals.follow = { unit = unit, distance = distance or 6 }
+	end
 	return self
+end
+
+-- The unit a follow order keeps near now, or nil.
+function P.follow_target(b)
+	local follow = b.goals.follow
+	if not follow then return nil end
+	if not follow.fn then return follow.unit or game.my_unit() end
+	if (follow.next or 0) <= M.clock then
+		follow.next = M.clock + P.FOLLOW_EVERY
+		local ok, unit = pcall(follow.fn, b)
+		if not ok then
+			if not b.follow_failed then
+				b.follow_failed = true
+				obsidian.log("bots: follow: " .. tostring(unit))
+			end
+			unit = nil
+		end
+		follow.current = unit
+	end
+	local units = game.global("Unit")
+	if follow.current and units.alive(follow.current) then return follow.current end
+	return nil
 end
 
 -- The radius it fights in, or false.
@@ -736,6 +922,10 @@ local function squad(except)
 	for _, b in ipairs(M.list) do
 		if b.kind == "bare" then add(b:unit()) end
 	end
+	-- Every other Helldiver of the mission: the bare bots of other machines among them.
+	for unit in pairs(game.slaves("character")) do
+		if alive(unit) then add(unit) end
+	end
 	return out
 end
 
@@ -1095,9 +1285,11 @@ end
 
 -- Gets out of the line of an enemy about to shoot (api.enemies.charging: the Hunter's beam, the Cyborg
 -- IFV's laser sight, the Hulk's wind-up): while the line runs within opts.width metres of the bot (2), it
--- walks straight out to the side it's on, and dives just before the shot if still in it. It looks at
--- enemies within opts.radius metres (40). opts.dodge: false to walk out only. Not in a seat, while
--- downed or while calling a stratagem or throwing. false stops (the default).
+-- walks straight out to the side the bot stands on, and dives just before the shot if still in it. It looks at
+-- enemies within opts.radius metres (40). opts.dodge: false to walk out only. opts.melee: true to get out
+-- of close attacks too (api.enemies.attacking): a bite or a claw aimed at the bot, by stepping back and
+-- diving just before it lands, and a leap or a charge, by stepping and diving to the side. Not in a seat,
+-- while downed or while calling a stratagem or throwing. false stops (the default).
 function Bot:avoid_shots(on, opts)
 	if on == false or on == nil then
 		self.goals.avoid = nil
@@ -1105,7 +1297,7 @@ function Bot:avoid_shots(on, opts)
 		opts = type(opts) == "table" and opts or {}
 		local radius, width = tonumber(opts.radius), tonumber(opts.width)
 		self.goals.avoid = { radius = radius and radius > 0 and radius or 40, width = width and width > 0 and width or 2,
-			dodge = opts.dodge ~= false, wait = 0 }
+			dodge = opts.dodge ~= false, melee = opts.melee == true, wait = 0 }
 	end
 	return self
 end
@@ -1214,6 +1406,35 @@ function Bot:next_pickup()
 	return math.max(0, (self.pickup_until or 0) - (M.clock or 0))
 end
 
+-- Picks things up by itself, between other orders, while it follows or fights: the nearest one it wants
+-- within opts.radius metres (12), one at a time, looked for every opts.every seconds (1). opts.kinds: the
+-- kinds of usables to take, of "research_sample_pickup", "ammo_pickup", "weapon_pickup" and "backpack_pickup"
+-- (samples and ammo boxes by default). opts.want: fn(item, bot) given an entry of usables, true to take it.
+-- opts.retry: seconds before it tries again a thing it failed to pick up (10). Two bots never go for the
+-- same thing, and the pickup cooldown still holds for weapons and backpacks. A downed, seated or busy bot
+-- waits, and helping someone up comes first. false stops (the default).
+P.PICKUP_KINDS = { research_sample_pickup = true, ammo_pickup = true, weapon_pickup = true, backpack_pickup = true }
+
+function Bot:auto_pickup(opts)
+	if opts == false or opts == nil then
+		self.goals.pickup = nil
+		return self
+	end
+	opts = type(opts) == "table" and opts or {}
+	local kinds = {}
+	for _, k in ipairs(type(opts.kinds) == "table" and opts.kinds or { "research_sample_pickup", "ammo_pickup" }) do
+		if P.PICKUP_KINDS[k] then kinds[#kinds + 1] = k end
+	end
+	local function number(v, default)
+		v = tonumber(v)
+		if v and v == v and v >= 0 then return v end
+		return default
+	end
+	self.goals.pickup = { radius = number(opts.radius, 12), kinds = kinds, every = number(opts.every, 1), retry = number(opts.retry, 10),
+		want = type(opts.want) == "function" and opts.want or nil, wait = 0, blocked = setmetatable({}, { __mode = "k" }) }
+	return self
+end
+
 M.clock = 0
 
 local function bot_of(unit)
@@ -1227,11 +1448,19 @@ end
 -- Whether a press of interact by this unit goes ahead (CharacterComponent.handle_interact). A bot
 -- helping someone up uses nothing but the body, and after a pickup that swaps (a weapon, a backpack)
 -- a bot picks up no other for the pickup cooldown. Players are never stopped.
+-- What a guest never uses: objectives, hellbombs, the extraction beacon, hidden objects and escorts.
+P.GUEST_DENY = { hellbomb = true, extract_beacon = true, hidden_sweep_object = true, npc_escort = true }
+
+function P.denied_to_guest(comp)
+	return type(comp) == "string" and (P.GUEST_DENY[comp] == true or comp:sub(1, 10) == "objective_")
+end
+
 function M.allow_interact(unit)
 	local b = bot_of(unit)
 	if not b then return true end
 	local ia = game.master(unit, "interactor")
 	local target, comp = ia and ia.interactable_unit, ia and ia.interactable_component
+	if b.is_guest and P.denied_to_guest(comp) then return false end
 	if b.task and b.task.kind == "revive" and target ~= nil and target ~= b.task.unit then return false end
 	if b.task and (b.task.kind == "use" or b.task.kind == "deliver" or b.task.kind == "operate") and target ~= nil then
 		if target ~= b.task.unit then return false end
@@ -1448,7 +1677,7 @@ local function vehicle_step(b, unit, t, f, dt)
 end
 
 -- The steps of the tasks set up further down: a terminal, a delivery, the shuttle, a satchel's detonation.
-local operate_step, deliver_step, board_step, detonate_step
+local operate_step, deliver_step, board_step, detonate_step, pickup_all
 
 -- One frame of a help up or a heal: it writes this frame's sticks (f) and buttons (t), over what the
 -- orders left there.
@@ -2220,9 +2449,28 @@ local function unstick(b, here, mx, my, dt)
 	return mx, my
 end
 
-function Bot:remove()
+-- Takes the bot out of the mission. A bare bot goes at once, or with opts.decay (seconds) the body stays
+-- that long and then sinks away the way the game clears a dropped player: a living body dies first, as the
+-- game does to a player who leaves. A player bot leaves the way a controller does.
+function Bot:remove(opts)
 	local st = game.state()
-	if self.kind == "player" then
+	local decay = type(opts) == "table" and tonumber(opts.decay) or nil
+	if decay and (decay ~= decay or decay < 0) then decay = nil end
+	if self.kind == "bare" and decay and type(st) == "table" and st.decay_manager and self.body and game.global("Unit").alive(self.body) then
+		local unit = self.body
+		local input = game.master(unit, "input")
+		if input then
+			local t = blank_input()
+			t.is_active = false
+			input.input_data = t
+		end
+		pcall(st.decay_manager.decay, st.decay_manager, unit, decay, 1)
+		local h = health_of(unit)
+		if h and not h.is_dead then
+			local floor = tonumber(h.constitution) or 0
+			game.command(unit, "health", "set_hitpoints", math.min(-100, floor - 1))
+		end
+	elseif self.kind == "player" then
 		local go = self.record and self.record.player_go
 		if type(st) == "table" and go and go:exists() and go:owned() and self.record.pad_number == self.pad then
 			pcall(st.despawn_player, st, self.pad)
@@ -2307,7 +2555,8 @@ local function think(b, unit, t, dt)
 	end
 	local follow = b.goals.follow
 	if follow then
-		local target = follow.unit or game.my_unit()
+		local target = P.follow_target(b)
+		if follow.fn and not target then b.axes.move[1], b.axes.move[2] = 0, 0 end
 		if target and units.alive(target) then
 			local there = units.world_position(target, 0)
 			local dx, dy = there.x - here.x, there.y - here.y
@@ -2414,7 +2663,10 @@ local function ride_step(b, unit, dt)
 	if r.wait > 0 then return end
 	r.wait = RIDE_EVERY
 	local follow = b.goals.follow
-	local leader = r.unit or (follow and follow.unit) or game.my_unit()
+	local leader = r.unit
+	if not leader then
+		if follow then leader = P.follow_target(b) else leader = game.my_unit() end
+	end
 	local theirs = alive(leader) and vehicles.seat_of(leader) or nil
 	local mine = vehicles.seat_of(unit)
 	if mine then
@@ -3061,6 +3313,7 @@ function Bot:board(opts, on_done)
 	local me = self:unit()
 	local ok, why = can_start(self, me)
 	if not ok then return false, why end
+	if self.is_guest and not M.player_aboard() then return false, "not_ready" end
 	local ex = mission.extraction()
 	local s = ex and ex.shuttle
 	if not s or s.state == 0 or s.state == 7 then return false, "no_shuttle" end
@@ -3069,6 +3322,20 @@ function Bot:board(opts, on_done)
 	local limit = tonumber(opts.time)
 	self.task.limit = (limit and limit > 0 and limit == limit) and limit or NUM.BOARD_TIME
 	return true
+end
+
+-- Whether a player is aboard the extraction shuttle: a record marked as extracted, or a record avatar
+-- the landing zone took aboard. Guests board only after that.
+function M.player_aboard()
+	local st = game.state()
+	if type(st) ~= "table" or type(st.players) ~= "table" then return false end
+	for _, r in ipairs(st.players) do
+		local go = r.player_go
+		if go and go:exists() and (not go.has or go:has("has_extracted")) and go:get("has_extracted") then return true end
+		local unit = game.avatar(r)
+		if unit and mission.aboard(unit) then return true end
+	end
+	return false
 end
 
 -- Records the game brings back with the next reinforcement: every player whose Helldiver is dead, or who has
@@ -3343,6 +3610,29 @@ end
 
 local AVOID_LOOK = 0.1
 local DIVE_AT = 0.35
+P.MELEE_LOOK = 16      -- metres around the bot looked at for close attacks
+
+-- A close attack aimed at the bot, as api.enemies.attacking answers it: the way out, or nil. A target the
+-- machine knows decides; elsewhere, an attack counts when the bot stands within reach in front of the
+-- enemy. A bite or a claw: straight back. A leap or a charge: to the side the bot already stands on.
+function P.melee_threat(unit, here, e, atk)
+	local dx, dy = here.x - atk.from.x, here.y - atk.from.y
+	local d = math.sqrt(dx * dx + dy * dy)
+	if d > (atk.reach or 2) + 1 then return nil end
+	if atk.target ~= nil then
+		if atk.target ~= unit then return nil end
+	elseif not faces(e, dx, dy, 0.5) then
+		return nil
+	end
+	if d < 0.05 then dx, dy, d = 1, 0, 1 end
+	local ax, ay = dx / d, dy / d
+	if atk.kind == "melee" then return ax, ay end
+	local fx, fy = forward_of(e)
+	if not fx then fx, fy = -ax, -ay end
+	-- Left of the line the enemy runs along goes further left, right goes right.
+	if fx * ay - fy * ax >= 0 then return -fy, fx end
+	return fy, -fx
+end
 
 -- avoid_shots: each tenth of a second, the nearest line through the bot. While in one, the walk goes
 -- straight out of it for this frame, whatever the orders say.
@@ -3361,6 +3651,18 @@ local function avoid_step(b, unit, here, f, dt)
 				local dove = kept and kept.enemy == e and kept.dove
 				a.threat = { enemy = e, x = sx, y = sy, fire_at = M.clock + c.time, dove = dove }
 				break
+			end
+		end
+		if not a.threat and a.melee then
+			for _, e in ipairs(enemies.near(P.MELEE_LOOK, here)) do
+				local atk = enemies.attacking(e)
+				local sx, sy
+				if atk then sx, sy = P.melee_threat(unit, here, e, atk) end
+				if sx then
+					local dove = kept and kept.enemy == e and kept.dove
+					a.threat = { enemy = e, x = sx, y = sy, fire_at = M.clock + (atk.time or 0), dove = dove, melee = true }
+					break
+				end
 			end
 		end
 	end
@@ -3464,9 +3766,197 @@ local function drive(b, unit, dt)
 	input.has_focus = true
 end
 
+-- auto_pickup, each frame: a free bot whose look is due takes the nearest thing it wants that no other bot
+-- is on the way to.
+function pickup_all(dt)
+	local claimed = nil
+	for _, b in ipairs(M.list) do
+		local p = b.goals.pickup
+		if p then
+			p.wait = p.wait - dt
+			local unit = b:unit()
+			if p.wait <= 0 and unit and not b.task and not b.job and not b.leap and not b.leaving and not dead_unit(unit)
+				and not is_downed(unit) and not occupied(unit) and not vehicles.seat_of(unit) then
+				p.wait = p.every
+				if not claimed then
+					claimed = {}
+					for _, other in ipairs(M.list) do
+						if other.task and other.task.unit ~= nil then claimed[other.task.unit] = true end
+					end
+				end
+				local here = game.global("Unit").world_position(unit, 0)
+				for _, item in ipairs(#p.kinds > 0 and M.usables(here, p.radius, p.kinds) or {}) do
+					local wait = p.blocked[item.unit]
+					if item.enabled and not claimed[item.unit] and not (wait and wait > M.clock) then
+						local yes = true
+						if p.want then
+							local ok, answer = pcall(p.want, item, b)
+							yes = ok and answer == true
+						end
+						if yes then
+							local target = item.unit
+							start_use(b, "use", target, nil, function(ok)
+								if not ok then p.blocked[target] = M.clock + p.retry end
+							end)
+							claimed[target] = true
+							break
+						end
+					end
+				end
+			end
+		end
+	end
+end
+
+-- Guests in the lobby: each machine shares the game object ids and names of the guests it owns under a key
+-- of the API, once a second when they change, and reads the others once a second. Game object ids are the
+-- same on every machine. The mission seed keeps a value from an earlier mission from being read.
+P.GUEST_KEY = "mod:obsidian.api:guests"
+P.GUEST_EVERY = 1
+local guests = { wait = 0, sent = nil, remote = {}, units = {} }
+
+function P.clean_name(name)
+	return (tostring(name or ""):gsub("[|;]", ""):sub(1, 32))
+end
+
+-- The text one machine shares: "1|seed|id:name;id:name". Pure.
+function M.encode_guests(seed, list)
+	local parts = {}
+	for _, g in ipairs(list or {}) do parts[#parts + 1] = tostring(math.floor(g.id)) .. ":" .. P.clean_name(g.name) end
+	return "1|" .. tostring(seed or 0) .. "|" .. table.concat(parts, ";")
+end
+
+-- The guests in a shared text, as { id, name } each, or an empty list for another mission or a bad text.
+-- Pure.
+function M.decode_guests(text, seed)
+	local out = {}
+	if type(text) ~= "string" then return out end
+	local version, their_seed, body = text:match("^(%d+)|([^|]*)|(.*)$")
+	if version ~= "1" or their_seed ~= tostring(seed or 0) then return out end
+	for entry in body:gmatch("[^;]+") do
+		local id, name = entry:match("^(%d+):(.*)$")
+		if id then out[#out + 1] = { id = tonumber(id), name = name } end
+	end
+	return out
+end
+
+function P.go_id(st, unit)
+	local storage = st and st.entity_storage
+	if not storage then return nil end
+	local ok, id = pcall(storage.go_id, storage, unit)
+	return ok and type(id) == "number" and id or nil
+end
+
+function P.unit_of_id(st, id)
+	local storage = st and st.entity_storage
+	if not storage then return nil end
+	local ok, unit = pcall(storage.unit, storage, id)
+	return ok and unit or nil
+end
+
+function P.guest_tick(dt)
+	guests.wait = guests.wait - dt
+	if guests.wait > 0 then return end
+	guests.wait = P.GUEST_EVERY
+	local st, name = game.state()
+	local lobby = game.lobby()
+	if name ~= "game" or type(st) ~= "table" then
+		guests.remote, guests.units = {}, {}
+		return
+	end
+	local seed = st.mission_seed
+	local mine = {}
+	for _, b in ipairs(M.list) do
+		local unit = b.is_guest and b:unit()
+		local id = unit and not dead_unit(unit) and P.go_id(st, unit)
+		if id then mine[#mine + 1] = { id = id, name = b.name } end
+	end
+	if lobby then
+		local text = #mine > 0 and M.encode_guests(seed, mine) or ""
+		if text ~= guests.sent then
+			local ok = pcall(lobby.set_member_data, lobby, P.GUEST_KEY, text)
+			if ok then guests.sent = text end
+		end
+		local me = game.global("Network").peer_id()
+		local ok, members = pcall(lobby.members, lobby)
+		local remote, units = {}, {}
+		for _, peer in ipairs(ok and type(members) == "table" and members or {}) do
+			if peer ~= me then
+				local got, value = pcall(lobby.member_data, lobby, peer, P.GUEST_KEY)
+				local list = got and M.decode_guests(value, seed) or {}
+				if #list > 0 then remote[peer] = list end
+				for _, g in ipairs(list) do
+					local unit = P.unit_of_id(st, g.id)
+					if unit and game.global("Unit").alive(unit) then units[unit] = { name = g.name, peer = peer } end
+				end
+			end
+		end
+		guests.remote, guests.units = remote, units
+	end
+end
+
+-- Every guest bot in the mission, this machine's and the others': { unit, name, peer, mine } each. Bots of
+-- other machines come from the lobby, about a second late.
+function M.guests()
+	local out = {}
+	local me = game.global("Network") and game.global("Network").peer_id()
+	for _, b in ipairs(M.list) do
+		local unit = b.is_guest and b:unit()
+		if unit then out[#out + 1] = { unit = unit, name = b.name, peer = me, mine = true } end
+	end
+	for unit, g in pairs(guests.units) do
+		if game.global("Unit").alive(unit) then out[#out + 1] = { unit = unit, name = g.name, peer = g.peer, mine = false } end
+	end
+	return out
+end
+
+function P.guest_set()
+	local set, any = {}, false
+	for _, b in ipairs(M.list) do
+		local unit = b.is_guest and b:unit()
+		if unit then set[unit], any = true, true end
+	end
+	for unit in pairs(guests.units) do set[unit], any = true, true end
+	return set, any
+end
+
+-- A copy of a unit map without the guests. Pure.
+function P.filter_characters(map, set)
+	local out = {}
+	for unit, ctx in pairs(map) do
+		if not set[unit] then out[unit] = ctx end
+	end
+	return out
+end
+
+-- The host's check for a lost mission counts every living character (StateGame.update_host, in the first
+-- step): guests are left out of what it reads there, so a guest alive never holds a lost mission open.
+function P.update_host(original, self, ...)
+	local em = type(self) == "table" and self.entity_manager
+	if not em or self.update_host_current_step ~= 0 then return original(self, ...) end
+	local set, any = P.guest_set()
+	if not any then return original(self, ...) end
+	local own = rawget(em, "get_slave_entities")
+	local real = em.get_slave_entities
+	em.get_slave_entities = function(manager, name, ...)
+		local map = real(manager, name, ...)
+		if name == "character" and type(map) == "table" then return P.filter_characters(map, set) end
+		return map
+	end
+	local r = { pcall(original, self, ...) }
+	rawset(em, "get_slave_entities", own)
+	if not r[1] then error(r[2], 0) end
+	return unpack(r, 2, table.maxn(r))
+end
+
 -- Each frame, from main.lua. A new game state starts with no bots, and a mission that's over loses
 -- them before its results, so a bot never reaches the end screens or anyone's save.
 function M.tick()
+	local ok, err = pcall(P.guest_tick, rawget(_G, "ENGINE_DT") or 0.016)
+	if not ok and not M.guests_failed then
+		M.guests_failed = true
+		obsidian.log("bots: guests: " .. tostring(err))
+	end
 	if #M.list == 0 then return end
 	local st, name = game.state()
 	if name ~= "game" then
@@ -3521,9 +4011,18 @@ function M.drive_all()
 		M.assign_failed = true
 		obsidian.log("bots: helping: " .. tostring(err))
 	end
+	pcall(pickup_all, dt)
 	for _, b in ipairs(M.all()) do
 		local unit = b:unit()
-		if unit then
+		if unit and b.outfit and b.outfit_unit ~= unit then P.apply_look(b, unit) end
+		if unit and b.on_death and not b.death_told and dead_unit(unit) then
+			b.death_told = true
+			local fine, err = pcall(b.on_death, b)
+			if not fine then obsidian.log("bots: on_death: " .. tostring(err)) end
+		end
+		if b.removed then
+			-- on_death took it out.
+		elseif unit then
 			drive(b, unit, dt)
 		else
 			if b.job then finish(b, false, "no_avatar") end
@@ -3549,21 +4048,26 @@ function M.draw_names(hud)
 	if not (gui and viewport and hud.gui_metrics_cacher and hud.plugins_enabled) then return end
 	local units, v3, color = game.global("Unit"), game.global("Vector3"), game.global("Color")
 	local res = gui.screen_resolution or {}
+	local function draw(unit, name)
+		local at = viewport:world_to_viewport(units.world_position(unit, 0))
+		local x, y = at.x, at.z
+		if x > 0 and y > 0 and (not res.width or x < res.width) and (not res.height or y < res.height) then
+			gui:set_current_font("body")
+			gui:set_ignore_position_scale(true)
+			local w, h = hud.gui_metrics_cacher:get_text_extents(gui, name, nil, nil, true)
+			local scale = gui.ui_scale or 1
+			local c = NAME_COLOR
+			gui:text(name, v3(x + (-w * 0.5 + 6) * scale, y + (-h * 0.5 - 21) * scale, NAME_LAYER), color(c[1], c[2], c[3], c[4]))
+			gui:set_ignore_position_scale(false)
+		end
+	end
 	for _, b in ipairs(M.list) do
 		local unit = b.kind == "bare" and b:unit()
-		if unit then
-			local at = viewport:world_to_viewport(units.world_position(unit, 0))
-			local x, y = at.x, at.z
-			if x > 0 and y > 0 and (not res.width or x < res.width) and (not res.height or y < res.height) then
-				gui:set_current_font("body")
-				gui:set_ignore_position_scale(true)
-				local w, h = hud.gui_metrics_cacher:get_text_extents(gui, b.name, nil, nil, true)
-				local scale = gui.ui_scale or 1
-				local c = NAME_COLOR
-				gui:text(b.name, v3(x + (-w * 0.5 + 6) * scale, y + (-h * 0.5 - 21) * scale, NAME_LAYER), color(c[1], c[2], c[3], c[4]))
-				gui:set_ignore_position_scale(false)
-			end
-		end
+		if unit then draw(unit, b.name) end
+	end
+	-- The guests of other machines, alive.
+	for unit, g in pairs(guests.units) do
+		if units.alive(unit) and not dead_unit(unit) and g.name ~= "" then draw(unit, g.name) end
 	end
 end
 
@@ -3573,7 +4077,7 @@ function M.install()
 	obsidian.on_require("lua/hud/hud", function()
 		obsidian.hook("Hud", "update", function(original, self, ...)
 			local r = { original(self, ...) }
-			if #M.list > 0 then
+			if #M.list > 0 or next(guests.units) ~= nil then
 				local ok, err = pcall(M.draw_names, self)
 				if not ok and not M.names_failed then
 					M.names_failed = true
@@ -3593,6 +4097,7 @@ function M.install()
 		end
 		return original(...)
 	end)
+	obsidian.hook("StateGame", "update_host", P.update_host)
 	obsidian.hook("CharacterComponent", "handle_interact", function(original, self, unit, ...)
 		if #M.list > 0 then
 			local ok, allowed = pcall(M.allow_interact, unit)
