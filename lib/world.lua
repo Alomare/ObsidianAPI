@@ -624,13 +624,28 @@ M.PROJECTILES = {
 	launcher_missile = "gameobjects/gameobject_homing_missile_01",
 }
 
+-- Whether a unit is alive with a health state that isn't dead: what the homing component needs of a
+-- target.
+local function live_target(unit)
+	local ok, good = pcall(function()
+		if not game.global("Unit").alive(unit) then return false end
+		local aux = game.global("EntityAux")
+		if not aux.has_component(unit, "health") then return false end
+		local health = aux.state(unit, "health")
+		return type(health) == "table" and not health.is_dead
+	end)
+	return ok and good == true
+end
+
 -- Fires one of api.world.PROJECTILES from a point, as the game's launchers do: a game object every
 -- machine sees, and the game runs the flight, the homing and the explosion. The missile turns toward
 -- enemies near it, and the explosion hurts Helldivers as the game's own does. name: a key of
 -- api.world.PROJECTILES. pos: the start, a vector or { x, y, z }. opts.direction: where the missile
 -- flies, { x, y, z } (straight down when left out); opts.speed: metres per second, above 0 and up to 100
 -- (the missile's own launch speed when left out); opts.owner: the unit the hits and kills count for,
--- this player's when left out, false for nobody (a unit that's gone counts as nobody). Answers the
+-- this player's when left out, false for nobody (a unit that's gone counts as nobody); opts.target: an
+-- enemy to chase from the moment of launch, from api.enemies (left out, or an enemy that's gone or dead,
+-- and the missile looks for one in flight, which it only does within 15 metres of itself). Answers the
 -- missile's unit, or nil and a reason.
 function M.projectile(name, pos, opts)
 	opts = type(opts) == "table" and opts or {}
@@ -682,6 +697,11 @@ function M.projectile(name, pos, opts)
 	local aux = game.global("EntityAux")
 	if aux.has_component_master(unit, "homing") then
 		pcall(aux.queue_command_master, unit, "homing", "set_velocity", game.box(v3(dx * speed, dy * speed, dz * speed)))
+		-- The homing component reads the target's health state as soon as the command lands: only a living
+		-- unit that has one.
+		if opts.target ~= nil and live_target(opts.target) then
+			pcall(aux.queue_command_master, unit, "homing", "set_target_unit", opts.target)
+		end
 	end
 	if aux.has_component_master(unit, "explosive") then pcall(aux.queue_command_master, unit, "explosive", "arm") end
 	return unit
