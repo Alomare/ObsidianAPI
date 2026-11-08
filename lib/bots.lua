@@ -635,6 +635,8 @@ function Bot:give_backpack(path, upgrade) return with_unit(self, gear, "give_bac
 function Bot:give_perk(name) return with_unit(self, gear, "give_perk", 1, name) end
 function Bot:remove_perk() return with_unit(self, gear, "remove_perk", 0) end
 function Bot:refill() return with_unit(self, gear, "refill", 0) end
+
+
 -- The backpack's uses back to full, as api.gear.refill_backpack: the recoilless rifle's rockets, for one.
 function Bot:refill_backpack() return with_unit(self, gear, "refill_backpack", 0) end
 function Bot:give_stratagem(name) return with_unit(self, stratagems, "give", 1, name) end
@@ -1969,6 +1971,26 @@ local function weapon_state(weapon)
 	return ok and type(ws) == "table" and ws or nil
 end
 
+-- Adds ammunition to the weapon in a slot, through the game's own command. mags: magazines to add (a laser's
+-- radiators), rounds: rounds to add to the magazine; either may be left out. The game keeps each to the limit of that weapon.
+-- Answers true, or false and "bad_slot", "no_avatar" or "no_weapon".
+function Bot:add_ammo(slot, mags, rounds)
+	local name = SLOTS[slot]
+	if not name then return false, "bad_slot" end
+	local unit = self:unit()
+	if not unit then return false, "no_avatar" end
+	local inv = game.master(unit, "inventory")
+	local w = inv and inv[name]
+	local ws = weapon_state(w)
+	local aux = game.global("EntityAux")
+	if not (ws and aux.has_interface(w, "weapon")) then return false, "no_weapon" end
+	local data = {}
+	if tonumber(mags) then data.num_mags = (tonumber(ws.num_mags) or 0) + mags end
+	if tonumber(rounds) then data.num_rounds = (tonumber(ws.rounds) or 0) + rounds end
+	aux.queue_command_master_interface(w, "weapon", "set_ammo", data)
+	return true
+end
+
 -- Whether a mod's only(enemy) picks the enemy. An error in it picks none, once in the log.
 local function picks(b, only, enemy)
 	local ok, yes = pcall(only, enemy)
@@ -2246,7 +2268,10 @@ function P.enemy_fact(unit, e, d, inv, found)
 		if dx * dx + dy * dy <= P.brain.GROUP_RADIUS * P.brain.GROUP_RADIUS then group = group + 1 end
 	end
 	local atk = enemies.attacking(e)
-	return { unit = e, d = d, x = p.x, y = p.y, large = info.large == true, big = big, armored = armored, group = group,
+	-- What the enemy is after, known on the machine that owns it; a shot being charged counts as awake anywhere.
+	local master = game.master(e, "enemy")
+	local aware = (master and master.target_unit ~= nil) or atk ~= nil or enemies.charging(e) ~= nil
+	return { unit = e, d = d, x = p.x, y = p.y, large = info.large == true, big = big, armored = armored, group = group, aware = aware,
 		attacking = atk ~= nil and (atk.target == nil or atk.target == unit) }
 end
 
@@ -2309,8 +2334,13 @@ function P.threat_look(b, unit, here, fight)
 		if not P.brain.keeps(cur_fact, reach, b.cur_blind, best) then cur = nil end
 	end
 	if not cur then
-		for i = 1, math.min(#ranked, LINE_CHECKS) do
-			if line_clear(unit, ranked[i].unit) then
+		local tried = 0
+		for i = 1, #ranked do
+			if tried >= LINE_CHECKS then break end
+			if P.brain.engages(ranked[i]) then
+				tried = tried + 1
+			end
+			if P.brain.engages(ranked[i]) and line_clear(unit, ranked[i].unit) then
 				cur = ranked[i].unit
 				changed = true
 				b.cur_blind = 0
@@ -2346,6 +2376,24 @@ function P.threat_look(b, unit, here, fight)
 		fight.chosen = P.brain.pick_weapon(P.slot_specs(b, inv, cur, fight), target) or fight.chosen
 		fight.weapon_until = M.clock + P.WEAPON_HOLD
 	end
+end
+
+-- The burst of an automatic firearm with no blast: true while the trigger rests between bursts.
+function P.burst_pause(b, unit, dt)
+	local inv = game.master(unit, "inventory")
+	local w = inv and inv.current_weapon
+	if not (alive(w) and game.masters("firearm")[w]) then return false end
+	local ws = weapon_state(w)
+	if not ws or ws.fully_automatic == false then return false end
+	if P.cached_blast(b, w) then return false end
+	b.burst = b.burst or {}
+	return not P.brain.burst(b.burst, dt)
+end
+
+-- The blast of the weapon in hand, read once a weapon.
+function P.cached_blast(b, weapon)
+	if b.blast_weapon ~= weapon then b.blast_weapon, b.blast_radius = weapon, gear.blast(weapon) end
+	return b.blast_radius
 end
 
 -- Whether a blast at point p from the weapon would spare every friend and the bot. True for a weapon with no blast.
@@ -2454,9 +2502,11 @@ local function fight_step(b, unit, here, t, dt)
 					if primary and weapon and not P.blast_allows(unit, here, p, weapon) then primary = false end
 					-- Letting go so a chosen weapon can come out: a weapon is taken out standing calm.
 					if primary and fight.threat and fight.chosen and inv[fight.chosen] and inv[fight.chosen] ~= weapon then primary = false end
+					-- Not at something that has gone behind cover, however briefly.
+					if primary and fight.threat and (b.cur_blind or 0) > 0 then primary = false end
 				end
 				if primary and on_target(b, unit, seat, face, dx, dy, dt) then
-					pull(b, unit, t)
+					if not (fight.threat and not seat and P.burst_pause(b, unit, dt)) then pull(b, unit, t) end
 					fired = true
 				end
 				if seat and seat.secondary and fight.secondary then second_trigger(b, seat, fight, face, dx, dy, t) end
@@ -3051,6 +3101,12 @@ function P.manner_follow(b, here, target, there, follow, dt)
 	local back = m.spot.back + math.cos(m.wander * 0.19 + m.spot.drift) * 0.8
 	local sx = there.x - cx * back - cy * side
 	local sy = there.y - cy * back + cx * side
+	-- The bot's own spot may lie across a pit or be a long way round: then a spot on the bot's side of the leader.
+	if b.nav and (P.nav.detouring(b.nav) or not P.nav.solid({ x = sx, y = sy, z = there.z })) then m.near_until = M.clock + 5 end
+	if (m.near_until or 0) > M.clock and b.leader_d > 0.1 then
+		local r = follow.distance * 0.75
+		sx, sy = there.x - tx / b.leader_d * r, there.y - ty / b.leader_d * r
+	end
 	local dx, dy = sx - here.x, sy - here.y
 	local d = math.sqrt(dx * dx + dy * dy)
 	local moving, speed = P.brain.arrive(d, m.moving)
@@ -4266,27 +4322,68 @@ end
 
 -- bot:navigate: follows a found route when the orders say to walk somewhere, and turns any step (a dive's way
 -- included) that would land on deadly ground. Only the sides that aren't dangerous are taken; with none, the bot stands.
-P.AHEAD = 1.4
-P.AHEAD_SPRINT = 2.1
-
 function P.nav_step(b, here, f, dt)
 	local m = math.sqrt(f.mx * f.mx + f.my * f.my)
 	if m < 0.05 then return end
 	local a = b.goals.avoid
-	local dodging = a and a.threat
-	local hp = { x = here.x, y = here.y, z = here.z }
-	if f.dest and not dodging and not b.job then
-		local wx, wy = P.nav.route(b.nav, hp, f.dest.x, f.dest.y, dt)
-		local dx, dy = wx - here.x, wy - here.y
-		local d = math.sqrt(dx * dx + dy * dy)
-		if d > 0.05 then f.mx, f.my = dx / d * m, dy / d * m end
-	end
-	local ahead = (b.manner and b.manner.sprinting) and P.AHEAD_SPRINT or P.AHEAD
-	local hx, hy = P.nav.safe_heading(hp, f.mx / m, f.my / m, ahead)
-	if hx then
-		f.mx, f.my = hx * m, hy * m
-	else
+	if not (f.dest and not (a and a.threat) and not b.job) then return end
+	local wx, wy = P.nav.route(b.nav, { x = here.x, y = here.y, z = here.z }, f.dest.x, f.dest.y, dt)
+	-- Nothing found yet, or a way given up on: the bot stands rather than walk on blind.
+	if not wx then
 		f.mx, f.my = 0, 0
+		return
+	end
+	local dx, dy = wx - here.x, wy - here.y
+	local d = math.sqrt(dx * dx + dy * dy)
+	if d > 0.05 then f.mx, f.my = dx / d * m, dy / d * m end
+end
+
+-- The step guard: the last thing that touches the walk. How far ahead it looks grows with the speed the body
+-- really has; a step it turns goes at a walk, and one with nowhere safe to go is no step at all.
+P.AHEAD_BASE = 1.3
+P.AHEAD_PER_SPEED = 0.22
+P.GUARDED_SPEED = 0.6
+
+function P.guard_step(b, unit, here, f)
+	local m = math.sqrt(f.mx * f.mx + f.my * f.my)
+	if m < 0.05 then return end
+	local mover = game.master(unit, "mover")
+	local v = mover and type(mover.velocity) == "table" and mover.velocity
+	local speed = v and math.sqrt((tonumber(v.x) or 0) ^ 2 + (tonumber(v.y) or 0) ^ 2) or 4
+	local ahead = P.AHEAD_BASE + speed * P.AHEAD_PER_SPEED
+	local hx, hy, turned = P.nav.safe_heading({ x = here.x, y = here.y, z = here.z }, f.mx / m, f.my / m, ahead)
+	local ms = b.manner
+	if not hx then
+		f.mx, f.my, f.guarded = 0, 0, true
+		if ms then ms.stick[1], ms.stick[2] = 0, 0 end
+		return
+	end
+	f.guarded = turned
+	if turned then m = math.min(m, P.GUARDED_SPEED) end
+	f.mx, f.my = hx * m, hy * m
+	if ms and turned then ms.stick[1], ms.stick[2] = f.mx, f.my end
+end
+
+-- A body going down past where the ground can be (knocked over a rim, the ground giving way) goes back to the
+-- last spot it stood on solidly, before the game's death plane at -1.5 takes it.
+P.FALL_Z = -0.8
+P.RESCUE_GAP = 2
+
+function P.rescue(b, unit, here, dt)
+	local s = b.nav
+	s.rescue_wait = (s.rescue_wait or 0) - dt
+	local falling = s.last_z ~= nil and here.z < s.last_z - 0.002
+	s.last_z = here.z
+	if here.z >= -0.3 then
+		s.safe_wait = (s.safe_wait or 0) - dt
+		if s.safe_wait <= 0 then
+			s.safe_wait = 0.25
+			local p = { x = here.x, y = here.y, z = here.z }
+			if P.nav.solid(p) then s.safe = p end
+		end
+	elseif here.z < P.FALL_Z and falling and s.safe and s.rescue_wait <= 0 and not dead_unit(unit) then
+		s.rescue_wait = P.RESCUE_GAP
+		b:teleport(v3(s.safe.x, s.safe.y, s.safe.z))
 	end
 end
 
@@ -4315,7 +4412,7 @@ function P.sprint_step(b, unit, f, t)
 	end
 	local cs = game.master(unit, "character")
 	local moving = f.mx * f.mx + f.my * f.my > 0.2
-	local want = moving and P.brain.sprints(b.leader_d, m.sprinting, cs and tonumber(cs.sprint_stamina), b.fight_target ~= nil)
+	local want = moving and not f.guarded and P.brain.sprints(b.leader_d, m.sprinting, cs and tonumber(cs.sprint_stamina), b.fight_target ~= nil)
 	m.sprinting = want or false
 	if want then
 		t.sprint_button, t.sprint_pressed = 1, true
@@ -4433,10 +4530,11 @@ local function drive(b, unit, dt)
 		if b.manner and not b.job and not b.task then P.spread_out(b, unit, here, f, dt) end
 		if b.nav and not b.leap then P.nav_step(b, here, f, dt) end
 		f.mx, f.my = unstick(b, here, f.mx, f.my, dt)
-		if b.manner then
-			P.sprint_step(b, unit, f, t)
-			P.ease(b, f, dt)
-		end
+		if b.manner then P.ease(b, f, dt) end
+		-- Last of everything that sets the walk: the guard sees the very stick the game will read.
+		if b.nav and not b.leap then P.guard_step(b, unit, here, f) end
+		if b.manner then P.sprint_step(b, unit, f, t) end
+		if b.nav then P.rescue(b, unit, here, dt) end
 	end
 	for field in pairs(b.vectors) do t[field] = v3(0, 0, 0) end
 	local mx, my, ax, ay = f.mx, f.my, f.ax, f.ay
@@ -4719,6 +4817,36 @@ function M.drive_all()
 	end
 end
 
+-- The arrow the HUD shows at the screen's edge for a player out of view (Hud.draw_player_name_in_world), for a bare
+-- bot: the game's own icon and the game's placing, drawn here since the HUD's version needs a player record. No HUD card
+-- comes with it.
+P.NAME_COLOR = { 255, 200, 200, 200 }
+P.NAME_LAYER = 5
+P.MARKER_ICON = "icon_outofscreen_player_01"
+P.MARKER_SIZE = 32
+
+function P.draw_marker(gui, hud, x, y, res, name)
+	local v2 = game.global("Vector2")
+	local color = game.global("Color")
+	if not (v2 and color) then return end
+	local half = P.MARKER_SIZE * 0.5
+	local ax = math.max(96 + half, math.min(res.width - 96 - half, x))
+	local ay = math.max(54 + half, math.min(res.height - 54 - half, y))
+	local dx, dy = ax - res.width * 0.5, ay - res.height * 0.5
+	local len = math.sqrt(dx * dx + dy * dy)
+	if len < 1 then return end
+	-- As Vector3.angle_z from straight up to the way out.
+	local angle = math.atan2(-dx / len, dy / len)
+	gui:set_ignore_position_scale(true)
+	gui:set_ignore_size_scale(false)
+	gui:rotated_image(P.MARKER_ICON, v3(ax - half, ay - half, 0), v2(P.MARKER_SIZE, P.MARKER_SIZE), -angle, color(255, 255, 255, 255))
+	gui:set_current_font("body")
+	local w = hud.gui_metrics_cacher:get_text_extents(gui, name, nil, nil, true)
+	local c = P.NAME_COLOR
+	gui:text(name, v3(ax - w * 0.5 * (gui.ui_scale or 1), ay - half - 16, P.NAME_LAYER), color(c[1], c[2], c[3], c[4]))
+	gui:set_ignore_position_scale(false)
+end
+
 -- A bare bot has no player record, so the HUD draws no name over it. This draws one the way the HUD
 -- draws a player's: projected through the game's viewport, centred, a little above, in the body font.
 -- The projection is x, depth, y: the height on the screen is its z, as the HUD reads it. Like the HUD's
@@ -4744,6 +4872,8 @@ function M.draw_names(hud)
 			local c = NAME_COLOR
 			gui:text(name, v3(x + (-w * 0.5 + 6) * scale, y + (-h * 0.5 - 21) * scale, NAME_LAYER), color(c[1], c[2], c[3], c[4]))
 			gui:set_ignore_position_scale(false)
+		elseif res.width and res.height and gui.rotated_image and not dead_unit(unit) then
+			P.draw_marker(gui, hud, x, y, res, name)
 		end
 	end
 	for _, b in ipairs(M.list) do

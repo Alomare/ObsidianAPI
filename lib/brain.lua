@@ -279,6 +279,32 @@ function M.grenade(kind, f)
 	return { x = f.point.x, y = f.point.y }
 end
 
+-- Whether an enemy is worth starting to shoot: close enough to matter, or already awake to the squad. Leaves a far
+-- patrol that hasn't noticed anyone alone. e: { d, large, big, aware, attacking }.
+M.ENGAGE = 18
+M.ENGAGE_BIG = 25
+
+function M.engages(e)
+	local d = tonumber(e.d) or 1000
+	if e.attacking or e.aware then return true end
+	if e.large or e.big then return d <= M.ENGAGE_BIG end
+	return d <= M.ENGAGE
+end
+
+-- Short bursts: answers true while the trigger is held, keeping the timers in s (a table the bot keeps). dt:
+-- seconds. Automatic rifles waste most of a magazine held down past this.
+M.BURST_ON = 0.32
+M.BURST_OFF = 0.38
+
+function M.burst(s, dt)
+	s.left = (s.left or 0) - dt
+	if s.left <= 0 then
+		s.firing = not s.firing
+		s.left = s.firing and M.BURST_ON or M.BURST_OFF
+	end
+	return s.firing == true
+end
+
 -- Pushes a bot off the bodies next to it. here: { x, y }; others: a list of { x, y } other bodies; spacing: metres
 -- wanted between bodies. Answers a push { x, y } of length 0 to 1.
 function M.separate(here, others, spacing)

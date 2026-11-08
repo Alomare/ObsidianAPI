@@ -2,7 +2,7 @@
 -- straight at what they want and only lean away from what is in front (EnemyComponent's feelers). So
 -- this finds a way with rays: a grid of cells 1.5 metres across, each tested once with a ray down
 -- (the game's own spawn_check ground test: the hit must be a unit with surface_properties, near the height
--- the walker stands at, and above -0.6, under which the map is lava or water that swallows bodies) and each
+-- the walker stands at, and above -0.45, under which the map is lava or water that swallows bodies) and each
 -- step between cells with a ray across (mover_blocker, what stops a body), kept for a few seconds so a path
 -- costs few new rays. What it can't know: paths past about 36 metres (it goes as near as it can then
 -- plans again), moving bodies and vehicles (they are stepped around when one gets stuck) and level
@@ -17,11 +17,17 @@ M.RANGE = 36
 -- A step: at most this up or down from the walker's height; lower than MIN_Z is deadly ground.
 M.STEP_UP = 0.7
 M.DROP = 0.85
-M.MIN_Z = -0.6
+M.MIN_Z = -0.45
 M.WALL_HEIGHT = 0.8
 -- Rays for all searches in one frame, and for one api.nav.path call (which stops the frame budget for no one).
 M.RAYS_PER_FRAME = 60
 M.SYNC_RAYS = 400
+-- A walkable cell next to a pit costs this many times a plain one, so a route keeps a body-width off the rim
+-- unless the rim is the only way. Metres either side of a step that must be solid too.
+M.RIM_COST = 6
+M.RIM_MARGIN = 0.8
+-- A route this many times longer than the straight line counts as a detour (see M.detouring).
+M.DETOUR = 2
 -- Cells and steps kept this many seconds. A cell a bot failed on stays blocked this long.
 M.TTL = 12
 M.STUCK_TTL = 9
@@ -209,6 +215,7 @@ local function heap_pop(h)
 	return top and top.n
 end
 
+local ORTHOGONAL = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
 local NEIGHBOURS = { { 1, 0, 1 }, { -1, 0, 1 }, { 0, 1, 1 }, { 0, -1, 1 }, { 1, 1, 1.414 }, { 1, -1, 1.414 }, { -1, 1, 1.414 }, { -1, -1, 1.414 } }
 
 local function new_plan(sx, sy, sz, gx, gy)
@@ -271,6 +278,17 @@ local function step_plan(p)
 					elseif kind == "ok" then
 						local zx, zy = centre(nx, ny)
 						local danger = in_zone(zx, zy)
+						-- Next to a pit: allowed, but dear, so the route keeps a body off the rim.
+						local rim = false
+						for _, o in ipairs(ORTHOGONAL) do
+							local side = cell_state(nx + o[1], ny + o[2], z or n.z)
+							if side == nil then
+								p.closed[n.key] = nil
+								heap_push(p.open, n.g, n)
+								return "working"
+							end
+							if side == "pit" then rim = true end
+						end
 						if not danger or p.escape then
 							-- Corners are not cut: both sides of a diagonal must be standable.
 							local corner_ok = true
@@ -292,7 +310,7 @@ local function step_plan(p)
 									return "working"
 								end
 								if clear then
-									local g = n.g + d[3] * (danger and 8 or 1)
+									local g = n.g + d[3] * (danger and 8 or 1) * (rim and M.RIM_COST or 1)
 									local have = p.seen[k]
 									if not have or g < have.g then
 										local m = have or { cx = nx, cy = ny, key = k }
@@ -327,7 +345,8 @@ local function point_safe(x, y, z, force)
 	local pw, phys, v3 = physics()
 	if not pw then return true end
 	local kind = ground_ray(pw, phys, v3, x, y, z)
-	if not kind then return true end
+	-- A ray that answered nothing usable is doubt, and doubt is not ground.
+	if not kind then return false, "unknown" end
 	world.points[k] = { kind = kind, at = M.now }
 	return kind ~= "pit", kind
 end
@@ -376,6 +395,10 @@ function M.walk_clear(from, to)
 		local ok, kind = point_safe(x, y, z, true)
 		if not ok then bad = kind break end
 		if kind == "wall" then bad = "wall" break end
+		-- A body-width either side: a straight walk must not shave the rim.
+		local left = point_safe(x - dy / d * M.RIM_MARGIN, y + dx / d * M.RIM_MARGIN, z, true)
+		local right = point_safe(x + dy / d * M.RIM_MARGIN, y - dx / d * M.RIM_MARGIN, z, true)
+		if not (left and right) then bad = "pit" break end
 	end
 	if not bad then
 		local pw, phys, v3 = physics()
@@ -473,8 +496,9 @@ local function mark_stuck(s)
 end
 
 -- Where to walk now toward a goal, for route state s. here: { x, y, z }; gx, gy: the goal. Answers the point to
--- head for, and the state: "direct" (close, or nothing to search with), "route" (following a found way),
--- "search" (still looking: head for the goal for now), "stuck" (given up on a way, try something else).
+-- head for, and the state: "direct" (close, or nothing to search with) or "route" (following a found way); or nil,
+-- nil and "search" (still looking) or "stuck" (given up on a way for a moment), when the bot should stand: walking
+-- on with no route is how a bot ends up in a pit.
 local STUCK_AFTER = 1.1
 local GOAL_MOVES = 3
 local REFRESH = 2.2
@@ -497,14 +521,14 @@ function M.route(s, here, gx, gy, dt)
 			if s.fails >= 3 then
 				s.fails = 0
 				s.pause = M.now + 0.8
-				return gx, gy, "stuck"
+				return nil, nil, "stuck"
 			end
 		elseif moved >= 0.4 then
 			s.fails = 0
 		end
 	end
 	if s.pause then
-		if M.now < s.pause then return gx, gy, "stuck" end
+		if M.now < s.pause then return nil, nil, "stuck" end
 		s.pause = nil
 	end
 	local stale = s.gx == nil or dist(s.gx, s.gy, gx, gy) > GOAL_MOVES or s.since <= 0
@@ -517,21 +541,29 @@ function M.route(s, here, gx, gy, dt)
 		local status = step_plan(s.plan)
 		if status ~= "working" then
 			if status == "none" then
-				s.path = nil
+				s.path, s.detour = nil, false
 			else
 				s.path, s.i = s.plan.path, 1
+				-- A way much longer than the straight line: the owner may want a nearer goal.
+				local total, x, y = 0, here.x, here.y
+				for _, q in ipairs(s.path) do
+					total = total + dist(x, y, q.x, q.y)
+					x, y = q.x, q.y
+				end
+				s.detour = total > dist(here.x, here.y, gx, gy) * M.DETOUR + 4
 			end
 			s.plan = nil
 		end
 	end
 	local path = s.path
-	if not path or #path == 0 then return gx, gy, "search" end
+	if not path or #path == 0 then return nil, nil, "search" end
 	-- Past the waypoints already reached, and any that a straight walk from here reaches; the path is a
 	-- grid's, so this is what makes the walk look like one line.
 	while path[s.i] and dist(here.x, here.y, path[s.i].x, path[s.i].y) < 1.2 do s.i = s.i + 1 end
 	if s.i > #path then
-		s.path = nil
-		return gx, gy, "search"
+		-- Finished a partial way with the goal still far: look again at once.
+		s.path, s.since = nil, 0
+		return nil, nil, "search"
 	end
 	s.pull = (s.pull or 0) - dt
 	if s.pull <= 0 and has_ray() then
@@ -552,9 +584,26 @@ function M.route(s, here, gx, gy, dt)
 	return p.x, p.y, "route"
 end
 
+-- Whether the route state has settled on a way much longer than the straight line to the goal.
+function M.detouring(s)
+	return s ~= nil and s.detour == true
+end
+
+-- Whether a body can stand at a point: solid there and a body-width to each side.
+function M.solid(here)
+	local z = tonumber(here.z) or 0
+	local ok = point_safe(here.x, here.y, z, true)
+	if not ok then return false end
+	for _, o in ipairs(ORTHOGONAL) do
+		if not point_safe(here.x + o[1] * M.RIM_MARGIN, here.y + o[2] * M.RIM_MARGIN, z, true) then return false end
+	end
+	return true
+end
+
 -- The direction to walk instead of (x, y) to keep clear of deadly ground, from here: (x, y) itself when ahead is
--- safe, else the closest safe turn of up to 150 degrees, or nil when every way is unsafe. ahead: metres
--- looked ahead. Costs a few rays at most, and they are remembered a moment.
+-- safe, else the closest safe turn of up to 150 degrees, or nil when every way is unsafe: the bot then stands, as
+-- nothing it doesn't trust is worth stepping on. ahead: metres looked ahead, a body-width to each side included.
+-- Costs a few rays at most, and they are remembered a moment.
 local TURNS = { 0, 25, -25, 50, -50, 80, -80, 110, -110, 150, -150 }
 
 function M.safe_heading(here, x, y, ahead)
@@ -562,25 +611,39 @@ function M.safe_heading(here, x, y, ahead)
 	local function ok(px, py)
 		local good, why = point_safe(px, py, z, true)
 		if good then return true end
-		-- Already inside a zone: only the ways out are refused.
+		-- Already inside a zone: only the ways out are allowed.
 		if why == "hazard" and in_zone(here.x, here.y) and not in_zone(here.x + (px - here.x) * 0.5, here.y + (py - here.y) * 0.5) then return true end
 		return false
+	end
+	local function way_ok(dx, dy)
+		for _, t in ipairs({ 0.5, 1 }) do
+			local px, py = here.x + dx * ahead * t, here.y + dy * ahead * t
+			if not ok(px, py) then return false end
+			if not ok(px - dy * M.RIM_MARGIN, py + dx * M.RIM_MARGIN) then return false end
+			if not ok(px + dy * M.RIM_MARGIN, py - dx * M.RIM_MARGIN) then return false end
+		end
+		return true
 	end
 	for _, deg in ipairs(TURNS) do
 		local a = math.rad(deg)
 		local c, s = math.cos(a), math.sin(a)
 		local dx, dy = x * c - y * s, x * s + y * c
-		if ok(here.x + dx * ahead, here.y + dy * ahead) then return dx, dy end
+		if way_ok(dx, dy) then return dx, dy, deg ~= 0 end
 	end
-	-- Every way reads unsafe. If the bot's own spot does too, the test is wrong here, not the ground: leave the step.
-	if not point_safe(here.x, here.y, z, true) then return x, y end
 	return nil
 end
 
 -- Whether a straight jump or dive of metres from here along (x, y) ends on safe ground.
 function M.dive_safe(here, x, y, metres)
-	local good = point_safe(here.x + x * metres, here.y + y * metres, tonumber(here.z) or 0, true)
-	return good
+	local z = tonumber(here.z) or 0
+	for t = 1, math.ceil(metres) do
+		local d = math.min(t, metres)
+		local px, py = here.x + x * d, here.y + y * d
+		if not point_safe(px, py, z, true) then return false end
+		if not point_safe(px - y * M.RIM_MARGIN, py + x * M.RIM_MARGIN, z, true) then return false end
+		if not point_safe(px + y * M.RIM_MARGIN, py - x * M.RIM_MARGIN, z, true) then return false end
+	end
+	return true
 end
 
 return M
