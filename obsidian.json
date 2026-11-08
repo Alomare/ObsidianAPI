@@ -1,7 +1,7 @@
 {
   "obsidian": 1,
   "id": "obsidian.api",
-  "version": "1.44.0",
+  "version": "1.45.0",
   "name": {
     "en": "Obsidian API",
     "pt-BR": "Obsidian API",
@@ -44,7 +44,7 @@
     "lib/lobby.lua",
     "lib/map.lua",
     "lib/ui.lua",
-    "lib/bots.lua",
+    "lib/nav.lua", "lib/brain.lua", "lib/bots.lua",
     "lib/audio.lua",
     "lib/music.lua",
     "lib/mod_settings.lua",

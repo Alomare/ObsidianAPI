@@ -2,6 +2,15 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.45.0
+
+- New: `api.nav` finds walking routes around walls, pits, lava, deep water and danger zones with rays over a grid: `path`, `walkable`, `walk_clear`, `zones`, `available`, `search_grid`.
+- New: `api.brain`, the pure decisions bots use: weapon choice by threat, target commitment, aim window, blast and line-of-fire checks, formation spots, sprinting, grenades.
+- New: `bot:navigate` routes and guards a bot's walking; `bot:movement` adds smooth turning, spacing, varied spots, strafing and sprinting to catch up; `bot:auto_grenades` throws grenades by rule.
+- New: `fight` weapon "threat" saves support and heavy weapons for what deserves them, commits to one target, and never fires a blast that would catch a friend.
+- New: `api.gear.blast` gives the blast radius of what a weapon fires; `api.enemies.tentacles` lists the Impaler's tentacles, and they count in `api.bots.hazards` and `avoid_shots`'s close attacks.
+- Changed: bare bots start out of the camera's framing and the screen leash, and can spawn off the screen.
+
 ## 1.40.0
 
 - New: `api.stratagems.hide(name)` takes a game stratagem out of the Arsenal, the Loadout screen, the default and saved loadouts and the mission inventory; `unhide` and `is_hidden` go with it.

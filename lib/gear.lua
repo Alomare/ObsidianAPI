@@ -484,6 +484,27 @@ function M.hurts(weapon, target)
 	return at(lo), at(hi), at(weak)
 end
 
+-- The blast of what a weapon fires, in metres, by the settings: the weapon's own explosion (the EAT, the
+-- recoilless rifle, the plasma guns) or the one of what it launches (grenades, missiles). Answers the radius, or nil
+-- for a weapon with no blast. weapon: a weapon unit (api.gear.weapons_of).
+function M.blast(weapon)
+	if not alive(weapon) then return nil end
+	local info
+	for _, name in ipairs(TUNED) do
+		local ctx = game.masters(name)[weapon] or game.slaves(name)[weapon]
+		if ctx then
+			info = ctx.state and ctx.state.weapon_info
+			break
+		end
+	end
+	if type(info) ~= "table" then return nil end
+	local _, ex = explosion_of(weapon, info)
+	if type(ex) ~= "table" then return nil end
+	local radius = tonumber(ex.blast_radius)
+	if radius and radius > 0 then return radius end
+	return nil
+end
+
 -- The weapons a player's unit holds: { unit, component, slot, info }, where slot is primary_weapon,
 -- sidearm_weapon or support_weapon, and info the weapon's settings before any tuning. owner: nil for
 -- the main player.

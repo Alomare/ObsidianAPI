@@ -30,6 +30,8 @@ local vehicles = obsidian.module("lib/vehicles")
 local M = { list = {} }
 -- Helpers and numbers of the parts added later, in one table: a chunk holds at most 200 locals.
 local P = {}
+P.nav = obsidian.module("lib/nav")
+P.brain = obsidian.module("lib/brain")
 
 local HELLDIVER = "characters/helldiver_private_01/helldiver_private_01"
 
@@ -213,7 +215,9 @@ local function add_bare(st, name, pos, default_loadout)
 			b.failed = true
 		end,
 	}
-	st.spawn_manager:queue_spawn(HELLDIVER, v3(pos.x, pos.y, pos.z or 0), nil, listener, { player_index = 0 }, nil, true)
+	-- The last argument asks the spawn to stay on the screen (SpawnManager keep_inside_screen). A bare bot doesn't: the
+	-- camera doesn't frame it, and a bot taken over from a player who left stands wherever they left it.
+	st.spawn_manager:queue_spawn(HELLDIVER, v3(pos.x, pos.y, pos.z or 0), nil, listener, { player_index = 0 }, nil, false)
 	return b
 end
 
@@ -298,6 +302,8 @@ function M.add(opts)
 		b, why = add_bare(st, name, opts.position, opts.loadout == "default")
 		if not b then return nil, why end
 		if opts.guest == true then b.is_guest = true end
+		-- Out of the camera's framing and the screen's leash from the start, with the game's own commands (see bot:camera).
+		b.free_camera = true
 	end
 	b.outfit = look
 	b.on_death = opts.on_death
@@ -497,6 +503,42 @@ function Bot:follow(unit, distance)
 	return self
 end
 
+-- How the bot moves: { spacing, smooth, sprint, strafe, seed }, each optional. Without it a bot walks straight at
+-- what the orders say. spacing: metres the bot keeps from other Helldivers and bots (2.5); smooth: true to ease the
+-- stick from one way to another instead of snapping (true); sprint: true to sprint to catch up with the unit it
+-- follows when far behind (true); strafe: true to step about while fighting, stop between steps, back off from what
+-- comes too close and walk into reach (true); seed: any whole number that sets where around the leader this bot keeps
+-- (a follow order then keeps a varied spot instead of a circle, and starts and stops with some slack). false turns it
+-- off. Answers the bot.
+function Bot:movement(opts)
+	if opts == false then
+		self.manner = nil
+		return self
+	end
+	opts = type(opts) == "table" and opts or {}
+	local seed = math.floor(tonumber(opts.seed) or (#M.list * 37 + 11))
+	self.manner = { spacing = tonumber(opts.spacing) or 2.5, smooth = opts.smooth ~= false, sprint = opts.sprint ~= false,
+		strafe = opts.strafe ~= false, seed = seed, fight = {}, stick = { 0, 0 }, wander = 0 }
+	return self
+end
+
+-- Finds a way around walls, pits, lava, deep water and the other danger zones of api.nav.zones when the orders walk
+-- (go_to, follow, and walking to a task), and keeps every step off deadly ground, a dive included (see api.nav). true,
+-- or false to go back to walking straight at the goal (the default). Answers the bot.
+function Bot:navigate(on)
+	if on == false then
+		self.nav = nil
+	else
+		self.nav = self.nav or P.nav.new_route()
+	end
+	return self
+end
+
+-- Whether the bot walks by a found route (bot:navigate).
+function Bot:navigating()
+	return self.nav ~= nil
+end
+
 -- The unit a follow order keeps near now, or nil.
 function P.follow_target(b)
 	local follow = b.goals.follow
@@ -532,7 +574,10 @@ end
 -- bot takes out and fights with, coming back to it after anything else it takes out, except while that
 -- weapon rests after a use_weapon with opts.rest, or "best": for each target, the support weapon where it
 -- hurts the target clearly more than the primary does, else the primary while it has ammunition, else the
--- sidearm, each only within the range of that weapon; only, a function
+-- sidearm, each only within the range of that weapon; or "threat", which saves the support weapon for what deserves it
+-- (an armored, large or big enemy or a group, and for a heavy weapon, one with few rounds or a blast, only armored,
+-- large or big enemies and big groups) and otherwise fights with the primary, commits to one target until it dies,
+-- leaves reach or goes unseen, and never picks or fires a blast weapon that would catch a friend; only, a function
 -- given an enemy unit that answers true for the enemies to shoot (the rest are left alone); secondary,
 -- true or a table to fire a vehicle seat's second weapon along with the first (the tank's machine gun,
 -- the first exosuit's rockets). The rockets go only while the exosuit faces the target. As a table:
@@ -557,7 +602,7 @@ function Bot:fight(radius, opts)
 			secondary = { only = type(opts.secondary.only) == "function" and opts.secondary.only or nil,
 				every = every and every == every and every >= 0 and every or nil }
 		end
-		self.goals.fight = { radius = radius or 25, weapon = SLOTS[opts.weapon], best = opts.weapon == "best",
+		self.goals.fight = { radius = radius or 25, weapon = SLOTS[opts.weapon], best = opts.weapon == "best" or opts.weapon == "threat", threat = opts.weapon == "threat",
 			only = type(opts.only) == "function" and opts.only or nil, secondary = secondary }
 		-- New orders look for a target at once.
 		self.look = 0
@@ -686,6 +731,12 @@ function Bot:cancel_stratagem()
 	if not self.job then return false end
 	self.job.cancel = true
 	return true
+end
+
+-- What a walking task heads for this frame, for a bot on a found route: dx, dy from where the bot stands.
+function P.set_dest(f, unit, dx, dy)
+	local p = game.global("Unit").world_position(unit, 0)
+	f.dest = { x = p.x + dx, y = p.y + dy }
 end
 
 local function finish(b, ok, why)
@@ -1381,7 +1432,8 @@ end
 -- view, it no longer dies after 4 seconds there (a bot downed 143 metres away got up by itself in a test). true, the
 -- default, puts the bot back in the framing and the leash: the camera can't show Helldivers much more than 40 metres
 -- apart, and while one stands outside the view it won't move away from them, so walk the bot back near the others
--- first. A bare bot is never in the camera's framing. Answers the bot.
+-- first. A bare bot starts out of the framing and the leash (the game switches both on for every Helldiver it spawns, and
+-- the API takes a bare bot back out of them); bot:camera(true) puts one in. Answers the bot.
 function Bot:camera(on)
 	self.free_camera = on == false or nil
 	local unit = self:unit()
@@ -1610,6 +1662,7 @@ local function use_step(b, unit, t, f, dt)
 	task.near = d <= task.reach + 1 and (task.near or 0) + dt or 0
 	if d > task.reach and not task.close and task.near < 1 then
 		f.mx, f.my = direction({ x = dx, y = dy })
+		P.set_dest(f, unit, dx, dy)
 		if not (b.fight_target and b.fight_near) then t.fire_button, f.ax, f.ay = 0, 0, 0 end
 		return
 	end
@@ -1682,6 +1735,7 @@ local function vehicle_step(b, unit, t, f, dt)
 	local d = math.sqrt(dx * dx + dy * dy)
 	if d > ENTER_REACH and task.tries == 0 then
 		f.mx, f.my = direction({ x = dx, y = dy })
+		P.set_dest(f, unit, dx, dy)
 		if not (b.fight_target and b.fight_near) then t.fire_button, f.ax, f.ay = 0, 0, 0 end
 		return
 	end
@@ -1711,7 +1765,10 @@ local function task_step(b, unit, t, f, dt)
 	if h and h.is_dead then return end_task(b, false, "dead") end
 	if is_downed(unit) then return end_task(b, false, "downed") end
 	local dx, dy, d = flat(unit, target)
-	local function walk() f.mx, f.my = direction({ x = dx, y = dy }) end
+	local function walk()
+		f.mx, f.my = direction({ x = dx, y = dy })
+		P.set_dest(f, unit, dx, dy)
+	end
 	-- Full length: a short stick reads as none inside the dead zone.
 	local function face()
 		if d > 0.01 then f.ax, f.ay = dx / d, dy / d end
@@ -2034,7 +2091,16 @@ local function on_target(b, unit, seat, face, dx, dy, dt)
 		if seat.kind ~= "exosuit" then return true end
 		return b.gun_off == nil or b.gun_off <= GUN_FACING
 	end
-	return b.aim_time >= FIGHT_SETTLE and faces(unit, dx, dy, FIGHT_FACING)
+	local cos = FIGHT_FACING
+	local inv = game.master(unit, "inventory")
+	if inv and alive(inv.current_weapon) then
+		if b.aim_info_for ~= face then
+			local info = enemies.info(face)
+			b.aim_info_for, b.aim_large = face, info and info.large
+		end
+		cos = P.aim_cos(inv.current_weapon, math.sqrt(dx * dx + dy * dy), b.aim_large) or cos
+	end
+	return b.aim_time >= FIGHT_SETTLE and faces(unit, dx, dy, cos)
 end
 
 -- How far a weapon reaches, in metres, from the state the game sets up from the weapon settings: a firearm or a
@@ -2125,12 +2191,202 @@ end
 -- Seconds the bot keeps facing an enemy it can't see before it lets the aim go.
 P.SIGHT_GRACE = 1
 
+-- fight's "threat" weapon: how a target looks to the bot, and what the bot's weapons can do to it. The pure rules
+-- are in lib/brain; these read the game.
+P.LOOK_MAX = 8        -- enemies weighed at each look, nearest first
+P.STALL = 1.8         -- seconds on a target without a shot before the bot gives up on it
+P.STALL_SKIP = 2.5    -- seconds it leaves that target alone afterwards
+P.WEAPON_HOLD = 3     -- seconds a weapon stays the choice, while the target and the ammunition allow
+
+-- Everyone a shot must spare, the living ones, as { x, y }: bots of every machine and players.
+function P.friend_points(unit)
+	local units = game.global("Unit")
+	local out = {}
+	for _, other in ipairs(squad(unit)) do
+		local h = health(other)
+		if alive(other) and not (h and h.is_dead) then
+			local p = units.world_position(other, 0)
+			out[#out + 1] = { x = p.x, y = p.y }
+		end
+	end
+	return out
+end
+
+-- A weapon's settings as the game holds them on the state of the weapon's component.
+function P.weapon_info(weapon)
+	if not alive(weapon) then return nil end
+	for _, c in ipairs(P.RANGE_COMPONENTS) do
+		local ctx = game.masters(c)[weapon]
+		local info = ctx and type(ctx.state) == "table" and ctx.state.weapon_info
+		if type(info) == "table" then return info end
+	end
+	return nil
+end
+
+function P.primary_power(inv)
+	local info = P.weapon_info(inv and inv.primary_weapon)
+	return info and tonumber(info.power) or nil
+end
+
+function P.enemy_fact(unit, e, d, inv, found)
+	local info = enemies.info(e) or {}
+	local big = (tonumber(info.hitpoints) or tonumber(info.max_hitpoints) or 0) >= P.brain.BIG_HP
+	local armored = false
+	local power = P.primary_power(inv)
+	if power and inv.primary_weapon then
+		local ok, hurt = pcall(gear.hurts, inv.primary_weapon, e)
+		if ok and tonumber(hurt) then armored = P.brain.armored(hurt, power) end
+	end
+	local group = 0
+	local units = game.global("Unit")
+	local p = units.world_position(e, 0)
+	for _, o in ipairs(found) do
+		local q = units.world_position(o, 0)
+		local dx, dy = q.x - p.x, q.y - p.y
+		if dx * dx + dy * dy <= P.brain.GROUP_RADIUS * P.brain.GROUP_RADIUS then group = group + 1 end
+	end
+	local atk = enemies.attacking(e)
+	return { unit = e, d = d, x = p.x, y = p.y, large = info.large == true, big = big, armored = armored, group = group,
+		attacking = atk ~= nil and (atk.target == nil or atk.target == unit) }
+end
+
+-- What each weapon offers against a target, for brain.pick_weapon.
+function P.slot_specs(b, inv, target, fight)
+	local out = {}
+	for _, slot in ipairs(HEAL_SLOTS) do
+		local w = inv[slot]
+		if alive(w) then
+			local ws = weapon_state(w)
+			local rested = b.rests and b.rests[slot] and b.rests[slot] > M.clock
+			local ok, square = pcall(gear.hurts, w, target)
+			local blast = gear.blast(w)
+			out[slot] = { ready = P.has_ammo(w) and not rested, reach = P.weapon_range(w) or fight.radius, hurt = ok and tonumber(square) or 0,
+				blast = blast, min_range = blast and blast + 1.5 or nil,
+				heavy = P.brain.heavy(ws and ws.rounds, ws and ws.magazine_capacity or (P.weapon_info(w) or {}).magazine_capacity, ws and ws.num_mags, (((P.weapon_info(w) or {}).attributes) or {}).explosive == true) }
+			if ws and type(ws.heat) == "number" and ws.magazine_capacity == nil then out[slot].heavy = false end
+		end
+	end
+	return out
+end
+
+-- A look for a "threat" fight: keep the target while it is worth keeping, else the best target with a line to it,
+-- and the weapon for it.
+function P.threat_look(b, unit, here, fight)
+	local inv = game.master(unit, "inventory")
+	local found = targets(b, fight, here, P.fight_radius(b, unit, fight))
+	local facts = {}
+	local cur, cur_fact = b.fight_target, nil
+	if cur and (not alive(cur) or dead_unit(cur)) then cur = nil end
+	b.fight_skip = b.fight_skip or {}
+	for i = 1, math.min(#found, P.LOOK_MAX) do
+		local e = found[i]
+		if not (b.fight_skip[e] and b.fight_skip[e] > M.clock) then
+			local _, _, d = flat(unit, e)
+			local f = P.enemy_fact(unit, e, d, inv, found)
+			facts[#facts + 1] = f
+			if e == cur then cur_fact = f end
+		end
+	end
+	local reach = nil
+	if fight.chosen and inv and alive(inv[fight.chosen]) then reach = P.weapon_range(inv[fight.chosen]) end
+	if cur and not cur_fact and #found > 0 then
+		-- Past the first few looked at: still a target, but far.
+		local _, _, d = flat(unit, cur)
+		if d <= fight.radius then cur_fact = P.enemy_fact(unit, cur, d, inv, found) end
+	end
+	local ranked = P.brain.ranked(facts)
+	local best = nil
+	for _, f in ipairs(ranked) do
+		if f.unit ~= cur then best = f break end
+	end
+	local changed = false
+	if cur then
+		if line_clear(unit, cur) then
+			b.cur_blind = 0
+		else
+			b.cur_blind = (b.cur_blind or 0) + LOOK_EVERY
+		end
+		if not P.brain.keeps(cur_fact, reach, b.cur_blind, best) then cur = nil end
+	end
+	if not cur then
+		for i = 1, math.min(#ranked, LINE_CHECKS) do
+			if line_clear(unit, ranked[i].unit) then
+				cur = ranked[i].unit
+				changed = true
+				b.cur_blind = 0
+				b.fight_stall = 0
+				break
+			end
+		end
+	end
+	b.fight_target = cur
+	if cur or not found[1] then
+		b.fight_blind = 0
+	else
+		b.fight_blind = (b.fight_blind or 0) + LOOK_EVERY
+	end
+	b.fight_face = cur or ((b.fight_blind or 0) <= P.SIGHT_GRACE and found[1] or nil)
+	if not (inv and fight.best) then return end
+	if not cur then
+		fight.chosen = P.best_slot(b, unit, nil, nil)
+		return
+	end
+	local chosen_ready = fight.chosen and inv[fight.chosen] and alive(inv[fight.chosen]) and P.has_ammo(inv[fight.chosen])
+	if changed or not chosen_ready or M.clock >= (fight.weapon_until or 0) then
+		local f = nil
+		for _, c in ipairs(facts) do if c.unit == cur then f = c end end
+		f = f or cur_fact
+		local friends = P.friend_points(unit)
+		local me = { x = here.x, y = here.y }
+		local target = { d = f and f.d, large = f and f.large, big = f and f.big, armored = f and f.armored, group = f and f.group or 1 }
+		local spot = f and { x = f.x, y = f.y }
+		target.friend_near_for = function(radius)
+			return spot ~= nil and not P.brain.blast_clear(me, spot, radius, friends, 1.5)
+		end
+		fight.chosen = P.brain.pick_weapon(P.slot_specs(b, inv, cur, fight), target) or fight.chosen
+		fight.weapon_until = M.clock + P.WEAPON_HOLD
+	end
+end
+
+-- Whether a blast at point p from the weapon would spare every friend and the bot. True for a weapon with no blast.
+function P.blast_allows(unit, here, p, weapon)
+	local blast = gear.blast(weapon)
+	if not blast then return true end
+	return P.brain.blast_clear({ x = here.x, y = here.y }, { x = p.x, y = p.y }, blast, P.friend_points(unit), 1.5)
+end
+
+-- The cosine of the window the barrel must be in for the weapon in hand, or nil with no spread to read.
+function P.aim_cos(weapon, d, large)
+	local ws = weapon_state(weapon)
+	local spread = ws and tonumber(ws.spread)
+	if not spread then return nil end
+	return math.cos(math.rad(P.brain.aim_window(d, spread, large and 1.5 or 0.6)))
+end
+
+-- A fight that has had a target too long without a shot gives the target up, for one it can shoot.
+function P.note_shot(b, target, fired, waiting, dt)
+	if fired or waiting then
+		b.fight_stall = 0
+		return
+	end
+	b.fight_stall = (b.fight_stall or 0) + dt
+	if b.fight_stall > P.STALL then
+		b.fight_skip = b.fight_skip or {}
+		b.fight_skip[target] = M.clock + P.STALL_SKIP
+		b.fight_target, b.fight_face = nil, nil
+		b.look, b.fight_stall = 0, 0
+	end
+end
+
 local function fight_step(b, unit, here, t, dt)
 	local fight = b.goals.fight
 	local seat = b.in_seat
 	b.look = (b.look or 0) - dt
 	if b.look <= 0 or (b.fight_target and (not alive(b.fight_target) or dead_unit(b.fight_target))) then
 		b.look = LOOK_EVERY
+		if fight.threat and not seat then
+			P.threat_look(b, unit, here, fight)
+		else
 		b.fight_target, b.fight_face = nil, nil
 		local found = targets(b, fight, here, P.fight_radius(b, unit, fight))
 		for i = 1, math.min(#found, LINE_CHECKS) do
@@ -2153,6 +2409,7 @@ local function fight_step(b, unit, here, t, dt)
 				d = dist
 			end
 			fight.chosen = P.best_slot(b, unit, b.fight_target, d)
+		end
 		end
 	end
 	local units = game.global("Unit")
@@ -2184,16 +2441,30 @@ local function fight_step(b, unit, here, t, dt)
 		if b.fight_target == face then
 			local dx, dy = p.x - here.x, p.y - here.y
 			b.fight_near = dx * dx + dy * dy <= THREAT * THREAT
+			local fired = false
 			if no_one_in_the_way(unit, here, p.x, p.y, seat and seat.vehicle) then
 				local primary = (not seat or seat.primary) and (not seat or not fight.only or picks(b, fight.only, face))
-				-- Never past what the weapon in hand reaches, while the right one comes out.
+				-- Never past what the weapon in hand reaches, while the right one comes out, nor into a blast
+				-- that would catch a friend or the bot.
 				if primary and not seat then
 					local inv = game.master(unit, "inventory")
-					local reach = inv and P.weapon_range(inv.current_weapon)
+					local weapon = inv and inv.current_weapon
+					local reach = inv and P.weapon_range(weapon)
 					if reach and dx * dx + dy * dy > reach * reach then primary = false end
+					if primary and weapon and not P.blast_allows(unit, here, p, weapon) then primary = false end
+					-- Letting go so a chosen weapon can come out: a weapon is taken out standing calm.
+					if primary and fight.threat and fight.chosen and inv[fight.chosen] and inv[fight.chosen] ~= weapon then primary = false end
 				end
-				if primary and on_target(b, unit, seat, face, dx, dy, dt) then pull(b, unit, t) end
+				if primary and on_target(b, unit, seat, face, dx, dy, dt) then
+					pull(b, unit, t)
+					fired = true
+				end
 				if seat and seat.secondary and fight.secondary then second_trigger(b, seat, fight, face, dx, dy, t) end
+			end
+			if fight.threat and not seat then
+				local inv = game.master(unit, "inventory")
+				local ws = inv and weapon_state(inv.current_weapon)
+				P.note_shot(b, face, fired, (ws and ws.is_reloading) or (inv and fight.chosen and inv[fight.chosen] ~= inv.current_weapon), dt)
 			end
 		end
 	end
@@ -2306,6 +2577,7 @@ local function grenade_step(b, unit, t, f, dt)
 	f.ax, f.ay = direction({ x = dx, y = dy })
 	if job.cancel then return finish(b, false, "cancelled") end
 	if job.total > GRENADE_TIME then return finish(b, false, "timeout") end
+	if job.guard and job.phase ~= "release" and not job.guard() then return finish(b, false, "cancelled") end
 	if job.phase == "turn" then
 		if faces(unit, dx, dy, 0.97) or job.time > TURN_TIME then
 			job.phase, job.time = "hold", 0
@@ -2596,6 +2868,82 @@ local function unstick(b, here, mx, my, dt)
 	return mx, my
 end
 
+-- Throws grenades by itself while fighting, from what the bot carries (api.gear gives a Helldiver grenades of the
+-- perk's type): an explosive or stun grenade at a group or a big enemy between 7 and 14 metres off, never with a
+-- friend within the blast of where it would land, and a smoke grenade between the bot and the enemies when under
+-- fire. Needs bot:fight. true, or false to stop (the default). opts.every: the seconds between throws (8 for
+-- explosive and stun, 20 for smoke). Answers the bot.
+function Bot:auto_grenades(on, opts)
+	if on == false then
+		self.goals.grenades = nil
+	else
+		opts = type(opts) == "table" and opts or {}
+		self.goals.grenades = { wait = 0, cooldown = 0, every = tonumber(opts.every) }
+	end
+	return self
+end
+
+-- The grenade an inventory holds: the kind for brain.grenade and the blast in metres.
+function P.grenade_info(inv)
+	local path = inv.grenade_unit_path
+	local kind = "frag"
+	if type(path) == "string" then
+		if path:find("smoke", 1, true) then kind = "smoke"
+		elseif path:find("stun", 1, true) then kind = "stun" end
+	end
+	local blast = nil
+	local lsm = game.global("LuaSettingsManager")
+	if lsm and type(path) == "string" then
+		local ok, s = pcall(function() return lsm:get_settings_by_unit_path(path) end)
+		local ex = ok and type(s) == "table" and s.explosive_info
+		blast = type(ex) == "table" and tonumber(ex.blast_radius) or nil
+	end
+	return kind, blast or 4
+end
+
+P.GRENADE_LOOK = 0.5
+P.UNDER_FIRE = 3    -- seconds after the bot last lost health that it counts as under fire
+
+function P.grenade_look(b, unit, here, dt)
+	local g = b.goals.grenades
+	g.cooldown = math.max(0, g.cooldown - dt)
+	local h = health(unit)
+	local hp = h and tonumber(h.hitpoints)
+	if g.hp and hp and hp < g.hp then g.hurt_at = M.clock end
+	g.hp = hp
+	g.wait = g.wait - dt
+	if g.wait > 0 then return end
+	g.wait = P.GRENADE_LOOK
+	local target = b.fight_target
+	if g.cooldown > 0 or b.job or b.task or b.leap or not alive(target) or is_downed(unit) or occupied(unit) then return end
+	local inv = game.master(unit, "inventory")
+	if not (inv and (tonumber(inv.num_grenades) or 0) > 0) then return end
+	local kind, blast = P.grenade_info(inv)
+	local units = game.global("Unit")
+	local q = units.world_position(target, 0)
+	local dx, dy = q.x - here.x, q.y - here.y
+	local d = math.sqrt(dx * dx + dy * dy)
+	local near = enemies.near(P.brain.GROUP_RADIUS, q)
+	local info = enemies.info(target) or {}
+	local friends = P.friend_points(unit)
+	local me = { x = here.x, y = here.y }
+	local spot = P.brain.grenade(kind, { count = inv.num_grenades, cooldown = g.cooldown, shooter = me, point = { x = q.x, y = q.y }, d = d, group = #near,
+		big = info.large == true or (tonumber(info.hitpoints) or 0) >= P.brain.BIG_HP, blast = blast, friends = friends,
+		under_fire = g.hurt_at ~= nil and M.clock - g.hurt_at <= P.UNDER_FIRE, enemies = #enemies.near(25, here) })
+	if not spot then return end
+	if not P.brain.line_clear(me, spot, friends, 1.2) then return end
+	local unsafe = kind == "smoke"
+	local started = b:throw_at({ x = spot.x, y = spot.y }, function()
+		g.cooldown = g.every or (kind == "smoke" and 20 or 8)
+	end)
+	if started and b.job and not unsafe then
+		-- Someone walked into the blast during the windup: the throw stops.
+		b.job.guard = function()
+			return P.brain.blast_clear(me, spot, blast, P.friend_points(unit), P.brain.GRENADE_MARGIN - 0.5)
+		end
+	end
+end
+
 -- Takes the bot out of the mission. A bare bot goes at once, or with opts.decay (seconds) the body stays
 -- that long and then sinks away the way the game clears a dropped player: a living body dies first, as the
 -- game does to a player who leaves. A player bot leaves the way a controller does.
@@ -2681,15 +3029,71 @@ local function drive_toward(b, dx, dy, d, distance)
 	return math.max(DRIVE_MIN, math.min(1, d / DRIVE_SLOW)), false
 end
 
+-- movement's follow: a spot around the leader that is this bot's own, turning slowly with the leader's heading
+-- and wandering a little, walked to with some slack so the bot doesn't step on and off at the edge.
+function P.manner_follow(b, here, target, there, follow, dt)
+	local m = b.manner
+	local tx, ty = there.x - here.x, there.y - here.y
+	b.leader_d = math.sqrt(tx * tx + ty * ty)
+	m.spot = (m.spot_for == follow.distance and m.spot) or P.brain.slot(m.seed, follow.distance)
+	m.spot_for = follow.distance
+	local fx, fy = forward_of(target)
+	if fx then
+		local want = math.atan2(fy, fx)
+		m.heading = m.heading or want
+		local diff = math.atan2(math.sin(want - m.heading), math.cos(want - m.heading))
+		m.heading = m.heading + diff * math.min(1, dt * 0.6)
+	end
+	local h = m.heading or 0
+	local cx, cy = math.cos(h), math.sin(h)
+	m.wander = m.wander + dt
+	local side = m.spot.side + math.sin(m.wander * 0.25 + m.spot.drift) * 1.1
+	local back = m.spot.back + math.cos(m.wander * 0.19 + m.spot.drift) * 0.8
+	local sx = there.x - cx * back - cy * side
+	local sy = there.y - cy * back + cx * side
+	local dx, dy = sx - here.x, sy - here.y
+	local d = math.sqrt(dx * dx + dy * dy)
+	local moving, speed = P.brain.arrive(d, m.moving)
+	m.moving, b.follow_moving = moving, moving
+	if moving and d > 0.01 then
+		b.axes.move[1], b.axes.move[2] = dx / d * speed, dy / d * speed
+		b.dest = { x = sx, y = sy }
+	else
+		b.axes.move[1], b.axes.move[2] = 0, 0
+		b.dest = nil
+	end
+end
+
+-- movement's strafe: where the bot steps while fighting, near the leader and with a target.
+function P.fight_move(b, unit, here, dt)
+	local m = b.manner
+	local face = b.fight_face
+	if not alive(face) then return end
+	local p = game.global("Unit").world_position(face, 0)
+	local dx, dy = p.x - here.x, p.y - here.y
+	local d = math.sqrt(dx * dx + dy * dy)
+	if d < 0.01 then return end
+	local inv = game.master(unit, "inventory")
+	local ws = inv and weapon_state(inv.current_weapon)
+	local reach = inv and P.weapon_range(inv.current_weapon) or nil
+	local info = inv and P.weapon_info(inv.current_weapon)
+	local planted = info and tonumber(info.move_speed_aim) == 0 or false
+	local forward, side = P.brain.fight_step(m.fight, d, reach, dt, math.random(), planted)
+	local ux, uy = dx / d, dy / d
+	b.axes.move[1], b.axes.move[2] = ux * forward - uy * side, uy * forward + ux * side
+end
+
 local function think(b, unit, t, dt)
 	local units = game.global("Unit")
 	local here = units.world_position(unit, 0)
+	b.dest, b.leader_d, b.follow_moving = nil, nil, nil
 	local go_to = b.goals.go_to
 	if go_to then
 		local dx, dy = go_to.x - here.x, go_to.y - here.y
 		local d = math.sqrt(dx * dx + dy * dy)
 		local speed, there = drive_toward(b, dx, dy, d, go_to.distance)
 		if not there then
+			b.dest = { x = go_to.x, y = go_to.y }
 			b.axes.move[1], b.axes.move[2] = dx / d * speed, dy / d * speed
 		else
 			b.axes.move[1], b.axes.move[2] = 0, 0
@@ -2704,12 +3108,16 @@ local function think(b, unit, t, dt)
 	if follow then
 		local target = P.follow_target(b)
 		if follow.fn and not target then b.axes.move[1], b.axes.move[2] = 0, 0 end
-		if target and units.alive(target) then
+		if target and units.alive(target) and b.manner and not b.in_seat then
+			P.manner_follow(b, here, target, units.world_position(target, 0), follow, dt)
+		elseif target and units.alive(target) then
 			local there = units.world_position(target, 0)
 			local dx, dy = there.x - here.x, there.y - here.y
 			local d = math.sqrt(dx * dx + dy * dy)
+			local spot = { x = there.x, y = there.y }
 			local speed, there = drive_toward(b, dx, dy, d, follow.distance)
 			if not there then
+				b.dest = spot
 				b.axes.move[1], b.axes.move[2] = dx / d * speed, dy / d * speed
 			else
 				b.axes.move[1], b.axes.move[2] = 0, 0
@@ -2718,6 +3126,9 @@ local function think(b, unit, t, dt)
 	end
 	if b.goals.fight then
 		fight_step(b, unit, here, t, dt)
+		if b.manner and b.manner.strafe and not b.in_seat and b.goals.follow and b.fight_face and not b.follow_moving then
+			P.fight_move(b, unit, here, dt)
+		end
 	else
 		b.fight_target, b.fight_face, b.fight_near = nil, nil, false
 		if b.fight_aimed then
@@ -3045,6 +3456,7 @@ function operate_step(b, unit, t, f, dt)
 		task.near = d <= task.reach + 1 and task.near + dt or 0
 		if d > task.reach and task.near < 1 then
 			f.mx, f.my = dx / d, dy / d
+			P.set_dest(f, unit, dx, dy)
 			if not (b.fight_target and b.fight_near) then f.ax, f.ay = 0, 0 end
 			return
 		end
@@ -3358,6 +3770,7 @@ function deliver_step(b, unit, t, f, dt)
 		local d = math.sqrt(dx * dx + dy * dy)
 		if d > task.at then
 			f.mx, f.my = dx / d, dy / d
+			P.set_dest(f, unit, dx, dy)
 			if not (b.fight_target and b.fight_near) then t.fire_button, f.ax, f.ay = 0, 0, 0 end
 			return
 		end
@@ -3441,11 +3854,13 @@ function board_step(b, unit, t, f, dt)
 	if not (b.fight_target and b.fight_near) then t.fire_button, f.ax, f.ay = 0, 0, 0 end
 	if s.landed then
 		f.mx, f.my = dx / d, dy / d
+		P.set_dest(f, unit, dx, dy)
 	elseif d < 5 then
 		-- Before it lands, off the spot it comes down on.
 		f.mx, f.my = -dx / d, -dy / d
 	elseif d > 7 then
 		f.mx, f.my = dx / d, dy / d
+		P.set_dest(f, unit, dx, dy)
 	else
 		f.mx, f.my = 0, 0
 	end
@@ -3596,7 +4011,8 @@ end
 -- each, nearest first. kind: "mine" (a mine, any Helldiver's own included, sets off on any live body within 0.3
 -- metres once armed; radius is the blast's), "fire" (napalm, lava, gas and the like: a burning area of radius
 -- metres for time_left seconds more, active once it burns), "hellbomb" (an armed hellbomb, time_left seconds
--- before it goes off; the scripts give no radius for it, so radius is nil). pos: a position, or the player's;
+-- before it goes off; the scripts give no radius for it, so radius is nil), "tentacle" (an Impaler's tentacle: it
+-- strikes what stands within radius metres, api.enemies.tentacles). pos: a position, or the player's;
 -- radius: metres around it (30); kinds: a list of those to keep, or nil for all.
 function M.hazards(pos, radius, kinds)
 	local units = game.global("Unit")
@@ -3648,6 +4064,11 @@ function M.hazards(pos, radius, kinds)
 	for unit, ctx in pairs(game.slaves("hellbomb")) do
 		local st = (game.masters("hellbomb")[unit] or ctx).state or {}
 		if alive(unit) and st.is_armed then add("hellbomb", unit, nil, tonumber(st.detonation_timer), true) end
+	end
+	if not want or want.tentacle then
+		for _, t in ipairs(enemies.tentacles(pos, radius)) do
+			add("tentacle", t.unit, t.reach, nil, t.ready ~= false)
+		end
 	end
 	table.sort(out, function(a, b) return a.d < b.d end)
 	for _, h in ipairs(out) do h.d = nil end
@@ -3762,6 +4183,8 @@ end
 local AVOID_LOOK = 0.1
 local DIVE_AT = 0.35
 P.MELEE_LOOK = 16      -- metres around the bot looked at for close attacks
+P.TENTACLE_MARGIN = 1.5 -- metres past a tentacle's reach the bot starts walking away
+P.DIVE_METRES = 4       -- how far a dive carries, by the game's speed and time
 
 -- A close attack aimed at the bot, as api.enemies.attacking answers it: the way out, or nil. A target the
 -- machine knows decides; elsewhere, an attack counts when the bot stands within reach in front of the
@@ -3815,6 +4238,20 @@ local function avoid_step(b, unit, here, f, dt)
 					break
 				end
 			end
+			-- An Impaler's tentacle isn't an enemy to the game's lists, but it strikes all around: while within
+			-- reach, out, straight away from it, with one dive when inside the reach.
+			if not a.threat then
+				for _, tent in ipairs(enemies.tentacles(here, P.MELEE_LOOK)) do
+					local dx, dy = here.x - tent.position.x, here.y - tent.position.y
+					local d = math.sqrt(dx * dx + dy * dy)
+					if d <= tent.reach + P.TENTACLE_MARGIN then
+						if d < 0.05 then dx, dy, d = 1, 0, 1 end
+						local dove = kept and kept.enemy == tent.unit and kept.dove
+						a.threat = { enemy = tent.unit, x = dx / d, y = dy / d, fire_at = d <= tent.reach and M.clock or M.clock + 1, dove = dove, melee = true }
+						break
+					end
+				end
+			end
 		end
 	end
 	local th = a.threat
@@ -3822,7 +4259,96 @@ local function avoid_step(b, unit, here, f, dt)
 	f.mx, f.my, f.stick = th.x, th.y, nil
 	if a.dodge and not th.dove and th.fire_at - M.clock <= DIVE_AT then
 		th.dove = true
-		press(b, "dodge_pressed")
+		-- Not into a pit or a danger zone.
+		if not b.nav or P.nav.dive_safe({ x = here.x, y = here.y, z = here.z }, th.x, th.y, P.DIVE_METRES) then press(b, "dodge_pressed") end
+	end
+end
+
+-- bot:navigate: follows a found route when the orders say to walk somewhere, and turns any step (a dive's way
+-- included) that would land on deadly ground. Only the sides that aren't dangerous are taken; with none, the bot stands.
+P.AHEAD = 1.4
+P.AHEAD_SPRINT = 2.1
+
+function P.nav_step(b, here, f, dt)
+	local m = math.sqrt(f.mx * f.mx + f.my * f.my)
+	if m < 0.05 then return end
+	local a = b.goals.avoid
+	local dodging = a and a.threat
+	local hp = { x = here.x, y = here.y, z = here.z }
+	if f.dest and not dodging and not b.job then
+		local wx, wy = P.nav.route(b.nav, hp, f.dest.x, f.dest.y, dt)
+		local dx, dy = wx - here.x, wy - here.y
+		local d = math.sqrt(dx * dx + dy * dy)
+		if d > 0.05 then f.mx, f.my = dx / d * m, dy / d * m end
+	end
+	local ahead = (b.manner and b.manner.sprinting) and P.AHEAD_SPRINT or P.AHEAD
+	local hx, hy = P.nav.safe_heading(hp, f.mx / m, f.my / m, ahead)
+	if hx then
+		f.mx, f.my = hx * m, hy * m
+	else
+		f.mx, f.my = 0, 0
+	end
+end
+
+-- movement's spacing: a push off other Helldivers and bots, looked at five times a second.
+function P.spread_out(b, unit, here, f, dt)
+	local m = b.manner
+	m.sep_wait = (m.sep_wait or 0) - dt
+	if m.sep_wait <= 0 then
+		m.sep_wait = 0.2
+		m.px, m.py = P.brain.separate({ x = here.x, y = here.y }, P.friend_points(unit), m.spacing)
+	end
+	if not m.px or (m.px == 0 and m.py == 0) then return end
+	local a = b.goals.avoid
+	if a and a.threat then return end
+	f.mx, f.my = f.mx + m.px * 0.7, f.my + m.py * 0.7
+	local len = math.sqrt(f.mx * f.mx + f.my * f.my)
+	if len > 1 then f.mx, f.my = f.mx / len, f.my / len end
+end
+
+-- movement's sprint: pressed while the bot is far behind the unit it follows and has stamina for it.
+function P.sprint_step(b, unit, f, t)
+	local m = b.manner
+	if not m.sprint or not b.leader_d or b.job then
+		m.sprinting = false
+		return
+	end
+	local cs = game.master(unit, "character")
+	local moving = f.mx * f.mx + f.my * f.my > 0.2
+	local want = moving and P.brain.sprints(b.leader_d, m.sprinting, cs and tonumber(cs.sprint_stamina), b.fight_target ~= nil)
+	m.sprinting = want or false
+	if want then
+		t.sprint_button, t.sprint_pressed = 1, true
+		t.fire_button = 0
+		f.ax, f.ay = 0, 0
+	end
+end
+
+-- movement's smooth: the stick and the aim eased toward where the orders want them, so nothing snaps. A dive and a
+-- stratagem or throw order take effect at once.
+P.STICK_EASE = 11
+P.AIM_EASE = 18
+
+function P.ease(b, f, dt)
+	local m = b.manner
+	if not m.smooth then return end
+	local a = b.goals.avoid
+	if b.job or b.leap or (a and a.threat) then
+		m.stick[1], m.stick[2], m.ax, m.ay = f.mx, f.my, nil, nil
+		return
+	end
+	local k = 1 - math.exp(-P.STICK_EASE * dt)
+	m.stick[1] = m.stick[1] + (f.mx - m.stick[1]) * k
+	m.stick[2] = m.stick[2] + (f.my - m.stick[2]) * k
+	f.mx, f.my = m.stick[1], m.stick[2]
+	if f.ax ~= 0 or f.ay ~= 0 then
+		if not m.ax then m.ax, m.ay = f.ax, f.ay end
+		local j = 1 - math.exp(-P.AIM_EASE * dt)
+		m.ax, m.ay = m.ax + (f.ax - m.ax) * j, m.ay + (f.ay - m.ay) * j
+		local len = math.sqrt(m.ax * m.ax + m.ay * m.ay)
+		if len > 0.001 then f.ax, f.ay = m.ax / len, m.ay / len end
+	else
+		m.ax, m.ay = nil, nil
 	end
 end
 
@@ -3878,7 +4404,7 @@ local function drive(b, unit, dt)
 	local cs = game.master(unit, "character")
 	if b.throw_frames or (cs and in_state(cs, "CharacterStateThrow", "CharacterStateDownedThrow")) then t.fire_button = 0 end
 	-- This frame's sticks: the orders' own, which a call or a help writes over for this frame only.
-	local f = { mx = b.axes.move[1], my = b.axes.move[2], ax = b.axes.aim[1], ay = b.axes.aim[2] }
+	local f = { mx = b.axes.move[1], my = b.axes.move[2], ax = b.axes.aim[1], ay = b.axes.aim[2], dest = b.dest }
 	if b.job and b.job.kind == "grenade" then
 		grenade_step(b, unit, t, f, dt)
 	elseif b.job and b.job.kind == "weapon" then
@@ -3899,11 +4425,18 @@ local function drive(b, unit, dt)
 	if b.goals.avoid and not seat and not b.job and not b.leap and not is_downed(unit) then avoid_step(b, unit, here, f, dt) end
 	if b.leap and not seat then jump_step(b, unit, t, f, dt) end
 	if b.detonating and not seat and not b.job and not b.task then detonate_step(b, unit, t, dt) end
+	if b.goals.grenades and not seat then P.grenade_look(b, unit, here, dt) end
 	if seat then
 		-- In a seat that steers, the orders' walking drives the vehicle.
 		if seat.steers then steer(b, t, f) end
 	else
+		if b.manner and not b.job and not b.task then P.spread_out(b, unit, here, f, dt) end
+		if b.nav and not b.leap then P.nav_step(b, here, f, dt) end
 		f.mx, f.my = unstick(b, here, f.mx, f.my, dt)
+		if b.manner then
+			P.sprint_step(b, unit, f, t)
+			P.ease(b, f, dt)
+		end
 	end
 	for field in pairs(b.vectors) do t[field] = v3(0, 0, 0) end
 	local mx, my, ax, ay = f.mx, f.my, f.ax, f.ay
@@ -4157,6 +4690,7 @@ end
 function M.drive_all()
 	local dt = rawget(_G, "ENGINE_DT") or 0.016
 	M.clock = M.clock + dt
+	pcall(P.nav.frame, dt)
 	local ok, err = pcall(assign, dt)
 	if not ok and not M.assign_failed then
 		M.assign_failed = true
@@ -4221,6 +4755,28 @@ function M.draw_names(hud)
 		if units.alive(unit) and not dead_unit(unit) and g.name ~= "" then draw(unit, g.name) end
 	end
 end
+
+-- Danger zones for api.nav: mines (their trigger is tiny, so a small circle), burning ground, a hellbomb going off
+-- soon and tentacles, with a little room to spare.
+function P.zones()
+	local out = {}
+	for _, h in ipairs(M.hazards({ x = 0, y = 0 }, 1e5)) do
+		local p, r = h.position, nil
+		if h.kind == "mine" then
+			r = 1.5
+		elseif h.kind == "fire" then
+			if h.active then r = (h.radius or 3) + 1 end
+		elseif h.kind == "hellbomb" then
+			if h.time_left and h.time_left < 20 then r = 14 end
+		elseif h.kind == "tentacle" then
+			r = (h.radius or 5) + 1
+		end
+		if r then out[#out + 1] = { x = p.x, y = p.y, radius = r, kind = h.kind } end
+	end
+	return out
+end
+
+P.nav.set_zones(P.zones)
 
 function M.install()
 	-- Another script of the game defines an early Hud with an update of its own, which lua/hud/hud then

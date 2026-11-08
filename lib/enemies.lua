@@ -336,6 +336,46 @@ function M.attacking(unit)
 	return { kind = seen.kind, time = math.max(0, lead - age), reach = reach, target = target, from = from }
 end
 
+-- The Impaler's tentacles standing near a position, or the player, nearest first: { unit, position, reach, ready }
+-- each. A tentacle comes up out of the ground near the Impaler's target, stays planted, and strikes whatever stands
+-- within reach metres (the settings give 5) while no one there is diving; on the machine that owns it, ready says
+-- whether it can strike now. They are not enemies to the game's lists, so api.enemies.list and near leave them
+-- out. radius: metres (30).
+function M.tentacles(pos, radius)
+	local units = game.global("Unit")
+	if not pos then
+		local me = game.my_unit()
+		if not me then return {} end
+		pos = units.world_position(me, 0)
+	end
+	local ok, px, py = pcall(function() return pos.x, pos.y end)
+	if not (ok and type(px) == "number" and type(py) == "number") then return {} end
+	radius = tonumber(radius) or 30
+	local out = {}
+	for unit, ctx in pairs(game.slaves("melee_turret")) do
+		if units.alive(unit) then
+			local health = ctx.state and ctx.state.health_state
+			if not (health and health.is_dead) and not (ctx.state and ctx.state.time_to_die) then
+				local at = units.world_position(unit, 0)
+				local dx, dy = at.x - px, at.y - py
+				local d = math.sqrt(dx * dx + dy * dy)
+				if d <= radius then
+					local mi = settings_of(unit).melee_info
+					local reach = type(mi) == "table" and (tonumber(mi.center_distance) or 0) + (tonumber(mi.radius) or 0) or 5
+					local master = game.masters("melee_turret")[unit]
+					local st = master and master.state
+					local ready = nil
+					if st then ready = not st.spawn_timer and not st.target_check_timer and not st.time_since_last_attack end
+					out[#out + 1] = { unit = unit, position = plain(at), reach = reach, ready = ready, d = d }
+				end
+			end
+		end
+	end
+	table.sort(out, function(a, b) return a.d < b.d end)
+	for _, t in ipairs(out) do t.d = nil end
+	return out
+end
+
 -- The closest living enemy to a position, or to the player, and how far it is.
 function M.nearest(pos)
 	local units, v3 = game.global("Unit"), game.global("Vector3")
