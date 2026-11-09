@@ -13,9 +13,6 @@ New, changed or removed capabilities, one line each, brief and direct. A release
 - Fixed: with the Third Person Camera mod, bots no longer pass as a player at a pad, so the camera stays on the player and bots keep their own aim and buttons.
 - Fixed: with the Third Person Camera mod, `api.world.cursor` answers the point under the crosshair.
 - Changed: manual stratagem unlocks stay in `obsidian.storage` on a loader without `obsidian.save_data`.
-
-## 1.47.0
-
 - Changed: manual unlocks of custom stratagems (`api.stratagems.unlock`) go with the save through `obsidian.save_data`. Unlocks kept before this move to the Official save only.
 
 ## 1.46.0
