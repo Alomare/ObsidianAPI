@@ -2,6 +2,10 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.47.0
+
+- Changed: manual unlocks of custom stratagems (`api.stratagems.unlock`) go with the save through `obsidian.save_data`. Unlocks kept before this move to the Official save only.
+
 ## 1.46.0
 
 - New: bare bots show the game's off-screen arrow, on every machine; the HUD card stays away.
@@ -9,17 +13,15 @@ New, changed or removed capabilities, one line each, brief and direct. A release
 - New: `api.brain` `engages` and `burst`; a "threat" fight leaves far enemies that haven't noticed the squad alone, holds fire on anything behind cover and fires automatic rifles in short bursts.
 - Changed: navigating bots keep a body-width off pit rims, stand rather than walk on with no route, look further ahead with speed, are checked last of every walk source, and return to the last solid spot when knocked over an edge.
 - Changed: a bot whose follow spot is across a pit or a long way round takes a spot on the near side of the leader.
+
+## 1.45.0
+
 - New: `api.nav` finds walking routes around walls, pits, lava, deep water and danger zones with rays over a grid: `path`, `walkable`, `walk_clear`, `zones`, `available`, `search_grid`.
 - New: `api.brain`, the pure decisions bots use: weapon choice by threat, target commitment, aim window, blast and line-of-fire checks, formation spots, sprinting, grenades.
 - New: `bot:navigate` routes and guards a bot's walking; `bot:movement` adds smooth turning, spacing, varied spots, strafing and sprinting to catch up; `bot:auto_grenades` throws grenades by rule.
 - New: `fight` weapon "threat" saves support and heavy weapons for what deserves them, commits to one target, and never fires a blast that would catch a friend.
 - New: `api.gear.blast` gives the blast radius of what a weapon fires; `api.enemies.tentacles` lists the Impaler's tentacles, and they count in `api.bots.hazards` and `avoid_shots`'s close attacks.
 - Changed: bare bots start out of the camera's framing and the screen leash, and can spawn off the screen.
-- New: guest bots can be added from any machine, with looks, pickups and melee dodging, and a mod can tell which peers have left.
-- New: a default bot loadout, and `fight` stays within the range of the weapon, with a "best" weapon choice.
-- New: `api.stratagems.define` places a stratagem by type or `after` another, and takes descriptions of up to 600 characters.
-- New: `api.world.projectile` fires the game's homing missiles, with an optional target to chase from launch.
-- Changed: `api.edits` keeps settings variants that mods add.
 
 ## 1.40.0
 
