@@ -2,6 +2,15 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.48.0
+
+- New: `api.world.pickups` lists the weapons, backpacks and ammo lying on the ground and `api.world.remove_pickup` deletes one for every machine through the game's own destruction. The owner removes at once, the host asks the owner, any other client is refused.
+- New: effects `aim_move_speed` and `reload_move_speed` set how fast the player moves while aiming or reloading, and let a weapon that holds the player in place be walked with.
+- Fixed: a bot holds the aim for a moment before the first shot of a weapon, longer and until the barrel is level with a heavy weapon, so a recoilless rifle no longer fires at the ground.
+- Fixed: `bot:deliver` drops the thing once the game counts the drop-off as near and the bot can get no closer, and walks to a spot beside a collection point it cannot enter.
+- Fixed: a game function's nil results survive the API's hooks, so a hooked function that answers nil still answers nil.
+- Changed: manual stratagem unlocks stay in `obsidian.storage` on a loader without `obsidian.save_data`.
+
 ## 1.47.0
 
 - Changed: manual unlocks of custom stratagems (`api.stratagems.unlock`) go with the save through `obsidian.save_data`. Unlocks kept before this move to the Official save only.

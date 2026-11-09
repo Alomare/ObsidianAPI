@@ -1,6 +1,7 @@
 -- Time, camera, HUD, the look of the world, and finding a place in it. The camera and the look are
 -- this player's alone: nobody else sees them.
 local game = obsidian.module("lib/game")
+local pack = game.pack
 local effects = obsidian.module("lib/effects")
 
 local M = {}
@@ -520,10 +521,10 @@ local function filtering(f, ...)
 		if interface == "damageable" and name == "do_damage" and is_helldiver(unit) then return end
 		return queue(unit, interface, name, ...)
 	end
-	local r = { pcall(f, ...) }
+	local r = pack(pcall(f, ...))
 	aux.queue_command_interface = queue
 	if not r[1] then error(r[2], 0) end
-	return unpack(r, 2, table.maxn(r))
+	return unpack(r, 2, r.n)
 end
 
 local function sparing_helldivers(fn)
@@ -1455,6 +1456,165 @@ function M.flashlight(unit, on)
 	return (pcall(U.flow_event, unit, on and "flashlight_on" or "flashlight_off"))
 end
 
+-- Things lying about that a Helldiver picks up: a dropped support weapon, a backpack, an ammo box.
+local PICKUP_KINDS = { "weapon_pickup", "backpack_pickup", "ammo_pickup" }
+local PICKUP_KIND = { weapon_pickup = true, backpack_pickup = true, ammo_pickup = true }
+
+local function live(unit)
+	local ok, is = pcall(game.global("Unit").alive, unit)
+	return ok and is == true
+end
+
+local function pickup_kind(unit)
+	for _, kind in ipairs(PICKUP_KINDS) do
+		if game.slaves(kind)[unit] then return kind end
+	end
+	return nil
+end
+
+-- The pickups lying on the ground within radius of pos, nearest first: { unit, kind, position, enabled,
+-- owned, opening, weapon } each. kind is "weapon_pickup", "backpack_pickup" or "ammo_pickup"; kinds: a list of
+-- those to keep, or nil for all. pos and radius may both be nil for every pickup on the map. owned: this machine holds
+-- it, so remove_pickup can take it at once. opening: true while it waits in the crate that brought it; a dropped
+-- weapon or a corpse's starts without. weapon: the unit path of the weapon it gives, for a weapon or a backpack.
+function M.pickups(pos, radius, kinds)
+	local out = {}
+	if not game.in_mission() then return out end
+	local units, aux = game.global("Unit"), game.global("EntityAux")
+	local px, py
+	if pos then
+		local ok
+		ok, px, py = pcall(function() return pos.x, pos.y end)
+		if not (ok and type(px) == "number" and type(py) == "number") then return out end
+		radius = tonumber(radius) or 15
+	end
+	local want
+	if type(kinds) == "table" then
+		want = {}
+		for _, k in ipairs(kinds) do want[k] = true end
+	end
+	local seen = {}
+	for _, kind in ipairs(PICKUP_KINDS) do
+		if not want or want[kind] then
+			for unit, ctx in pairs(game.slaves(kind)) do
+				if not seen[unit] and live(unit) then
+					local at = units.world_position(unit, 0)
+					local d = px and math.sqrt((at.x - px) ^ 2 + (at.y - py) ^ 2) or 0
+					if not px or d <= radius then
+						seen[unit] = true
+						local state = type(ctx) == "table" and (ctx.state or ctx) or {}
+						local master = game.masters(kind)[unit]
+						local mine = type(master) == "table" and master.state or nil
+						local info = type(ctx) == "table" and type(ctx.settings) == "table" and ctx.settings.pickup_info
+						out[#out + 1] = { unit = unit, kind = kind, position = { x = at.x, y = at.y, z = at.z }, enabled = state.enabled ~= false,
+							owned = aux.owned(unit) == true, opening = (mine and (tonumber(mine.hide_time) or 0) > 0) or false,
+							weapon = type(info) == "table" and info.weapon_path or nil, distance = d }
+					end
+				end
+			end
+		end
+	end
+	table.sort(out, function(a, b) return a.distance < b.distance end)
+	for _, p in ipairs(out) do p.distance = nil end
+	return out
+end
+
+-- What the host asks the machines that own pickups to remove: a list shared as lobby member data, as
+-- api.player.damage shares hits. Only the machine that owns a pickup may destroy it, as the game asserts in
+-- EntitySpawner.despawn_entity, and the destruction reaches every machine through the game object.
+local REMOVE_KEY = "obsidian.api:remove_pickup"
+local REMOVE_KEPT = 24
+local REMOVE_SHARED_MAX = 200
+local REMOVE_EVERY = 0.25
+local removal = { seq = 0, list = {}, mission = nil, top = nil, wait = 0 }
+
+local function mission_of(st)
+	return tostring(type(st) == "table" and st.mission_seed or 0)
+end
+
+local function share_removals(st)
+	local lobby = game.lobby()
+	if not lobby then return false end
+	while true do
+		local parts = {}
+		for i, r in ipairs(removal.list) do parts[i] = r.seq .. "@" .. r.id end
+		local text = mission_of(st) .. ";" .. table.concat(parts, "|")
+		if #text <= REMOVE_SHARED_MAX or #removal.list == 0 then
+			local ok = pcall(lobby.set_member_data, lobby, REMOVE_KEY, text)
+			return ok
+		end
+		table.remove(removal.list, 1)
+	end
+end
+
+-- Removes a pickup from the ground for every player in the mission, through the game's own destruction of the
+-- entity. unit: from pickups or api.bots.usables. The machine that owns it takes it at once; the host asks the
+-- owner for one held by another machine, which takes it a moment later. Any other client is refused: only the
+-- host and the owner may remove a pickup, so each machine sees the same game. Answers true, or true and "asked"
+-- when it went to the owner; false and "not_in_mission", "gone", "not_a_pickup", "not_owner" or "not_available".
+function M.remove_pickup(unit)
+	local st = game.state()
+	if not game.in_mission() or type(st) ~= "table" or not st.entity_spawner then return false, "not_in_mission" end
+	if not live(unit) then return false, "gone" end
+	if not pickup_kind(unit) then return false, "not_a_pickup" end
+	if game.global("EntityAux").owned(unit) then
+		local ok, why = pcall(st.entity_spawner.despawn_entity, st.entity_spawner, unit)
+		if not ok then return false, tostring(why) end
+		return true
+	end
+	if not game.is_host() then return false, "not_owner" end
+	if type(st.entity_storage) ~= "table" or not game.lobby() then return false, "not_available" end
+	local ok, id = pcall(st.entity_storage.go_id, st.entity_storage, unit)
+	if not (ok and type(id) == "number") then return false, "not_available" end
+	if removal.mission ~= mission_of(st) then removal.mission, removal.list = mission_of(st), {} end
+	removal.seq = removal.seq + 1
+	removal.list[#removal.list + 1] = { seq = removal.seq, id = id }
+	while #removal.list > REMOVE_KEPT do table.remove(removal.list, 1) end
+	if not share_removals(st) then return false, "not_available" end
+	return true, "asked"
+end
+
+-- The requests in the host's shared text: mission, then { { seq, id } }.
+local function decode_removals(text)
+	if type(text) ~= "string" then return nil end
+	local mission, rest = text:match("^([^;]*);(.*)$")
+	if not mission then return nil end
+	local out = { mission = mission, list = {} }
+	for seq, id in rest:gmatch("(%d+)@(%d+)") do out.list[#out.list + 1] = { seq = tonumber(seq), id = tonumber(id) } end
+	return out
+end
+
+-- The owner's side: what the host asked for and this machine owns goes, once. A new request counts by the
+-- number it carries, so a game object id used again later is left alone.
+local function pickup_requests(st)
+	if not game.in_mission() or game.is_host() then return end
+	removal.wait = removal.wait - (game.global("ENGINE_DT") or 0.016)
+	if removal.wait > 0 then return end
+	removal.wait = REMOVE_EVERY
+	local lobby = game.lobby()
+	if not lobby then return end
+	local ok, host = pcall(lobby.lobby_host, lobby)
+	if not (ok and host) then return end
+	local got, text = pcall(lobby.member_data, lobby, host, REMOVE_KEY)
+	local e = got and decode_removals(text)
+	local mission = mission_of(st)
+	if not e or e.mission ~= mission then return end
+	if removal.mission ~= mission then removal.mission, removal.list, removal.top = mission, {}, nil end
+	local top = removal.top
+	local most = top or 0
+	local storage = type(st) == "table" and st.entity_storage
+	for _, r in ipairs(e.list) do
+		if top and r.seq > top and type(storage) == "table" then
+			local found, unit = pcall(storage.unit, storage, r.id)
+			if found and unit and live(unit) and pickup_kind(unit) and game.global("EntityAux").owned(unit) then
+				M.remove_pickup(unit)
+			end
+		end
+		most = math.max(most, r.seq)
+	end
+	removal.top = most
+end
+
 function M.tick()
 	local st = game.state()
 	-- Effects whose unit or mission went: the game removed them with it.
@@ -1473,6 +1633,7 @@ function M.tick()
 		rawset(_G, "PAUSED", false)
 		rawset(_G, "TIME_SCALE", 1)
 	end
+	pickup_requests(st)
 end
 
 -- From main.lua: the wrap that moves a taken camera. A wrap, so it runs in any lobby, for client mods.

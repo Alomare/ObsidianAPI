@@ -7,6 +7,7 @@
 -- the view are per local player in the HUD's hud_info. Markers are drawn after the game's map, in
 -- the map's own units, on the map gui of each local player.
 local game = obsidian.module("lib/game")
+local pack = game.pack
 
 local M = { held = {}, forced = {}, markers = {}, hooked = false, clippable = setmetatable({}, { __mode = "k" }) }
 
@@ -97,12 +98,12 @@ function M.install()
 		return original(unit, ctx, ...)
 	end)
 	obsidian.hook("Hud", "draw_map", function(original, self, dt, t, info, gui, ...)
-		local r = { original(self, dt, t, info, gui, ...) }
+		local r = pack(original(self, dt, t, info, gui, ...))
 		if next(M.markers) then
 			local ok, err = pcall(M.draw, self, info, gui)
 			if not ok then obsidian.log("map markers: " .. tostring(err)) end
 		end
-		return unpack(r)
+		return unpack(r, 1, r.n)
 	end)
 end
 

@@ -20,6 +20,7 @@
 -- machine reads the guests of the others from the lobby, draws their names, and leaves them out of the
 -- host's check for a lost mission.
 local game = obsidian.module("lib/game")
+local pack = game.pack
 local mission = obsidian.module("lib/mission")
 local gear = obsidian.module("lib/gear")
 local stratagems = obsidian.module("lib/stratagems")
@@ -2104,8 +2105,52 @@ local function gun_aim(v, p)
 	return x, y, off
 end
 
--- Whether the bot's aim has come round to the target: on foot it faces it, settled; in an exosuit the
--- gun's line runs through it; a turret or a tank aims the gun on a mount of the gun's own.
+-- A shot leaves along the hand the weapon is held by (LauncherComponent.do_fire, Unit.world_rotation of the
+-- wielder's attach_node), and the character's aim animation brings that hand up only a moment after the state
+-- changes to aiming. A bot pulls the trigger as soon as the numbers allow, so the first shot after a weapon came out or
+-- after standing idle left with the barrel still pointed at the ground. So a bot holds the aim for a moment first, and a
+-- heavy weapon, which plants the bot (move_speed_aim 0) and raises slowest, longer and until the barrel is
+-- level. If the state or the barrel never reports back the shot goes anyway, after P.AIM_LIMIT.
+P.AIM_HOLD = 0.3
+P.AIM_HOLD_PLANTED = 0.7
+P.AIM_LIMIT = 1.2
+P.BARREL_LEVEL_Z = -0.35
+P.AIM_STATES = { "CharacterStateAim", "CharacterStateAimFire", "CharacterStateAimWalk", "CharacterStateAimWalkFire",
+	"CharacterStateCarry", "CharacterStateDownedAim", "CharacterStateDownedAimFire" }
+
+function P.barrel_level(unit, ws)
+	if type(ws) ~= "table" or ws.attach_node == nil then return true end
+	local units, quat = game.global("Unit"), game.global("Quaternion")
+	if not (units and units.world_rotation and quat and quat.forward) then return true end
+	local ok, z = pcall(function() return quat.forward(units.world_rotation(unit, ws.attach_node)).z end)
+	if not (ok and type(z) == "number") then return true end
+	return z > P.BARREL_LEVEL_Z
+end
+
+function P.aim_ready(b, unit, inv, dt)
+	if game.global("CharacterStateAim") == nil then return true end
+	local cs = game.master(unit, "character")
+	if not cs then return true end
+	local weapon = inv and inv.current_weapon
+	if weapon ~= b.aim_weapon then b.aim_weapon, b.aim_held, b.aim_waited = weapon, 0, 0 end
+	if in_state(cs, unpack(P.AIM_STATES)) then
+		b.aim_held, b.aim_waited = (b.aim_held or 0) + dt, 0
+	else
+		b.aim_held, b.aim_waited = 0, (b.aim_waited or 0) + dt
+	end
+	if (b.aim_waited or 0) >= P.AIM_LIMIT then return true end
+	local ws = weapon_state(weapon)
+	local planted = ws ~= nil and ws.move_speed_aim == 0
+	if b.aim_held < (planted and P.AIM_HOLD_PLANTED or P.AIM_HOLD) then return false end
+	if planted and not P.barrel_level(unit, ws) then
+		b.aim_waited = (b.aim_waited or 0) + dt
+		return false
+	end
+	return true
+end
+
+-- Whether the bot's aim has come round to the target: on foot it faces it, settled and with the weapon up; in an
+-- exosuit the gun's line runs through it; a turret or a tank aims the gun on a mount of the gun's own.
 local function on_target(b, unit, seat, face, dx, dy, dt)
 	if b.aimed_at ~= face then b.aimed_at, b.aim_time = face, 0 end
 	b.aim_time = b.aim_time + dt
@@ -2122,6 +2167,7 @@ local function on_target(b, unit, seat, face, dx, dy, dt)
 		end
 		cos = P.aim_cos(inv.current_weapon, math.sqrt(dx * dx + dy * dy), b.aim_large) or cos
 	end
+	if not P.aim_ready(b, unit, inv, dt) then return false end
 	return b.aim_time >= FIGHT_SETTLE and faces(unit, dx, dy, cos)
 end
 
@@ -3766,6 +3812,32 @@ end
 NUM.DELIVER_AT = 1       -- metres from the drop-off where the bot puts the thing down, by default
 NUM.DELIVER_TIME = 90    -- seconds before a delivery gives up, by default
 NUM.DELIVER_CHECK = 3    -- seconds after the drop for the game to count it
+NUM.DELIVER_STALL = 0.6  -- seconds with no progress, within the game's reach, before the bot puts it down anyway
+NUM.DELIVER_PROGRESS = 0.1 -- metres that count as getting closer
+NUM.DELIVER_LOOK = 0.6   -- seconds between looks for a walkable place short of the drop-off
+NUM.DELIVER_REACH = 2.4  -- metres short of the drop-off that a bot may stop at: inside the 3 the game counts
+
+-- Where the bot walks with the thing: the drop-off, or for a joint inside the structure a walkable spot
+-- on the side the bot comes from, within what the game counts. The route search finds no way to a point inside
+-- solid ground, and a bot stands rather than walk with no route, so it would wait in front of the structure.
+local function deliver_approach(b, to, here, d, dt)
+	local task = b.task
+	if not P.nav.available() or d <= task.at then return to.x, to.y end
+	task.look = (task.look or 0) - dt
+	if task.look > 0 and task.ax then return task.ax, task.ay end
+	task.look = NUM.DELIVER_LOOK
+	local nx, ny = (here.x - to.x) / d, (here.y - to.y) / d
+	task.ax, task.ay = to.x + nx * NUM.DELIVER_REACH, to.y + ny * NUM.DELIVER_REACH
+	local z = tonumber(here.z) or 0
+	for r = task.at, NUM.DELIVER_REACH, 0.5 do
+		local x, y = to.x + nx * r, to.y + ny * r
+		if P.nav.walkable({ x = x, y = y, z = z }) then
+			task.ax, task.ay = x, y
+			break
+		end
+	end
+	return task.ax, task.ay
+end
 
 local function carried_by(thing)
 	local ctx = game.masters("objective_carry_object")[thing] or game.slaves("objective_carry_object")[thing]
@@ -3824,15 +3896,30 @@ function deliver_step(b, unit, t, f, dt)
 		if not to then return end_task(b, false, "no_drop_off") end
 		local dx, dy = to.x - here.x, to.y - here.y
 		local d = math.sqrt(dx * dx + dy * dy)
-		if d > task.at then
-			f.mx, f.my = dx / d, dy / d
-			P.set_dest(f, unit, dx, dy)
-			if not (b.fight_target and b.fight_near) then t.fire_button, f.ax, f.ay = 0, 0, 0 end
+		-- Getting no closer: a body in the way, or the collection point itself.
+		if not task.best or d < task.best - NUM.DELIVER_PROGRESS then
+			task.best, task.stalled = d, 0
+		else
+			task.stalled = (task.stalled or 0) + dt
+		end
+		-- The game counts the thing within 3 metres of the drop-off and says so in near_drop_off, a joint it can
+		-- stand beside: a collection point's joint can be inside the structure, where nobody can walk to it.
+		if d <= task.at or task.stalled >= NUM.DELIVER_STALL and (st and st.near_drop_off or (d <= NUM.DELIVER_REACH + 0.3 and task.stalled >= NUM.DELIVER_STALL * 2)) then
+			f.mx, f.my = 0, 0
+			game.command(unit, "character", "drop_carry")
+			task.phase, task.wait = "check", NUM.DELIVER_CHECK
 			return
 		end
-		f.mx, f.my = 0, 0
-		game.command(unit, "character", "drop_carry")
-		task.phase, task.wait = "check", NUM.DELIVER_CHECK
+		local ax, ay = deliver_approach(b, to, here, d, dt)
+		local gx, gy = ax - here.x, ay - here.y
+		local gl = math.sqrt(gx * gx + gy * gy)
+		if gl < 0.3 then
+			f.mx, f.my = 0, 0
+		else
+			f.mx, f.my = gx / gl, gy / gl
+			P.set_dest(f, unit, gx, gy)
+		end
+		if not (b.fight_target and b.fight_near) then t.fire_button, f.ax, f.ay = 0, 0, 0 end
 		return
 	end
 	if task.phase == "check" then
@@ -4725,10 +4812,10 @@ function P.update_host(original, self, ...)
 		if name == "character" and type(map) == "table" then return P.filter_characters(map, set) end
 		return map
 	end
-	local r = { pcall(original, self, ...) }
+	local r = pack(pcall(original, self, ...))
 	rawset(em, "get_slave_entities", own)
 	if not r[1] then error(r[2], 0) end
-	return unpack(r, 2, table.maxn(r))
+	return unpack(r, 2, r.n)
 end
 
 -- Each frame, from main.lua. A new game state starts with no bots, and a mission that's over loses
@@ -4913,7 +5000,7 @@ function M.install()
 	-- writes over. A hook made before that would go with it.
 	obsidian.on_require("lua/hud/hud", function()
 		obsidian.hook("Hud", "update", function(original, self, ...)
-			local r = { original(self, ...) }
+			local r = pack(original(self, ...))
 			if #M.list > 0 or next(guests.units) ~= nil then
 				local ok, err = pcall(M.draw_names, self)
 				if not ok and not M.names_failed then
@@ -4921,7 +5008,7 @@ function M.install()
 					obsidian.log("bot names: " .. tostring(err))
 				end
 			end
-			return unpack(r)
+			return unpack(r, 1, r.n)
 		end)
 	end)
 	obsidian.hook("InputComponent", "update_masters", function(original, ...)

@@ -17,6 +17,7 @@
 -- { en = ..., fr = ..., es = ..., ["pt-BR"] = ... }, read when drawn, since pages are made at boot
 -- before the game knows its language.
 local game = obsidian.module("lib/game")
+local pack = game.pack
 local ui = obsidian.module("lib/ui")
 local menu = obsidian.module("lib/menu")
 
@@ -330,12 +331,12 @@ local function make_screen(main, kind)
 		end
 		-- The game applies its own rows by name. Ours are read back after its input.
 		screen.handle_input = function(self, input)
-			local r = { Options.handle_input(self, input) }
+			local r = pack(Options.handle_input(self, input))
 			for n, row in ipairs(self.rows or {}) do
 				local o = self.options[n] and self.options[n].options
 				if o and o[o.selected_index] then changed(self.page, row, o[o.selected_index].value) end
 			end
-			return unpack(r)
+			return unpack(r, 1, r.n)
 		end
 	end
 	return screen
@@ -465,10 +466,10 @@ function M.install()
 		if type(k) == "string" and (k:match("^mod_settings/.") or k:match("^option/.")) then saved[k] = v end
 	end
 	obsidian.wrap("MenuScreenMain", "on_enter", function(original, self, ...)
-		local r = { original(self, ...) }
+		local r = pack(original(self, ...))
 		local ok, err = pcall(add_entry, self)
 		if not ok then obsidian.log("mod_settings: " .. tostring(err)) end
-		return unpack(r)
+		return unpack(r, 1, r.n)
 	end)
 	obsidian.wrap("MenuScreenMain", "update", function(original, self, ...)
 		return ui.with_texts(entry_words(), original, self, ...)
@@ -497,10 +498,10 @@ function M.install()
 			end
 			return yes
 		end
-		local r = { pcall(original, self, ...) }
+		local r = pack(pcall(original, self, ...))
 		base.was_option_selected = real
 		if not r[1] then error(r[2], 0) end
-		return unpack(r, 2)
+		return unpack(r, 2, r.n)
 	end)
 end
 
