@@ -51,7 +51,7 @@ local unsaved = false
 
 -- The list goes with the save (obsidian.save_data); an older loader has only the install-wide store.
 -- What was unlocked before the save-side list existed moves to the Official save only: a Sandbox starts
--- without it, or with its copy when duplicated from the Official save.
+-- without it, or with a copy of the Official list when duplicated from that save.
 local store = obsidian.save_data or obsidian.storage
 if obsidian.save_data and not obsidian.save_data.sandbox() then
 	local old = obsidian.storage.get(KEY)
