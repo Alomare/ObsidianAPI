@@ -87,6 +87,35 @@ effects.define({ id = "speed",
 	end,
 })
 
+-- How fast the weapon in hand lets a Helldiver move while aiming or reloading. The game multiplies the character's
+-- speed for that state by the weapon's factors move_speed_aim and move_speed_reload (CharacterComponent.update_masters),
+-- 0 for the weapons that hold the player in place: the recoilless rifle and the other heavy ones. They are fields of the
+-- weapon's state, which a reload of the weapon's settings writes again, so they are kept up every frame. value: the
+-- factor; the weapons take back their own when the effect goes.
+local function weapon_factor_effect(id, field)
+	local own = {}
+	effects.define({ id = id,
+		frame = function(ctx, value)
+			local inv = game.master(ctx.unit, "inventory")
+			local weapon = inv and inv.current_weapon
+			if not weapon then return end
+			local ok, ws = pcall(aux().state_interface, weapon, "weapon")
+			if not (ok and type(ws) == "table" and type(ws[field]) == "number") then return end
+			if own[weapon] == nil then own[weapon] = ws[field] end
+			ws[field] = value
+		end,
+		remove = function()
+			for weapon, was in pairs(own) do
+				local ok, ws = pcall(aux().state_interface, weapon, "weapon")
+				if ok and type(ws) == "table" then ws[field] = was end
+			end
+			own = {}
+		end,
+	})
+end
+weapon_factor_effect("aim_move_speed", "move_speed_aim")
+weapon_factor_effect("reload_move_speed", "move_speed_reload")
+
 effects.define({ id = "regen",
 	apply = function(ctx, value)
 		if ctx.unit then game.command(ctx.unit, "health", "set_health_decay", -value) end

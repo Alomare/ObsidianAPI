@@ -62,6 +62,9 @@ function M.on_ship()
 	return M.state_name() == "menu"
 end
 
+-- Everything a call answered, for handing back later: keep the count, as unpack needs it to give back a nil at the end.
+function M.pack(...) return { n = select("#", ...), ... } end
+
 -- Host of the lobby, or alone with no lobby at all.
 function M.is_host()
 	local lobby = M.lobby()

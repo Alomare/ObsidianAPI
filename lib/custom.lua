@@ -16,6 +16,7 @@
 -- longer has gets the default in its place (Boot.ensure_loadout), so taking a mod off leaves a save
 -- that works.
 local game = obsidian.module("lib/game")
+local pack = game.pack
 local catalog = obsidian.module("lib/catalog")
 
 local M = {}
@@ -40,22 +41,33 @@ end
 
 -- How a custom stratagem is unlocked, apart from its base (def.unlock): "base" or nil goes by the base,
 -- "free" is open from the start, { rank = n } from that rank on, and "manual" once a mod calls
--- unlock(name). What mods unlock is kept in this library's storage as one list of names, never in the
--- game's save. Storage is the running mod's, so an unlock from a mod's own code waits for this library's
--- frame callback, as Mod Settings' changes do.
+-- unlock(name). What mods unlock is kept with the save (obsidian.save_data) as one list of names, never
+-- in the game's own save data. save_data is the running mod's, so an unlock from a mod's own code waits
+-- for this library's frame callback, as Mod Settings' changes do.
 local UNLOCKS = { base = true, free = true, manual = true }
 local SELF = obsidian.caller and obsidian.caller()
 local KEY = "stratagem_unlocks"
 local opened = {}
 local unsaved = false
 
-for name in tostring(obsidian.storage.get(KEY) or ""):gmatch("[%w_]+") do opened[name] = true end
+-- The list goes with the save (obsidian.save_data); an older loader has only the install-wide store.
+-- What was unlocked before the save-side list existed moves to the Official save only: a Sandbox starts
+-- without it, or with a copy of the Official list when duplicated from that save.
+local store = obsidian.save_data or obsidian.storage
+if obsidian.save_data and not obsidian.save_data.sandbox() then
+	local old = obsidian.storage.get(KEY)
+	if old ~= nil and (obsidian.save_data.get(KEY) ~= nil or obsidian.save_data.set(KEY, old)) then
+		obsidian.storage.set(KEY, nil)
+	end
+end
+
+for name in tostring(store.get(KEY) or ""):gmatch("[%w_]+") do opened[name] = true end
 
 local function save()
 	local names = {}
 	for name in pairs(opened) do names[#names + 1] = name end
 	table.sort(names)
-	obsidian.storage.set(KEY, table.concat(names, ","))
+	store.set(KEY, table.concat(names, ","))
 	unsaved = false
 end
 
@@ -1133,14 +1145,14 @@ function M.install()
 	local wrap = obsidian.wrap or obsidian.hook
 	-- Each new replicator gets its fields' write functions; a stratagem_id one goes out as the base's.
 	wrap("GameObjectFieldsReplicator", "init", function(original, self, ...)
-		local r = { original(self, ...) }
+		local r = pack(original(self, ...))
 		for _, field in ipairs(type(self.fields) == "table" and self.fields or {}) do
 			local write = field.write
 			if field.name == "stratagem_id" and type(write) == "function" then
 				field.write = function(value, ...) return write(wire(value), ...) end
 			end
 		end
-		return unpack(r)
+		return unpack(r, 1, r.n)
 	end)
 	-- A paid pack's stratagem stays paid when it's a base.
 	wrap("DlcSettings", "is_item_dlc", function(original, name, ...)
@@ -1186,17 +1198,17 @@ function M.install()
 	-- The Arsenal and the Loadout screen list a custom stratagem by type or beside the base (M.anchor),
 	-- where the game would put it at the end. Both lists are made in one call and read later, by name.
 	obsidian.hook("MenuScreenArmoryUnlocks", "on_enter", function(original, self, ...)
-		local r = { original(self, ...) }
+		local r = pack(original(self, ...))
 		local items = type(self.available_items) == "table" and self.available_items.stratagems
 		for _, group in ipairs(type(items) == "table" and type(items.groups) == "table" and items.groups or {}) do
 			beside_bases(group.items, named, is_named)
 		end
 		if type(items) == "table" then filter_groups(items.groups) end
-		return unpack(r)
+		return unpack(r, 1, r.n)
 	end)
 	obsidian.hook("MenuScreenLoadout", "setup_loadout", function(original, self, slot, ...)
 		clean_saved_loadouts(self, slot)
-		local r = { original(self, slot, ...) }
+		local r = pack(original(self, slot, ...))
 		-- The screen keeps each player's lists in option_menus[slot] (menu_screen_loadout.lua:142, 441),
 		-- which every later read of the screen uses: the selection, the random loadout and the drawing.
 		local menus = type(self.option_menus) == "table" and self.option_menus[slot]
@@ -1209,35 +1221,35 @@ function M.install()
 			beside_bases(items.groups, named, group_holds)
 			filter_groups(items.groups)
 		end
-		return unpack(r)
+		return unpack(r, 1, r.n)
 	end)
 	-- A hidden stratagem is not in the inventory a mission starts with, whatever loadout named it, and a
 	-- carried one is added after the rest. `from` is the player the loadout is read for; the tutorial's
 	-- and the game's fixed loadouts ("loadout_override") have none and get nothing added.
 	obsidian.hook("InventoryComponent", "set_loadout", function(original, self, unit, ctx, from, ...)
-		local r = { original(self, unit, ctx, from, ...) }
+		local r = pack(original(self, unit, ctx, from, ...))
 		local state = inventory_state(ctx)
 		filter_inventory(state)
 		if from ~= nil then add_carried(state) end
-		return unpack(r)
+		return unpack(r, 1, r.n)
 	end)
 	-- Another machine's entry for a carried custom stratagem shows as the custom one, and a throw of a
 	-- shared stratagem here starts the squad's cooldown.
 	obsidian.hook("InventoryComponent", "command_slave", function(original, self, unit, ctx, name, data, ...)
-		local r = { original(self, unit, ctx, name, data, ...) }
+		local r = pack(original(self, unit, ctx, name, data, ...))
 		if name == "stratagem_cooldown" then relabel(inventory_state(ctx)) end
-		return unpack(r)
+		return unpack(r, 1, r.n)
 	end)
 	obsidian.hook("InventoryComponent", "command_master", function(original, self, unit, ctx, name, data, ...)
 		if name == "stratagems" then data = align_restore(inventory_state(ctx), data) end
-		local r = { original(self, unit, ctx, name, data, ...) }
+		local r = pack(original(self, unit, ctx, name, data, ...))
 		if name == "throw_stratagem" then note_throw(inventory_state(ctx), data) end
-		return unpack(r)
+		return unpack(r, 1, r.n)
 	end)
 	obsidian.hook("ProvinggroundsConditions", "remove_blacklisted_strats", function(original, list, ...)
-		local r = { original(list, ...) }
+		local r = pack(original(list, ...))
 		keep_out_of_pool(r[1])
-		return unpack(r)
+		return unpack(r, 1, r.n)
 	end)
 	-- Hides come off the default loadouts when the session stops being cleared, and go back with it.
 	obsidian.on_session(function(on)

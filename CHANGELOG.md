@@ -2,6 +2,19 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.48.0
+
+- New: `api.world.pickups` lists the weapons, backpacks and ammo lying on the ground and `api.world.remove_pickup` deletes one for every machine through the game's own destruction. The owner removes at once, the host asks the owner, any other client is refused.
+- New: effects `aim_move_speed` and `reload_move_speed` set how fast the player moves while aiming or reloading, and let a weapon that holds the player in place be walked with.
+- Fixed: a bot holds the aim for a moment before the first shot of a weapon, longer and until the barrel is level with a heavy weapon, so a recoilless rifle no longer fires at the ground.
+- Fixed: `bot:deliver` drops the thing once the game counts the drop-off as near and the bot can get no closer, and walks to a spot beside a collection point it cannot enter.
+- Fixed: a game function's nil results survive the API's hooks, so a hooked function that answers nil still answers nil.
+- Fixed: with the Third Person Camera mod, a bot behind the camera gets the off-screen arrow on the side where it stands, not a name mirrored onto the screen.
+- Fixed: with the Third Person Camera mod, bots no longer pass as a player at a pad, so the camera stays on the player and bots keep their own aim and buttons.
+- Fixed: with the Third Person Camera mod, `api.world.cursor` answers the point under the crosshair.
+- Changed: manual stratagem unlocks stay in `obsidian.storage` on a loader without `obsidian.save_data`.
+- Changed: manual unlocks of custom stratagems (`api.stratagems.unlock`) go with the save through `obsidian.save_data`. Unlocks kept before this move to the Official save only.
+
 ## 1.46.0
 
 - New: bare bots show the game's off-screen arrow, on every machine; the HUD card stays away.
@@ -9,17 +22,15 @@ New, changed or removed capabilities, one line each, brief and direct. A release
 - New: `api.brain` `engages` and `burst`; a "threat" fight leaves far enemies that haven't noticed the squad alone, holds fire on anything behind cover and fires automatic rifles in short bursts.
 - Changed: navigating bots keep a body-width off pit rims, stand rather than walk on with no route, look further ahead with speed, are checked last of every walk source, and return to the last solid spot when knocked over an edge.
 - Changed: a bot whose follow spot is across a pit or a long way round takes a spot on the near side of the leader.
+
+## 1.45.0
+
 - New: `api.nav` finds walking routes around walls, pits, lava, deep water and danger zones with rays over a grid: `path`, `walkable`, `walk_clear`, `zones`, `available`, `search_grid`.
 - New: `api.brain`, the pure decisions bots use: weapon choice by threat, target commitment, aim window, blast and line-of-fire checks, formation spots, sprinting, grenades.
 - New: `bot:navigate` routes and guards a bot's walking; `bot:movement` adds smooth turning, spacing, varied spots, strafing and sprinting to catch up; `bot:auto_grenades` throws grenades by rule.
 - New: `fight` weapon "threat" saves support and heavy weapons for what deserves them, commits to one target, and never fires a blast that would catch a friend.
 - New: `api.gear.blast` gives the blast radius of what a weapon fires; `api.enemies.tentacles` lists the Impaler's tentacles, and they count in `api.bots.hazards` and `avoid_shots`'s close attacks.
 - Changed: bare bots start out of the camera's framing and the screen leash, and can spawn off the screen.
-- New: guest bots can be added from any machine, with looks, pickups and melee dodging, and a mod can tell which peers have left.
-- New: a default bot loadout, and `fight` stays within the range of the weapon, with a "best" weapon choice.
-- New: `api.stratagems.define` places a stratagem by type or `after` another, and takes descriptions of up to 600 characters.
-- New: `api.world.projectile` fires the game's homing missiles, with an optional target to chase from launch.
-- Changed: `api.edits` keeps settings variants that mods add.
 
 ## 1.40.0
 
