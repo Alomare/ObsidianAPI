@@ -2634,7 +2634,7 @@ Time, camera, HUD, the look of the world, and finding a place in it. The camera 
 - `api.world.SHADING`
 - `api.world.shading(name, kind, value)`: A value of the look of the mission. kind: scalar, vector2 or vector3. value: a number, or a list of 2 or 3. nil gives it back to the planet. It goes on again in each new mission.
 - `api.world.flash(seconds)`: A lightning flash. Only forest planets have the setting it fades to, and not the illuminates' ones (campaign.md 4.4). A name the resource lacks is left to no chance, so it's refused.
-- `api.world.cursor()`: The point of the level under the mouse: the ray from the camera through the cursor, or where that ray meets the ground plane when it hits nothing.
+- `api.world.cursor()`: The point of the level under the mouse: the ray from the camera through the cursor, or where that ray meets the ground plane when it hits nothing. With the Third Person Camera mod on, the mouse turns the view and the cursor is hidden, so the point is the one under the crosshair, in the middle of the screen, and the ray starts past the player's own body.
 - `api.world.to_screen(pos)`: Where a point of the level is on the screen: pixels from the bottom left, as kits draw without a frame, and whether it's in view. pos: a vector or { x, y, z }.
 - `api.world.ahead(metres)`: A position some metres in front of the avatar.
 - `api.world.raycast(from, to, filter)`: The first thing on the straight line from one point to another: true, where and how far along, or false. filter: the game's collision filter, "default" when left out; "mover_blocker" is what stops a body walking, the one to ask before moving a player. from, to: vectors or { x, y, z }.

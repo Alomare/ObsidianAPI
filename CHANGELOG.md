@@ -9,6 +9,9 @@ New, changed or removed capabilities, one line each, brief and direct. A release
 - Fixed: a bot holds the aim for a moment before the first shot of a weapon, longer and until the barrel is level with a heavy weapon, so a recoilless rifle no longer fires at the ground.
 - Fixed: `bot:deliver` drops the thing once the game counts the drop-off as near and the bot can get no closer, and walks to a spot beside a collection point it cannot enter.
 - Fixed: a game function's nil results survive the API's hooks, so a hooked function that answers nil still answers nil.
+- Fixed: with the Third Person Camera mod, a bot behind the camera gets the off-screen arrow on the side where it stands, not a name mirrored onto the screen.
+- Fixed: with the Third Person Camera mod, bots no longer pass as a player at a pad, so the camera stays on the player and bots keep their own aim and buttons.
+- Fixed: with the Third Person Camera mod, `api.world.cursor` answers the point under the crosshair.
 - Changed: manual stratagem unlocks stay in `obsidian.storage` on a loader without `obsidian.save_data`.
 
 ## 1.47.0

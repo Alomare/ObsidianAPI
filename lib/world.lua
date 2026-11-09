@@ -372,15 +372,35 @@ effects.define({ id = "mute_music",
 	frame = function() game.global("Timpani").set_bus_volume("music_master", -60) end,
 })
 
+-- Whether the Third Person Camera mod has the view now.
+local function third_person()
+	local cm = camera()
+	return type(cm) == "table" and cm.mod_cfg ~= nil
+end
+
 -- The point of the level under the mouse: the ray from the camera through the cursor, or where
--- that ray meets the ground plane when it hits nothing.
+-- that ray meets the ground plane when it hits nothing. With the Third Person Camera mod on, the mouse
+-- turns the view and the cursor is hidden, so the point is the one under the crosshair, in the middle of
+-- the screen, and the ray starts past the player's own body.
 function M.cursor()
 	local st = game.state()
 	if type(st) ~= "table" or not st.viewport or not st.world_proxy then return nil end
 	local mouse, v3 = game.global("Mouse"), game.global("Vector3")
-	local c = mouse.axis(mouse.axis_index("cursor"))
+	local c, own = nil, nil
+	local app = game.global("Application")
+	if third_person() and app and app.resolution then
+		local w, h = app.resolution()
+		c, own = { x = w * 0.5, y = h * 0.5 }, game.my_unit()
+	else
+		c = mouse.axis(mouse.axis_index("cursor"))
+	end
 	local from = game.global("Camera").world_position(st.viewport:get_camera())
 	local dir = v3.normalize(st.viewport:screen_to_world(c.x, c.y, 500) - from)
+	if own then
+		local p = game.global("Unit").world_position(own, 0)
+		local past = (p.x - from.x) * dir.x + (p.y - from.y) * dir.y + (p.z - from.z) * dir.z
+		if past > 0 then from = from + dir * (past + 0.6) end
+	end
 	local hit, pos = game.global("PhysicsWorld").immediate_raycast(st.world_proxy:get_physics_world(), from, dir, 500, "closest", "collision_filter", "default")
 	if hit then return pos end
 	if dir.z < 0 then return from + dir * (-from.z / dir.z) end

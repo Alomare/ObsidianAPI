@@ -3099,13 +3099,48 @@ function M.remove_all()
 	for _, b in ipairs(M.all()) do b:remove() end
 end
 
--- The camera turns the sticks, so a world direction becomes a stick one by turning it back.
+-- The camera turns the sticks, so a world direction becomes a stick one by turning it back. The Third
+-- Person Camera mod turns follow_spin with the view, but only in CameraManager.update, so the spin read
+-- here is the one InputComponent.update_masters turns the bot's sticks by in the same frame.
 local function to_stick(x, y)
 	local cm = game.global("CameraManager")
 	local spin = cm and cm.follow_spin or 0
 	if spin == 0 or (x == 0 and y == 0) then return x, y end
 	local c, s = math.cos(-spin), math.sin(-spin)
 	return x * c - y * s, x * s + y * c
+end
+
+-- The Third Person Camera mod's InputComponent.update_masters takes every local player off the keyboard
+-- for the one at a pad: the camera follows that body, the aim stick is replaced by the view's, and the
+-- buttons are read again from the physical pad. A bot has no pad, so while the game reads input these
+-- calls pass over the bots, which then take the game's own way (mod_split_extra true skips that part).
+-- Answers a function that puts the calls back, or nil without the mod.
+function P.camera_guard()
+	local cm = game.global("CameraManager")
+	if type(cm) ~= "table" or type(rawget(cm, "mod_split_extra")) ~= "function" then return nil end
+	local bodies = {}
+	for _, b in ipairs(M.list) do
+		local u = b:unit()
+		if u then bodies[u] = true end
+	end
+	if next(bodies) == nil then return nil end
+	local saved = {}
+	local function skip(name, answer)
+		local f = rawget(cm, name)
+		if type(f) ~= "function" then return end
+		saved[name] = f
+		rawset(cm, name, function(self, unit, ...)
+			if bodies[unit] then return answer end
+			return f(self, unit, ...)
+		end)
+	end
+	skip("mod_split_extra", true)
+	skip("mod_split_input")
+	skip("mod_note_local")
+	skip("mod_buttons")
+	return function()
+		for name, f in pairs(saved) do rawset(cm, name, f) end
+	end
 end
 
 -- The orders: walking to a point or after a unit, facing a point, fighting. They write the orders'
@@ -4941,6 +4976,18 @@ end
 local NAME_COLOR = { 255, 200, 200, 200 }
 local NAME_LAYER = 5
 
+-- Where the camera sits and the way it looks: the ray through the middle of the screen. A level camera
+-- (the Third Person Camera mod) can have a body behind it, and the projection of a point behind the
+-- camera comes out mirrored through the middle of the screen. nil when the viewport can't tell.
+function P.camera_axis(viewport, w, h)
+	local ok, from, ahead = pcall(function()
+		local from = game.global("Camera").world_position(viewport:get_camera())
+		return from, viewport:screen_to_world(w * 0.5, h * 0.5, 10)
+	end)
+	if not (ok and from and ahead) then return nil end
+	return from, ahead - from
+end
+
 function M.draw_names(hud)
 	local gui = hud and hud.hd_gui
 	local cm = game.global("CameraManager")
@@ -4948,9 +4995,22 @@ function M.draw_names(hud)
 	if not (gui and viewport and hud.gui_metrics_cacher and hud.plugins_enabled) then return end
 	local units, v3, color = game.global("Unit"), game.global("Vector3"), game.global("Color")
 	local res = gui.screen_resolution or {}
+	local eye, look = nil, nil
+	if res.width and res.height then eye, look = P.camera_axis(viewport, res.width, res.height) end
 	local function draw(unit, name)
-		local at = viewport:world_to_viewport(units.world_position(unit, 0))
+		local p = units.world_position(unit, 0)
+		local at = viewport:world_to_viewport(p)
 		local x, y = at.x, at.z
+		if eye and (p.x - eye.x) * look.x + (p.y - eye.y) * look.y + (p.z - eye.z) * look.z <= 0 then
+			-- Behind the camera: turned back through the middle and pushed past the edge, so no name
+			-- shows and the arrow points the way to turn.
+			local cx, cy = res.width * 0.5, res.height * 0.5
+			local dx, dy = cx - x, cy - y
+			local len = math.sqrt(dx * dx + dy * dy)
+			if len < 1 then dx, dy, len = 0, -1, 1 end
+			local far = res.width + res.height
+			x, y = cx + dx / len * far, cy + dy / len * far
+		end
 		if x > 0 and y > 0 and (not res.width or x < res.width) and (not res.height or y < res.height) then
 			gui:set_current_font("body")
 			gui:set_ignore_position_scale(true)
@@ -5017,6 +5077,13 @@ function M.install()
 			if not ok and not M.failed then
 				M.failed = true
 				obsidian.log("bots: " .. tostring(err))
+			end
+			local restore = P.camera_guard()
+			if restore then
+				local r = pack(pcall(original, ...))
+				restore()
+				if not r[1] then error(r[2], 0) end
+				return unpack(r, 2, r.n)
 			end
 		end
 		return original(...)
