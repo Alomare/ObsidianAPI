@@ -32,12 +32,19 @@ local capture = obsidian.module("lib/capture")
 local gear_failed, bots_failed, music_failed = false, false, false
 local last_state = nil
 
+-- The frame driver runs in any lobby (`always`), so the pause menu's Mod Settings, screenshots, the map,
+-- music and the lobby's shared values keep working where session mods stop. What can change the shared
+-- game runs only where this library's session use may: always as a client library, else in a cleared
+-- session. A loader from before `always` gates the whole function, as before.
 obsidian.on_frame(function()
 	local dt = rawget(_G, "ENGINE_DT") or 0.016
-	game.tick()
-	effects.tick(dt)
-	events.tick()
-	enemies.tick()
+	local shared = not game.session_mode or obsidian.session.cleared() == true
+	if shared then
+		game.tick()
+		effects.tick(dt)
+		events.tick()
+		enemies.tick()
+	end
 	local st = game.state()
 	if st ~= last_state then
 		last_state = st
@@ -46,14 +53,18 @@ obsidian.on_frame(function()
 	pcall(mod_settings.tick)
 	local ran, why = pcall(mod_settings.run_chosen)
 	if not ran then obsidian.log("mod_settings: " .. tostring(why)) end
-	pcall(custom.tick, dt)
-	pcall(world.tick)
+	if shared then
+		pcall(custom.tick, dt)
+		pcall(world.tick)
+	end
 	-- Who left the lobby, and the last values they shared, once a second.
 	ran, why = pcall(lobby.tick, dt)
 	if not ran then obsidian.log("lobby: " .. tostring(why)) end
-	-- Other machines' api.player.damage on this machine's players.
-	ran, why = pcall(player.tick)
-	if not ran then obsidian.log("player damage: " .. tostring(why)) end
+	if shared then
+		-- Other machines' api.player.damage on this machine's players.
+		ran, why = pcall(player.tick)
+		if not ran then obsidian.log("player damage: " .. tostring(why)) end
+	end
 	ran, why = pcall(capture.tick)
 	if not ran then obsidian.log("capture: " .. tostring(why)) end
 	local ok, err = pcall(music.tick)
@@ -61,7 +72,7 @@ obsidian.on_frame(function()
 		music_failed = true
 		obsidian.log("music: " .. tostring(err))
 	end
-	if game.session_mode then
+	if game.session_mode and shared then
 		local ok, err = pcall(gear.tick)
 		if not ok and not gear_failed then
 			gear_failed = true
@@ -73,7 +84,7 @@ obsidian.on_frame(function()
 			obsidian.log("bots: " .. tostring(err))
 		end
 	end
-end)
+end, { always = true })
 
 -- The map's hooks belong to this library, not to the first mod that asks for the map.
 map.install()

@@ -2,6 +2,10 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## Next
+
+- Changed: with a session or hybrid mod requiring the API, Mod Settings in the pause menu, screenshots, the map, music and `api.lobby` keep working in a lobby that isn't cleared; effects, edits, bots and the rest of what changes the shared game still wait for a cleared lobby.
+
 ## 1.48.0
 
 - New: `api.world.pickups` lists the weapons, backpacks and ammo lying on the ground and `api.world.remove_pickup` deletes one for every machine through the game's own destruction. The owner removes at once, the host asks the owner, any other client is refused.
