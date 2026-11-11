@@ -42,9 +42,11 @@ obsidian.on_frame(function()
 	if shared then
 		game.tick()
 		effects.tick(dt)
-		events.tick()
 		enemies.tick()
 	end
+	-- Joining the event delegate of a new state only listens; each listener keeps the gate of the mod
+	-- that asked (lib/events.lua).
+	pcall(events.tick)
 	local st = game.state()
 	if st ~= last_state then
 		last_state = st

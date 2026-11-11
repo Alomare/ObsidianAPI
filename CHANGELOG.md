@@ -2,8 +2,9 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
-## Next
+## 1.49.0
 
+- Fixed: a client mod listening through `api.events` hears events in any lobby, also while a session or hybrid mod has the API wait for a cleared lobby. Listeners of session mods still wait.
 - Changed: with a session or hybrid mod requiring the API, Mod Settings in the pause menu, screenshots, the map, music and `api.lobby` keep working in a lobby that isn't cleared; effects, edits, bots and the rest of what changes the shared game still wait for a cleared lobby.
 
 ## 1.48.0

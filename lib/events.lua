@@ -1,7 +1,9 @@
 -- Events: hearing what happens in a mission, without polling. The game tells its listeners through
--- an event delegate, a new one per game state. It has no pcall, and the loader's session gate doesn't
--- reach it, so both are done here. Each function a mod gives is a hook on a small table of its own:
--- the loader then runs it protected, as that mod, and not at all once the mod is off.
+-- an event delegate, a new one per game state. It has no pcall, so that is done here. Each function a
+-- mod gives is a hook on a small table of its own: the loader then runs it protected, as that mod,
+-- with the session gate of that mod, and not at all once the mod is off. So a client mod hears events
+-- in any lobby, while a session mod hears them only in a cleared one, whatever scope this library runs
+-- in. Hearing changes nothing, so the delegate is joined in any lobby.
 local game = obsidian.module("lib/game")
 
 local M = { delegate = nil }
@@ -18,7 +20,6 @@ local wanted = false
 local function noop() end
 
 local function dispatch(name, ...)
-	if game.session_mode and not obsidian.session.cleared() then return end
 	for _, entry in ipairs(lists[name]) do
 		local ok, err = pcall(entry.run, ...)
 		if not ok then obsidian.log("event " .. name .. ": " .. tostring(err)) end
