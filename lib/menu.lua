@@ -659,6 +659,14 @@ end
 
 -- A page in the list down the left, in the folder of the mod that adds it. title: text, or a function
 -- that answers it. build(page) runs each time the page opens. opts.icon: one of obsidian.ui.glyphs().
+-- This library's own folder (the Script Profiler) stays last, under the folders of the mods.
+local function before_self(list, is_self)
+	for i, v in ipairs(list) do
+		if is_self(v) then return i end
+	end
+	return #list + 1
+end
+
 function M.add(title, build, opts)
 	if type(build) ~= "function" then return end
 	local owner = obsidian.caller() or SELF
@@ -667,8 +675,12 @@ function M.add(title, build, opts)
 	for _, o in ipairs(M.owners) do
 		if o == owner then known = true end
 	end
-	if not known then M.owners[#M.owners + 1] = owner end
-	M.roots[#M.roots + 1] = { title = title, build = build, owner = owner, icon = type(opts) == "table" and opts.icon or nil }
+	local mine = owner == SELF
+	if not known then
+		table.insert(M.owners, mine and #M.owners + 1 or before_self(M.owners, function(o) return o == SELF end), owner)
+	end
+	local root = { title = title, build = build, owner = owner, icon = type(opts) == "table" and opts.icon or nil }
+	table.insert(M.roots, mine and #M.roots + 1 or before_self(M.roots, function(r) return r.owner == SELF end), root)
 end
 
 local function shift_held()
