@@ -49,7 +49,8 @@
     "lib/music.lua",
     "lib/mod_settings.lua",
     "lib/menu.lua",
-    "lib/capture.lua"
+    "lib/capture.lua",
+    "lib/profiler.lua"
   ],
   "keybinds": [
     {

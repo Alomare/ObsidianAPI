@@ -2,6 +2,10 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## Next
+
+- New: Script Profiler, a page of the F6 window. A panel over the game, on a 20% black background, lists every running mod with the time its scripts take each frame and the FPS that costs. The page sets where it shows (hidden, pause menu only, always), the detail (basic, or with the slowest frame, calls a frame and the total), how many mods it lists, the corner and the text size. Needs a loader with `obsidian.profiler`.
+
 ## 1.49.0
 
 - Fixed: a client mod listening through `api.events` hears events in any lobby, also while a session or hybrid mod has the API wait for a cleared lobby. Listeners of session mods still wait.

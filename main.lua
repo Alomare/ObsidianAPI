@@ -28,6 +28,7 @@ local mod_settings = obsidian.module("lib/mod_settings")
 local custom = obsidian.module("lib/custom")
 local menu = obsidian.module("lib/menu")
 local capture = obsidian.module("lib/capture")
+local profiler = obsidian.module("lib/profiler")
 
 local gear_failed, bots_failed, music_failed = false, false, false
 local last_state = nil
@@ -94,6 +95,8 @@ map.install()
 mod_settings.install()
 -- The in-game window, for any mod's pages, in any lobby. It runs from wraps, never gated.
 menu.install()
+-- The Script Profiler panel and its page in the F6 window, in any lobby: it only reads.
+profiler.install(menu)
 -- A camera a mod takes (api.world.camera.take), in any lobby: only this player sees it.
 world.install()
 -- A drop from api.mission.drop leaves the campaign alone at the mission's end, whoever started it.
