@@ -2,7 +2,7 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
-## Next
+## 1.50.0-beta.2
 
 - Fixed: `catalog.stratagem` and the item lists checked every item against the paid packs on each call, which cost several milliseconds a frame for a mod that looks stratagems up every frame. The answers are now kept for 5 seconds, and `catalog.stratagem` looks up one name.
 - Changed: wider gaps between the columns of the Script Profiler panel.
