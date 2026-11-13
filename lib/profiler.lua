@@ -29,7 +29,7 @@ M.ROWS = { 5, 10, 0 } -- 0: every mod
 M.DEFAULTS = { show = "hidden", detail = "basic", corner = "top_left", size = "medium", rows = 10 }
 
 M.NAME_EMS = 17       -- the name column, in text sizes
-M.GAP_EMS = 1.4       -- between two columns, in text sizes
+M.GAP_EMS = 3         -- between two columns, in text sizes
 M.SCROLL_SPEED = 2.2  -- a long name scrolls this many text sizes a second
 M.SCROLL_REST = 1.2   -- seconds a long name rests at each end
 M.LOG_EVERY = 10      -- seconds between two log reports

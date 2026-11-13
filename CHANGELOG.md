@@ -2,6 +2,11 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## Next
+
+- Fixed: `catalog.stratagem` and the item lists checked every item against the paid packs on each call, which cost several milliseconds a frame for a mod that looks stratagems up every frame. The answers are now kept for 5 seconds, and `catalog.stratagem` looks up one name.
+- Changed: wider gaps between the columns of the Script Profiler panel.
+
 ## 1.50.0-beta.1
 
 - New: Script Profiler, a page of the F6 window. A panel in the top left corner, on a 20% black background, lists every running mod with the time the scripts of the mod take each frame and the FPS that costs; a name too long for the column scrolls. The page sets where it shows (hidden, pause menu only, always), the detail (basic, or with the slowest frame, calls a frame and the total), how many mods it lists, the corner and the text size. Needs a loader with `obsidian.profiler`.

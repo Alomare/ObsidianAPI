@@ -1360,6 +1360,7 @@ make = function(def, entry, s)
 		type = e.stratagem_type, base_type = base.stratagem_type, after = def.after }
 	defs[name], by_id[id] = record, record
 	order[#order + 1] = record
+	if catalog.forget then catalog.forget() end
 	install_direct()
 	return { name = name, id = id }
 end

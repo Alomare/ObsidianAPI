@@ -30,14 +30,40 @@ local function entitlements()
 	return ok and ents or {}
 end
 
--- False for an item of a paid pack this player doesn't own.
-function M.usable(name)
+-- The answers of usable() by name, kept for KEEP seconds: the game's checks read the save, and the lists
+-- below ask them for every item, so a mod that looks a stratagem up each frame would pay that each frame.
+M.KEEP = 5
+local known = { at = nil, names = {} }
+
+local function now()
+	local ok, t = pcall(os.clock)
+	return ok and t or 0
+end
+
+-- Forgets the kept answers: after a pack's ownership or a custom stratagem's base changes.
+function M.forget()
+	known.at, known.names = nil, {}
+end
+
+local function check(name)
 	local dlc = game.global("DlcSettings")
 	if not (dlc and dlc.is_item_dlc and dlc.can_use) then return true end
 	local ok, is_dlc = pcall(dlc.is_item_dlc, name)
 	if not ok or not is_dlc then return true end
 	local ok2, can = pcall(dlc.can_use, name, entitlements())
 	return ok2 and can == true
+end
+
+-- False for an item of a paid pack this player doesn't own.
+function M.usable(name)
+	local t = now()
+	if not known.at or t - known.at > M.KEEP or t < known.at then known.at, known.names = t, {} end
+	local answer = known.names[name]
+	if answer == nil then
+		answer = check(name)
+		if name ~= nil then known.names[name] = answer end
+	end
+	return answer
 end
 
 local earned = { xp = nil, count = nil, names = nil }
@@ -247,8 +273,9 @@ function M.max_upgrade(unit_path)
 end
 
 function M.stratagem(name)
-	for _, s in ipairs(M.stratagems()) do
-		if s.name == name then return s end
+	local settings = game.global("LoadoutSettings")
+	for _, s in ipairs(settings and settings.stratagems or {}) do
+		if s.name == name then return M.usable(name) and s or nil end
 	end
 	return nil
 end
