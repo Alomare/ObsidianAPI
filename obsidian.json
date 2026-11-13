@@ -19,7 +19,7 @@
   "authors": [
     "Obsidian"
   ],
-  "image": "image.jpg",
+  "image": "icon.jpg",
   "scope": "library",
   "entry": "main.lua",
   "source": "https://github.com/Alomare/ObsidianAPI",
