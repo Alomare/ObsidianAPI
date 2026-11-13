@@ -31,6 +31,10 @@ local capture = obsidian.module("lib/capture")
 local profiler = obsidian.module("lib/profiler")
 
 local gear_failed, bots_failed, music_failed = false, false, false
+
+-- Each part of the frame runs through the loader's profiler (obsidian.profiler.measure), so the Script
+-- Profiler and its log say which part of this library costs. Without measuring it is a plain call.
+local measure = obsidian.profiler and obsidian.profiler.measure or function(_, fn, ...) return fn(...) end
 local last_state = nil
 
 -- The frame driver runs in any lobby (`always`), so the pause menu's Mod Settings, screenshots, the map,
@@ -41,47 +45,47 @@ obsidian.on_frame(function()
 	local dt = rawget(_G, "ENGINE_DT") or 0.016
 	local shared = not game.session_mode or obsidian.session.cleared() == true
 	if shared then
-		game.tick()
-		effects.tick(dt)
-		enemies.tick()
+		measure("frame: game", game.tick)
+		measure("frame: effects", effects.tick, dt)
+		measure("frame: enemies", enemies.tick)
 	end
 	-- Joining the event delegate of a new state only listens; each listener keeps the gate of the mod
 	-- that asked (lib/events.lua).
-	pcall(events.tick)
+	pcall(measure, "frame: events", events.tick)
 	local st = game.state()
 	if st ~= last_state then
 		last_state = st
 		map.reset()
 	end
-	pcall(mod_settings.tick)
-	local ran, why = pcall(mod_settings.run_chosen)
+	pcall(measure, "frame: mod settings", mod_settings.tick)
+	local ran, why = pcall(measure, "frame: mod settings rows", mod_settings.run_chosen)
 	if not ran then obsidian.log("mod_settings: " .. tostring(why)) end
 	if shared then
-		pcall(custom.tick, dt)
-		pcall(world.tick)
+		pcall(measure, "frame: custom", custom.tick, dt)
+		pcall(measure, "frame: world", world.tick)
 	end
 	-- Who left the lobby, and the last values they shared, once a second.
-	ran, why = pcall(lobby.tick, dt)
+	ran, why = pcall(measure, "frame: lobby", lobby.tick, dt)
 	if not ran then obsidian.log("lobby: " .. tostring(why)) end
 	if shared then
 		-- Other machines' api.player.damage on this machine's players.
-		ran, why = pcall(player.tick)
+		ran, why = pcall(measure, "frame: player", player.tick)
 		if not ran then obsidian.log("player damage: " .. tostring(why)) end
 	end
-	ran, why = pcall(capture.tick)
+	ran, why = pcall(measure, "frame: capture", capture.tick)
 	if not ran then obsidian.log("capture: " .. tostring(why)) end
-	local ok, err = pcall(music.tick)
+	local ok, err = pcall(measure, "frame: music", music.tick)
 	if not ok and not music_failed then
 		music_failed = true
 		obsidian.log("music: " .. tostring(err))
 	end
 	if game.session_mode and shared then
-		local ok, err = pcall(gear.tick)
+		local ok, err = pcall(measure, "frame: drones", gear.tick)
 		if not ok and not gear_failed then
 			gear_failed = true
 			obsidian.log("drones: " .. tostring(err))
 		end
-		ok, err = pcall(bots.tick)
+		ok, err = pcall(measure, "frame: bots", bots.tick)
 		if not ok and not bots_failed then
 			bots_failed = true
 			obsidian.log("bots: " .. tostring(err))

@@ -2835,7 +2835,10 @@ function M.install()
 	wrap("StateMachine", "post_update", function(original, self, ...)
 		local r = pack(original(self, ...))
 		local boot = global("Boot")
-		if type(boot) == "table" and rawget(boot, "state_machine") == self then protected_frame() end
+		if type(boot) == "table" and rawget(boot, "state_machine") == self then
+			local p = obsidian.profiler
+			if p and p.measure then p.measure("menu: window and toasts", protected_frame) else protected_frame() end
+		end
 		return unpack(r, 1, r.n)
 	end)
 	-- Hooks may run later than the frame, so a chat opened with the window's select key is refused here

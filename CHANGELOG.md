@@ -2,9 +2,11 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
-## Next
+## 1.50.0-beta.1
 
-- New: Script Profiler, a page of the F6 window. A panel over the game, on a 20% black background, lists every running mod with the time its scripts take each frame and the FPS that costs. The page sets where it shows (hidden, pause menu only, always), the detail (basic, or with the slowest frame, calls a frame and the total), how many mods it lists, the corner and the text size. Needs a loader with `obsidian.profiler`.
+- New: Script Profiler, a page of the F6 window. A panel in the top left corner, on a 20% black background, lists every running mod with the time the scripts of the mod take each frame and the FPS that costs; a name too long for the column scrolls. The page sets where it shows (hidden, pause menu only, always), the detail (basic, or with the slowest frame, calls a frame and the total), how many mods it lists, the corner and the text size. Needs a loader with `obsidian.profiler`.
+- New: while the Script Profiler is not hidden, a report goes to the log of Obsidian API every 10 seconds: the frame time, and for each mod the time, slowest frame, calls and the hooks and parts the time goes to. The parts of the frame of Obsidian API are measured one by one.
+- Changed: the folder of Obsidian API in the F6 window comes after the folders of the mods.
 
 ## 1.49.0
 
