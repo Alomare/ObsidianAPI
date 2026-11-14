@@ -1,22 +1,18 @@
 # Obsidian API
 
-A library for [Obsidian](https://github.com/Alomare/ObsidianModManager) mods on HELLDIVERS (2015). It gives other mods the game's data by name, checked changes that can be undone, and ready actions. It does nothing by itself. [Obsidian Trainer](https://github.com/Alomare/ObsidianTrainer) is built on it and uses nothing you can't use.
+A library for [Obsidian](https://github.com/Alomare/ObsidianLauncher) mods on HELLDIVERS (2015). It gives other mods the game data by name, checked changes that can be undone, and ready actions. It does nothing by itself.
 
-It has been tested solo and offline, but not yet with a second player.
+## How to use
 
-## How to Use
+Obsidian API comes with Obsidian, in the Obsidian Kit. Mods that need it switch it on with them.
 
-Obsidian API comes with Obsidian, in the Obsidian Kit folder, and updates from this repository. Mods that need it switch it on with them, so players don't have to.
-
-To build on it, list it in your mod's `obsidian.json`:
+To build on it, list it in the `obsidian.json` of the mod:
 
 ```json
-"scope": "session",
-"entry": "main.lua",
 "requires": ["obsidian.api"]
 ```
 
-Then ask for it in your script:
+Then ask for it in the script:
 
 ```lua
 local api = obsidian.import("obsidian.api")
@@ -27,23 +23,10 @@ obsidian.keybind("panic", function()
 end)
 ```
 
-Actions answer `true`, or `false` and a short reason such as `"host_only"` or `"not_in_mission"`.
+Actions answer `true`, or `false` and a short reason such as `"host_only"`. A client mod can require the API and stay a client mod: it can read game data and use the interface, sound and event calls, and anything that changes the shared game answers `false, "needs_session"`.
 
-The API is a library: it runs as a session mod only when a session mod requires it. A client mod can require it too and stay a client mod. It can then read the game's data and use `api.ui`, `api.audio` and `api.events`, and anything that changes the shared game answers `false, "needs_session"`.
+[REFERENCE.md](REFERENCE.md) has every call, with guides and recipes. A copy sits in the folder of the API in the Obsidian Kit, where an AI tool working on a mod can read it.
 
-[REFERENCE.md](REFERENCE.md) has everything else: a guide to each part of the API, recipes, the rules that keep the game running, and every call and effect. It also comes inside the API's folder in the Obsidian Kit, so an AI tool working on a mod can read it there.
+## Known issues
 
-## Releasing
-
-Set `version` in `obsidian.json`, add a section for it to `CHANGELOG.md` (new, changed or removed capabilities, one line each), run `python tools/reference.py` to bring `REFERENCE.md` up to date, commit, then push a tag with the same version:
-
-```
-git tag v1.0.1
-git push origin v1.0.1
-```
-
-The Release workflow packs the mod into a `.zip` and publishes it with that changelog section as its notes, and Obsidian offers it as an update. It stops if the section is missing, or if `REFERENCE.md` doesn't match the source.
-
-## License
-
-[MIT](LICENSE)
+- Tested solo and offline, not yet with a second player.
