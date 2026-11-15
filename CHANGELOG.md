@@ -2,6 +2,10 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## Next
+
+- Changed: the controller buttons that open the in-game menu follow the input mode chosen for the "Open in-game menu" bind in Obsidian (tap, double tap, press, long press or release), with an Obsidian that has input modes.
+
 ## 1.50.0-beta.2
 
 - Fixed: `catalog.stratagem` and the item lists checked every item against the paid packs on each call, which cost several milliseconds a frame for a mod that looks stratagems up every frame. The answers are now kept for 5 seconds, and `catalog.stratagem` looks up one name.

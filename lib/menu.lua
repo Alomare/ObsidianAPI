@@ -951,7 +951,21 @@ function PADS.combo_held(pad, combo)
 	return true
 end
 
--- Once a frame, open or closed: true on the frame a pad comes to hold the whole combination.
+-- Whether any pad holds the whole combination now: the controller input of the "open" keybind, for a
+-- loader that fires binds by their input mode (obsidian.capabilities.input_modes).
+function PADS.combo_held_any()
+	local combo = PADS.COMBOS[M.pad_combo]
+	local list = global("Pads")
+	if not combo or type(list) ~= "table" then return false end
+	for _, pad in ipairs(list) do
+		local active = pad ~= nil and (not pad.active or select(2, pcall(pad.active)) == true)
+		if active and PADS.combo_held(pad, combo) then return true end
+	end
+	return false
+end
+
+-- Once a frame, open or closed: true on the frame a pad comes to hold the whole combination. Only with
+-- a loader older than input modes; a newer one fires the "open" keybind for the pad as well.
 function PADS.combo_pressed()
 	local combo = PADS.COMBOS[M.pad_combo]
 	local list = global("Pads")
@@ -2775,7 +2789,7 @@ function M.frame()
 		M.state_name = state_name()
 	end
 	-- A pad's buttons do what the key does (obsidian.keybind "open" in M.install).
-	if PADS.combo_pressed() and not M.panel_on and (M.shown or #listed_roots() > 0) then
+	if not M.loader_pad and PADS.combo_pressed() and not M.panel_on and (M.shown or #listed_roots() > 0) then
 		M.device = "pad"
 		M.toggle()
 	end
@@ -2848,11 +2862,17 @@ function M.install()
 		return original(self, ...)
 	end)
 	-- The key opens the window once a page is listed, and closes it. The loader before obsidian.keybind's
-	-- opts.always gates it as it gates this library.
-	obsidian.keybind("open", function()
+	-- opts.always gates it as it gates this library. A loader with input modes also fires it for the pad
+	-- combination, by the mode the player chose for the bind; an older one leaves the pad to M.frame.
+	local caps = obsidian.capabilities
+	M.loader_pad = type(caps) == "table" and caps.input_modes == true
+	obsidian.keybind("open", function(device)
 		if M.panel_on then return end
-		if M.shown or #listed_roots() > 0 then M.toggle() end
-	end, { always = true })
+		if M.shown or #listed_roots() > 0 then
+			if device == "pad" then M.device = "pad" end
+			M.toggle()
+		end
+	end, { always = true, pad = M.loader_pad and PADS.combo_held_any or nil })
 end
 
 return M
