@@ -9,7 +9,7 @@
 -- measured one by one (main.lua), so its line names which of them costs.
 --
 -- Measuring costs a little of every call into a mod, so the loader measures only while the panel can
--- show. A loader without obsidian.profiler leaves the page with a line saying so.
+-- show. A loader without obsidian.profiler gets no page and no panel (M.install).
 local M = {}
 
 local function global(name) return rawget(_G, name) end
@@ -312,6 +312,9 @@ end
 function M.install(menu)
 	local p = obsidian.profiler
 	if type(p) == "table" and type(p.start) == "function" and type(p.read) == "function" then M.loader = p end
+	-- A loader without the profiler (Obsidian Launcher before 2.0) gets no page and no panel: a page that
+	-- can only say so would keep F6 opening a window when no mod lists a page, which it didn't before.
+	if not M.loader then return end
 	for id in pairs(M.DEFAULTS) do
 		local ok, v = pcall(obsidian.storage.get, KEY .. id)
 		if ok and v ~= nil then M.values[id] = v end

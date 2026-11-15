@@ -4,6 +4,7 @@ New, changed or removed capabilities, one line each, brief and direct. A release
 
 ## Next
 
+- Fixed: with an Obsidian Launcher before 2.0, the Script Profiler page is left out, so F6 opens the menu only when a mod lists a page, as before.
 - Changed: the controller buttons that open the in-game menu follow the input mode chosen for the "Open in-game menu" bind in Obsidian (tap, double tap, press, long press or release), with an Obsidian that has input modes.
 
 ## 1.50.0-beta.2
