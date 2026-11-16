@@ -2,7 +2,7 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
-## Next
+## 1.51.0
 
 - New: the Script Profiler option, off by default. Off, the Script Profiler has no page and measures nothing; on, its page still has Hidden.
 - New: the in-game window and the Script Profiler in Russian and Simplified Chinese; the Script Profiler texts come from the locales in every language.
