@@ -4,7 +4,7 @@ New, changed or removed capabilities, one line each, brief and direct. A release
 
 ## 1.51.0
 
-- New: the Script Profiler option, off by default. Off, the Script Profiler has no page and measures nothing; on, its page still has Hidden.
+- New: the Script Profiler option, off by default. Off, the Script Profiler has no page and measures nothing; on, the Script Profiler page still has Hidden.
 - New: the in-game window and the Script Profiler in Russian and Simplified Chinese; the Script Profiler texts come from the locales in every language.
 - Changed: the value field of a choice or number row takes the width of the widest value it can show, at most half the row, so the arrows stay put as the value changes.
 - Changed: `api.catalog.text` answers the name the game has in every language, Cyrillic and Chinese included.
