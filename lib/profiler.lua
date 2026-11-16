@@ -14,6 +14,12 @@ local M = {}
 
 local function global(name) return rawget(_G, name) end
 
+-- A text of this library, in the game language (locales/).
+local function word(key, ...)
+	local ok, s = pcall(obsidian.text, key, ...)
+	return ok and type(s) == "string" and s or key
+end
+
 local DESIGN_W, DESIGN_H = 1280, 720
 local LAYER = 860 -- under the F6 window and its messages (862 and up), over the game's HUD
 local MARGIN = 12
@@ -167,12 +173,12 @@ end
 -- The columns: title, the widest value it shows (to size it), alignment, and the text of a row.
 local function columns(detailed)
 	local cols = {
-		{ "ms", "000.00", function(r) return fmt(r.ms) end },
-		{ "FPS cost", "000.0", function(r) return fmt(r.fps, 1) end },
+		{ word("profiler_col_ms"), "000.00", function(r) return fmt(r.ms) end },
+		{ word("profiler_col_fps"), "000.0", function(r) return fmt(r.fps, 1) end },
 	}
 	if detailed then
-		cols[#cols + 1] = { "Peak ms", "000.00", function(r) return fmt(r.peak_ms) end }
-		cols[#cols + 1] = { "Calls", "00000", function(r) return fmt(r.calls, 0) end }
+		cols[#cols + 1] = { word("profiler_col_peak"), "000.00", function(r) return fmt(r.peak_ms) end }
+		cols[#cols + 1] = { word("profiler_col_calls"), "00000", function(r) return fmt(r.calls, 0) end }
 	end
 	return cols
 end
@@ -212,12 +218,12 @@ local function draw(kit, result, t)
 	end
 	local cy = y + height - pad - size
 	if result then
-		text("Frame " .. fmt(result.frame_ms) .. " ms, " .. fmt(1000 / math.max(result.frame_ms, 0.01), 0) .. " FPS", x + pad, cy, GOLD, "left")
+		text(word("profiler_frame", fmt(result.frame_ms), fmt(1000 / math.max(result.frame_ms, 0.01), 0)), x + pad, cy, GOLD, "left")
 	else
-		text("Measuring...", x + pad, cy, GOLD, "left")
+		text(word("profiler_measuring"), x + pad, cy, GOLD, "left")
 	end
 	cy = cy - line
-	text("Script", x + pad, cy, GREY, "left")
+	text(word("profiler_col_script"), x + pad, cy, GREY, "left")
 	local cx = x + pad + name_w
 	for i, c in ipairs(cols) do
 		cx = cx + gap + widths[i]
@@ -246,11 +252,11 @@ local function draw(kit, result, t)
 	end
 	if #rows == 0 then
 		cy = cy - line
-		text(result and "No script ran" or "", x + pad, cy, GREY, "left")
+		text(result and word("profiler_none") or "", x + pad, cy, GREY, "left")
 	end
 	if detailed and result then
 		cy = cy - line
-		text("All scripts " .. fmt(result.total_ms) .. " ms, " .. fmt(M.fps_cost(result.frame_ms, result.total_ms), 1) .. " FPS", x + pad, cy, GREY, "left")
+		text(word("profiler_all", fmt(result.total_ms), fmt(M.fps_cost(result.frame_ms, result.total_ms), 1)), x + pad, cy, GREY, "left")
 	end
 end
 
@@ -288,24 +294,24 @@ end
 
 function M.build(page)
 	if not M.loader then
-		page:label("The Script Profiler needs a newer Obsidian Launcher.")
+		page:label(word("profiler_needs_launcher"))
 		return
 	end
-	page:choice("Show", { choices = choices(M.SHOW, { hidden = "Hidden", pause = "Pause menu only", always = "Always" }),
+	page:choice(word("profiler_show"), { choices = choices(M.SHOW, { hidden = word("profiler_show_hidden"), pause = word("profiler_show_pause"), always = word("profiler_show_always") }),
 		get = function() return M.get("show") end, set = function(v) set("show", v) end, default = M.DEFAULTS.show })
-	page:choice("Detail", { choices = choices(M.DETAIL, { basic = "Basic", detailed = "Detailed" }),
+	page:choice(word("profiler_detail"), { choices = choices(M.DETAIL, { basic = word("profiler_detail_basic"), detailed = word("profiler_detail_detailed") }),
 		get = function() return M.get("detail") end, set = function(v) set("detail", v) end, default = M.DEFAULTS.detail })
-	page:choice("Scripts listed", { choices = { { id = 5, label = "5" }, { id = 10, label = "10" }, { id = 0, label = "All" } },
+	page:choice(word("profiler_rows"), { choices = { { id = 5, label = "5" }, { id = 10, label = "10" }, { id = 0, label = word("profiler_rows_all") } },
 		get = function() return M.get("rows") end, set = function(v) set("rows", v) end, default = M.DEFAULTS.rows })
-	page:header("Style")
-	page:choice("Position", { choices = choices(M.CORNER, { top_left = "Top left", top_right = "Top right", bottom_left = "Bottom left", bottom_right = "Bottom right" }),
+	page:header(word("profiler_style"))
+	page:choice(word("profiler_corner"), { choices = choices(M.CORNER, { top_left = word("profiler_corner_top_left"), top_right = word("profiler_corner_top_right"), bottom_left = word("profiler_corner_bottom_left"), bottom_right = word("profiler_corner_bottom_right") }),
 		get = function() return M.get("corner") end, set = function(v) set("corner", v) end, default = M.DEFAULTS.corner })
-	page:choice("Text size", { choices = choices({ "small", "medium", "large" }, { small = "Small", medium = "Medium", large = "Large" }),
+	page:choice(word("profiler_size"), { choices = choices({ "small", "medium", "large" }, { small = word("profiler_size_small"), medium = word("profiler_size_medium"), large = word("profiler_size_large") }),
 		get = function() return M.get("size") end, set = function(v) set("size", v) end, default = M.DEFAULTS.size })
-	page:header("About")
-	page:label("ms: the time the scripts of a mod take each frame, on average. FPS cost: the frames a second the game would gain without that time.")
-	page:label("Detailed adds the slowest frame of the last half second, the calls a frame, and the total of all scripts. Measuring runs only while the panel is not hidden.")
-	page:label("While the panel is not hidden, a report goes to the log of Obsidian API every " .. M.LOG_EVERY .. " seconds, with the hooks and parts each mod spends its time in.")
+	page:header(word("profiler_about"))
+	page:label(word("profiler_about_ms"))
+	page:label(word("profiler_about_detail"))
+	page:label(word("profiler_about_log", M.LOG_EVERY))
 end
 
 -- From main.lua, after the F6 window is installed.
@@ -315,6 +321,10 @@ function M.install(menu)
 	-- A loader without the profiler (Obsidian Launcher before 2.0) gets no page and no panel: a page that
 	-- can only say so would keep F6 opening a window when no mod lists a page, which it didn't before.
 	if not M.loader then return end
+	-- The Script Profiler option of this library, off unless the player switched it on in Obsidian:
+	-- off, there is no page, no panel and nothing measured.
+	local got, on = pcall(obsidian.settings.get, "profiler")
+	if not got or on ~= true then return end
 	for id in pairs(M.DEFAULTS) do
 		local ok, v = pcall(obsidian.storage.get, KEY .. id)
 		if ok and v ~= nil then M.values[id] = v end
@@ -323,7 +333,7 @@ function M.install(menu)
 		obsidian.ui.frame(DESIGN_W, DESIGN_H)
 		M.kit = obsidian.ui.canvas("profiler", { over_fades = true })
 	end
-	menu.add("Script Profiler", M.build)
+	menu.add(word("profiler_title"), M.build)
 	local wrap = obsidian.wrap or obsidian.hook
 	-- The boot script ends every frame with the state machine's post_update, in every state (as the
 	-- F6 window draws).

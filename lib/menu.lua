@@ -1154,6 +1154,15 @@ local function handle(ev)
 	end
 end
 
+-- A number as a row writes it: opts.format, a function or a string.format pattern.
+local function shown_number(frame, it, v)
+	if type(it.format) == "function" then
+		local fine, s = run(frame.owner, "format", it.format, v)
+		return fine and tostring(s) or "?"
+	end
+	return string.format(it.format or "%g", v)
+end
+
 -- What a row shows on its right: a control's kind, and its value.
 local function control_of(frame, it)
 	if it.kind == "action" then return "run" end
@@ -1163,13 +1172,7 @@ local function control_of(frame, it)
 	local ok, value = run(frame.owner, "get", it.get)
 	if not ok then return "error" end
 	if it.kind == "toggle" then return "switch", value and true or false end
-	local function shown(v)
-		if type(it.format) == "function" then
-			local fine, s = run(frame.owner, "format", it.format, v)
-			return fine and tostring(s) or "?"
-		end
-		return string.format(it.format or "%g", v)
-	end
+	local function shown(v) return shown_number(frame, it, v) end
 	if it.kind == "number" then
 		if type(value) ~= "number" then return "stepper", "-" end
 		return "stepper", shown(value)
@@ -1379,10 +1382,35 @@ local function draw_switch(right, y, on)
 	kit:rect(on and right - inset - knob or right - SWITCH_W + inset, y + inset, knob, SWITCH_H - inset * 2, on and DARK or GREY)
 end
 
-local function draw_stepper(right, y, row, value, mx, my, swatch)
+-- The widest value a stepper row can show: every choice, or a number's minimum, maximum and value. The
+-- field takes that width whatever the value, so the arrows stay put while the value changes. Kept on the
+-- row while its choices and the panel's scale stay the same.
+local function widest_value(frame, it, value)
+	local scale = M.kit.panel_scale or 1
+	local cached = it.widest_value
+	if it.kind == "choice" and cached and cached.choices == it.choices and cached.n == #(it.choices or {}) and cached.scale == scale then
+		return math.max(cached.w, width_of(value, BODY))
+	end
+	local w, swatch = width_of(value, BODY), false
+	if it.kind == "choice" then
+		for _, c in ipairs(it.choices or {}) do
+			w = math.max(w, width_of(tostring(c.label), BODY))
+			swatch = swatch or type(c.swatch) == "table"
+		end
+		it.widest_value = { choices = it.choices, n = #(it.choices or {}), scale = scale, w = w }
+	elseif type(it.min) == "number" and type(it.max) == "number" then
+		w = math.max(w, width_of(shown_number(frame, it, it.min), BODY), width_of(shown_number(frame, it, it.max), BODY))
+	end
+	return w
+end
+
+local function draw_stepper(frame, right, y, row, value, mx, my, swatch, room)
 	local kit = M.kit
 	local extra = type(swatch) == "table" and SWATCH + 6 or 0
-	local w = math.max(width_of(value, BODY) + STEP_W * 2 + 10 + extra, STEPPER_W)
+	-- At most half the row, so a long list of names leaves the row's own words room.
+	local most = math.max(STEPPER_W, math.floor((room or 0) / 2))
+	local w = math.min(math.max(widest_value(frame, row.it, value) + STEP_W * 2 + 10 + extra, STEPPER_W), most)
+	value = fit(value, w - STEP_W * 2 - 10 - extra, BODY)
 	local left = right - w
 	kit:layer(LAYER_MARK)
 	kit:panel({ left, y + 3, w, ROW_H - 6, cut = 4, corners = "br", fill = FIELD })
@@ -1435,14 +1463,14 @@ local function draw_button(right, y, over)
 end
 
 -- Draws what a row shows on its right, and answers how wide that is.
-local function draw_control(frame, row, right, mx, my, lit)
+local function draw_control(frame, row, right, mx, my, lit, room)
 	local kit, y, it = M.kit, row.y, row.it
 	local control, value, extra = control_of(frame, it)
 	if control == "switch" then
 		draw_switch(right, y + (ROW_H - SWITCH_H) / 2, value)
 		return SWITCH_W
 	elseif control == "stepper" then
-		return draw_stepper(right, y, row, value, mx, my, extra)
+		return draw_stepper(frame, right, y, row, value, mx, my, extra, room)
 	elseif control == "slider" then
 		return draw_slider(right, y, row, value, extra, lit)
 	elseif control == "run" then
@@ -1641,7 +1669,7 @@ local function draw_rows(frame, list, shown, left, right, top, mx, my)
 			put(fit(label, row.w - PAD * 2, BODY), left + PAD, mid(y, ROW_H, BODY), BODY, GREY)
 		else
 			local typing = M.field and M.field.item == it
-			local used = typing and draw_field(row, control_right, left + INDENT) or draw_control(frame, row, control_right, mx, my, active or over)
+			local used = typing and draw_field(row, control_right, left + INDENT) or draw_control(frame, row, control_right, mx, my, active or over, control_right - left - INDENT)
 			draw_reset(frame, row, row_right, mx, my)
 			-- An icon of the game's HUD before the words, such as a stratagem's.
 			local text_x = left + INDENT

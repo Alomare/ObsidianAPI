@@ -7,14 +7,16 @@
     "pt-BR": "Obsidian API",
     "zh-CN": "Obsidian API",
     "fr": "Obsidian API",
-    "es": "Obsidian API"
+    "es": "Obsidian API",
+    "ru": "Obsidian API"
   },
   "description": {
     "en": "A library other mods build on. It does nothing by itself.",
     "pt-BR": "Uma biblioteca para outros mods. Sozinho, não faz nada.",
     "zh-CN": "供其他模组使用的库，单独启用时不起作用。",
     "fr": "Une bibliothèque pour les autres mods. Seul, il ne fait rien.",
-    "es": "Una biblioteca para otros mods. Por sí solo no hace nada."
+    "es": "Una biblioteca para otros mods. Por sí solo no hace nada.",
+    "ru": "Библиотека, на которой строятся другие моды. Сама по себе ничего не делает."
   },
   "authors": [
     "Obsidian"
@@ -62,7 +64,8 @@
         "pt-BR": "Abrir menu do jogo",
         "zh-CN": "打开游戏内菜单",
         "fr": "Ouvrir le menu en jeu",
-        "es": "Abrir menú del juego"
+        "es": "Abrir menú del juego",
+        "ru": "Открыть внутриигровое меню"
       }
     }
   ],
@@ -73,13 +76,21 @@
       "default": "thumbs",
       "scope": "client",
       "choices": [
-        { "id": "thumbs", "label": { "en": "Both sticks pressed in (L3 + R3)", "pt-BR": "Os dois analógicos pressionados (L3 + R3)", "zh-CN": "同时按下两个摇杆 (L3 + R3)", "fr": "Les deux sticks enfoncés (L3 + R3)", "es": "Ambos sticks pulsados (L3 + R3)" } },
-        { "id": "back_right_thumb", "label": { "en": "Back + right stick pressed in (R3)", "pt-BR": "Back + analógico direito pressionado (R3)", "zh-CN": "Back + 按下右摇杆 (R3)", "fr": "Back + stick droit enfoncé (R3)", "es": "Back + stick derecho pulsado (R3)" } },
-        { "id": "shoulders_back", "label": { "en": "LB + RB + Back", "pt-BR": "LB + RB + Back", "zh-CN": "LB + RB + Back", "fr": "LB + RB + Back", "es": "LB + RB + Back" } },
-        { "id": "off", "label": { "en": "Off", "pt-BR": "Desligado", "zh-CN": "关闭", "fr": "Désactivé", "es": "Desactivado" } }
+        { "id": "thumbs", "label": { "en": "Both sticks pressed in (L3 + R3)", "pt-BR": "Os dois analógicos pressionados (L3 + R3)", "zh-CN": "同时按下两个摇杆 (L3 + R3)", "fr": "Les deux sticks enfoncés (L3 + R3)", "es": "Ambos sticks pulsados (L3 + R3)", "ru": "Оба стика нажаты (L3 + R3)" } },
+        { "id": "back_right_thumb", "label": { "en": "Back + right stick pressed in (R3)", "pt-BR": "Back + analógico direito pressionado (R3)", "zh-CN": "Back + 按下右摇杆 (R3)", "fr": "Back + stick droit enfoncé (R3)", "es": "Back + stick derecho pulsado (R3)", "ru": "Back + нажатый правый стик (R3)" } },
+        { "id": "shoulders_back", "label": { "en": "LB + RB + Back", "pt-BR": "LB + RB + Back", "zh-CN": "LB + RB + Back", "fr": "LB + RB + Back", "es": "LB + RB + Back", "ru": "LB + RB + Back" } },
+        { "id": "off", "label": { "en": "Off", "pt-BR": "Desligado", "zh-CN": "关闭", "fr": "Désactivé", "es": "Desactivado", "ru": "Выкл." } }
       ],
-      "label": { "en": "Open the menu with a controller", "pt-BR": "Abrir o menu com um controle", "zh-CN": "用手柄打开菜单", "fr": "Ouvrir le menu avec une manette", "es": "Abrir el menú con un mando" },
-      "description": { "en": "The buttons that open and close the F6 menu from a controller, pressed together. In the menu, the D-pad or the left stick moves, A selects, B goes back, Y resets a row, and LB and RB switch pages.", "pt-BR": "Os botões que abrem e fecham o menu F6 pelo controle, pressionados juntos. No menu, o direcional ou o analógico esquerdo move, A escolhe, B volta, Y redefine uma linha, e LB e RB trocam de página.", "zh-CN": "用手柄同时按下即可打开和关闭 F6 菜单的按键。在菜单中，十字键或左摇杆移动，A 选择，B 返回，Y 重置一行，LB 和 RB 切换页面。", "fr": "Les boutons qui ouvrent et ferment le menu F6 depuis une manette, appuyés ensemble. Dans le menu, la croix directionnelle ou le stick gauche déplace, A choisit, B revient, Y réinitialise une ligne, et LB et RB changent de page.", "es": "Los botones que abren y cierran el menú F6 desde un mando, pulsados a la vez. En el menú, la cruceta o el stick izquierdo mueve, A elige, B vuelve, Y restablece una fila, y LB y RB cambian de página." }
+      "label": { "en": "Open the menu with a controller", "pt-BR": "Abrir o menu com um controle", "zh-CN": "用手柄打开菜单", "fr": "Ouvrir le menu avec une manette", "es": "Abrir el menú con un mando", "ru": "Открывать меню контроллером" },
+      "description": { "en": "The buttons that open and close the F6 menu from a controller, pressed together. In the menu, the D-pad or the left stick moves, A selects, B goes back, Y resets a row, and LB and RB switch pages.", "pt-BR": "Os botões que abrem e fecham o menu F6 pelo controle, pressionados juntos. No menu, o direcional ou o analógico esquerdo move, A escolhe, B volta, Y redefine uma linha, e LB e RB trocam de página.", "zh-CN": "用手柄同时按下即可打开和关闭 F6 菜单的按键。在菜单中，十字键或左摇杆移动，A 选择，B 返回，Y 重置一行，LB 和 RB 切换页面。", "fr": "Les boutons qui ouvrent et ferment le menu F6 depuis une manette, appuyés ensemble. Dans le menu, la croix directionnelle ou le stick gauche déplace, A choisit, B revient, Y réinitialise une ligne, et LB et RB changent de page.", "es": "Los botones que abren y cierran el menú F6 desde un mando, pulsados a la vez. En el menú, la cruceta o el stick izquierdo mueve, A elige, B vuelve, Y restablece una fila, y LB y RB cambian de página.", "ru": "Кнопки, которые при одновременном нажатии открывают и закрывают меню F6 с контроллера. В меню крестовина или левый стик перемещают, A выбирает, B возвращает, Y сбрасывает строку, а LB и RB переключают страницы." }
+    },
+    {
+      "id": "profiler",
+      "type": "toggle",
+      "default": false,
+      "scope": "client",
+      "label": { "en": "Script Profiler", "pt-BR": "Script Profiler", "zh-CN": "脚本性能分析器", "fr": "Profileur de scripts", "es": "Perfilador de scripts", "ru": "Профилировщик скриптов" },
+      "description": { "en": "Adds the Script Profiler page to the F6 menu: a panel over the game with the time the scripts of each mod take every frame. On its page the panel can still be hidden. Off, nothing is measured.", "pt-BR": "Adiciona a página Script Profiler ao menu F6: um painel sobre o jogo com o tempo que os scripts de cada mod levam a cada quadro. Na página, o painel ainda pode ficar escondido. Desligado, nada é medido.", "zh-CN": "在 F6 菜单中添加脚本性能分析器页面：在游戏画面上显示每个模组的脚本每帧所用时间的面板。在该页面上仍可隐藏面板。关闭时不进行任何测量。", "fr": "Ajoute la page du profileur de scripts au menu F6 : un panneau par-dessus le jeu avec le temps que prennent les scripts de chaque mod à chaque image. Sur sa page, le panneau peut toujours être masqué. Désactivé, rien n'est mesuré.", "es": "Añade la página del perfilador de scripts al menú F6: un panel sobre el juego con el tiempo que tardan los scripts de cada mod en cada fotograma. En su página el panel aún puede ocultarse. Desactivado, no se mide nada.", "ru": "Добавляет в меню F6 страницу профилировщика скриптов: панель поверх игры со временем, которое скрипты каждого мода занимают в каждом кадре. На её странице панель по-прежнему можно скрыть. Когда выключено, ничего не измеряется." }
     }
   ]
 }
