@@ -194,6 +194,42 @@ function M.aboard(unit)
 	return lz ~= nil and type(lz.extracted_units) == "table" and lz.extracted_units[unit] == true
 end
 
+M.BOARD_REACH = 4
+
+-- Takes a Helldiver aboard the landed shuttle from further out than the game's own 1.9 metres around the
+-- door, through the game's boarding (ObjectiveExtractLZComponent.overlap_callback_extract_players), so the
+-- count, the host's record and the shuttle's leave all go as for a player who walked in. Only a live
+-- Helldiver this machine owns gets in, as in the game. reach: metres from the door (4). Answers true, or false
+-- and a reason: "no_unit", "no_shuttle" (none landed), "too_far", "aboard" (in already), "refused" (dead, not
+-- this machine's, or not a Helldiver).
+function M.board(unit, reach)
+	local units = game.global("Unit")
+	if not (unit and units.alive(unit)) then return false, "no_unit" end
+	if M.aboard(unit) then return false, "aboard" end
+	local lz = game.component("objective_extract_lz")
+	if not lz or type(lz.overlap_callback_extract_players) ~= "function" then return false, "no_shuttle" end
+	reach = tonumber(reach) or M.BOARD_REACH
+	local ex = M.extraction()
+	local s = ex and ex.shuttle
+	if not (s and s.landed and s.door) then return false, "no_shuttle" end
+	local p = units.world_position(unit, 0)
+	local dx, dy = p.x - s.door.x, p.y - s.door.y
+	if dx * dx + dy * dy > reach * reach then return false, "too_far" end
+	for lz_unit, ctx in pairs(game.slaves("objective_extract_lz")) do
+		if ctx.state and ctx.state.shuttle == s.unit and ctx.state.shuttle_state == 6 then
+			local ok, n = pcall(units.num_actors, unit)
+			if not ok or type(n) ~= "number" or n < 1 then return false, "refused" end
+			local got, actor = pcall(units.actor, unit, 0)
+			if not got or not actor then return false, "refused" end
+			local fine, err = pcall(lz.overlap_callback_extract_players, lz, { lz_unit, ctx }, { actor })
+			if not fine then obsidian.log("mission.board: " .. tostring(err)) end
+			if M.aboard(unit) then return true end
+			return false, "refused"
+		end
+	end
+	return false, "no_shuttle"
+end
+
 -- The areas objectives ask Helldivers to stand in: { kind, unit, position, radius, state, done, inside, total }
 -- each. kind: "hold" (stand inside until done reaches 1; enemies inside slow it to a tenth) or "fortify"
 -- (capture_radius, the area to take, comes too). Every Helldiver counts, bots and bare bots among them: the

@@ -583,8 +583,13 @@ end
 -- true or a table to fire a vehicle seat's second weapon along with the first (the tank's machine gun,
 -- the first exosuit's rockets). The rockets go only while the exosuit faces the target. As a table:
 -- secondary.only, a function given an enemy unit that answers true for the enemies the second weapon is
--- for (the vehicle then also turns to them when only leaves them out); secondary.every, the seconds
--- between shots, one press each: 1 for the exosuit's rockets by default, held for the rest.
+-- for (the vehicle then also turns to them when only leaves them out), or "armored" or "heavy" for
+-- bot:armored or bot:heavy (a Walker's rockets kept for armor: secondary = { only = "armored", every = 2 }); secondary.every, the seconds
+-- between shots, one press each: 1 for the exosuit's rockets by default, held for the rest. satchel, for a
+-- satchel charge in hand: each is thrown at the target, charged to its distance as a player charges a throw,
+-- one at a time. satchel.every, the seconds between throws (3); satchel.max, how many may be out waiting for
+-- bot:detonate before it stops throwing (1); satchel.distance, the farthest it throws in metres (the target's
+-- distance when nil); satchel.min, the nearest target it throws at (6), so one never lands at the bot's feet.
 function Bot:fight(radius, opts)
 	if radius == false then
 		self.goals.fight = nil
@@ -600,15 +605,66 @@ function Bot:fight(radius, opts)
 			secondary = {}
 		elseif type(opts.secondary) == "table" then
 			local every = tonumber(opts.secondary.every)
-			secondary = { only = type(opts.secondary.only) == "function" and opts.secondary.only or nil,
+			local only = opts.secondary.only
+			if not (type(only) == "function" or only == "armored" or only == "heavy") then only = nil end
+			secondary = { only = only,
 				every = every and every == every and every >= 0 and every or nil }
 		end
-		self.goals.fight = { radius = radius or 25, weapon = SLOTS[opts.weapon], best = opts.weapon == "best" or opts.weapon == "threat", threat = opts.weapon == "threat",
+		local satchel = type(opts.satchel) == "table" and opts.satchel or {}
+		local function num(v, lo) v = tonumber(v); return v and v == v and v >= lo and v or nil end
+		self.goals.fight = { satchel = { every = num(satchel.every, 0) or P.SATCHEL_EVERY, max = num(satchel.max, 1) or 1,
+			distance = num(satchel.distance, 0), min = num(satchel.min, 0) or P.SATCHEL_MIN },
+			radius = radius or 25, weapon = SLOTS[opts.weapon], best = opts.weapon == "best" or opts.weapon == "threat", threat = opts.weapon == "threat",
 			only = type(opts.only) == "function" and opts.only or nil, secondary = secondary }
 		-- New orders look for a target at once.
 		self.look = 0
 	end
 	return self
+end
+
+-- Whether an enemy's armor keeps most of the power out of the gun the bot fights with: the vehicle's main
+-- gun in a seat (an exosuit's arm, the minigun of the Walker), else the primary weapon. Falls back to the
+-- game's large mark when the gun's numbers can't be read. Kept for 2 seconds per enemy.
+P.ARMOR_KEEP = 2
+
+function Bot:armored(enemy)
+	local unit = self:unit()
+	if not (unit and alive(enemy)) then return false end
+	self.armor_seen = self.armor_seen or {}
+	local seen = self.armor_seen[enemy]
+	if seen and M.clock - seen.at < P.ARMOR_KEEP then return seen.yes end
+	local gun
+	local seat = self.in_seat
+	if seat then
+		for _, s in ipairs(vehicles.seats(seat.vehicle)) do
+			if s.index == seat.index then
+				for _, w in ipairs(s.weapons) do
+					if w.trigger == "primary" then gun = gun or w.unit end
+				end
+			end
+		end
+	else
+		local inv = game.master(unit, "inventory")
+		gun = inv and inv.primary_weapon
+	end
+	local yes
+	local info = gun and P.weapon_info(gun)
+	local power = info and tonumber(info.power)
+	if power then
+		local ok, hurt = pcall(gear.hurts, gun, enemy)
+		if ok and tonumber(hurt) then yes = P.brain.armored(hurt, power) end
+	end
+	if yes == nil then yes = ((enemies.info(enemy) or {}).large == true) end
+	self.armor_seen[enemy] = { at = M.clock, yes = yes }
+	return yes
+end
+
+-- Whether an enemy deserves a heavy weapon: armored (bot:armored), the game's large mark, or as many hitpoints as
+-- the big enemies.
+function Bot:heavy(enemy)
+	if self:armored(enemy) then return true end
+	local info = enemies.info(enemy) or {}
+	return info.large == true or (tonumber(info.hitpoints) or tonumber(info.max_hitpoints) or 0) >= P.brain.BIG_HP
 end
 
 -- In a vehicle seat, holds the second trigger until fire_secondary(false): the tank's machine gun, an
@@ -690,6 +746,7 @@ end
 local function charge_for(distance)
 	return math.max(0, math.min(1, distance * distance * 0.015))
 end
+P.charge_for = charge_for
 
 -- Enters the code of a stratagem the bot holds and throws the beacon toward pos. Answers true once
 -- started, or false and a reason: "no_avatar", "no_position", "not_available" (no such stratagem),
@@ -1994,6 +2051,8 @@ end
 
 -- Whether a mod's only(enemy) picks the enemy. An error in it picks none, once in the log.
 local function picks(b, only, enemy)
+	if only == "armored" then return b:armored(enemy) end
+	if only == "heavy" then return b:heavy(enemy) end
 	local ok, yes = pcall(only, enemy)
 	if not ok then
 		if not b.only_failed then
@@ -2011,12 +2070,55 @@ end
 -- (the mortar) is held to half its charge and let go. In a seat the guns fire while it's held.
 local PULL_FRAMES = 2
 
+-- A satchel charge goes out as a grenade does (CharacterStateThrow, entered by fire): fire held charges the
+-- throw and letting go throws. A short pull throws it at the bot's feet, so the trigger stays down until the
+-- charge matches the target's distance (P.satchel_hold, each frame), and the next waits fight's satchel.every.
+P.SATCHEL_EVERY = 3
+P.SATCHEL_MIN = 6
+
+function P.pull_satchel(b, unit, t, tw)
+	local cs = game.master(unit, "character") or {}
+	-- Mid-throw, satchel_hold has the trigger.
+	if in_state(cs, "CharacterStateThrow") then return end
+	t.fire_button = 0
+	if (b.satchel_next or 0) > M.clock then return end
+	local fight = b.goals.fight
+	local opts = fight and fight.satchel or { every = P.SATCHEL_EVERY, max = 1, min = P.SATCHEL_MIN }
+	local out = type(tw.child_units) == "table" and #tw.child_units or 0
+	if out >= opts.max then return end
+	local target = b.fight_target
+	if not alive(target) then return end
+	local _, _, d = flat(unit, target)
+	if d < opts.min then return end
+	if opts.distance then d = math.min(d, opts.distance) end
+	b.satchel_charge = P.charge_for(d)
+	b.satchel_next = M.clock + opts.every
+	t.fire_button = 1
+end
+
+-- Keeps fire down through a satchel throw until the charge is in, whatever the aim does meanwhile.
+function P.satchel_hold(b, unit, t)
+	if not b.satchel_charge then return end
+	local cs = game.master(unit, "character") or {}
+	if not in_state(cs, "CharacterStateThrow") then
+		if (b.satchel_next or 0) - M.clock < (b.goals.fight and b.goals.fight.satchel.every or P.SATCHEL_EVERY) - 0.5 then b.satchel_charge = nil end
+		return
+	end
+	if cs.has_thrown or (cs.grenade_charge or 0) >= b.satchel_charge then
+		b.satchel_charge = nil
+		return
+	end
+	t.fire_button = 1
+end
+
 local function pull(b, unit, t)
 	if b.in_seat then
 		t.fire_button = 1
 		return
 	end
 	local inv = game.master(unit, "inventory")
+	local tw = inv and alive(inv.current_weapon) and game.master(inv.current_weapon, "throwable_weapon")
+	if tw then return P.pull_satchel(b, unit, t, tw) end
 	local ws = inv and weapon_state(inv.current_weapon)
 	b.pull = (b.pull or 0) + 1
 	if ws and ws.fire_on_release then
@@ -2522,6 +2624,7 @@ local function fight_step(b, unit, here, t, dt)
 		b.second_hold = b.second_hold > 1 and b.second_hold - 1 or nil
 	end
 	t.fire_button = 0
+	if not seat then P.satchel_hold(b, unit, t) end
 	b.gun_off = nil
 	if face then
 		local p = units.world_position(face, 0)
@@ -2672,8 +2775,25 @@ local function grenade_step(b, unit, t, f, dt)
 	local dx, dy = job.pos.x - here.x, job.pos.y - here.y
 	f.ax, f.ay = direction({ x = dx, y = dy })
 	if job.cancel then return finish(b, false, "cancelled") end
+	-- In a seat the throw button is the vehicle's second trigger: held for a throw, it empties a Walker's rockets.
+	if b.in_seat then return finish(b, false, "interrupted") end
 	if job.total > GRENADE_TIME then return finish(b, false, "timeout") end
 	if job.guard and job.phase ~= "release" and not job.guard() then return finish(b, false, "cancelled") end
+	local button = job.satchel and "fire_button" or "throw"
+	if job.phase == "wield" then
+		local inv = game.master(unit, "inventory")
+		if not (inv and alive(job.weapon)) then return finish(b, false, "interrupted") end
+		if inv.current_weapon == job.weapon then
+			job.phase, job.time = "turn", 0
+		elseif job.time > 2 then
+			return finish(b, false, "interrupted")
+		elseif calm(unit) and (job.wait or 0) <= 0 then
+			wield(unit, job.satchel)
+			job.wait = SWITCH_GAP
+		end
+		job.wait = (job.wait or 0) - dt
+		return
+	end
 	if job.phase == "turn" then
 		if faces(unit, dx, dy, 0.97) or job.time > TURN_TIME then
 			job.phase, job.time = "hold", 0
@@ -2684,12 +2804,12 @@ local function grenade_step(b, unit, t, f, dt)
 			if cs.has_thrown then
 				job.phase, job.time = "release", 0
 			elseif (cs.grenade_charge or 0) < job.charge then
-				t.throw = 1
+				t[button] = 1
 			else
 				job.phase, job.time = "release", 0
 			end
 		else
-			t.throw = 1
+			t[button] = 1
 			if job.time > OPEN_TIME then return finish(b, false, "interrupted") end
 		end
 	elseif job.phase == "release" then
@@ -2704,7 +2824,7 @@ end
 
 -- Throws a grenade at a point: the bot faces it, charges the throw to the distance and lets go, as a
 -- player does. Answers true once started, or false and a reason: "no_avatar", "no_position", "busy"
--- (calling a stratagem or throwing already), "no_grenades". on_done(ok, reason): true once thrown, or
+-- (calling a stratagem or throwing already), "seated", "no_grenades". on_done(ok, reason): true once thrown, or
 -- false and "interrupted" (downed, knocked down, a vehicle seat), "cancelled" or "timeout". While it
 -- runs the bot stands and holds fire, and its other orders wait.
 function Bot:throw_at(pos, on_done)
@@ -2713,9 +2833,27 @@ function Bot:throw_at(pos, on_done)
 	if not unit then return false, "no_avatar" end
 	pos = point(pos)
 	if not pos then return false, "no_position" end
+	if vehicles.seat_of(unit) then return false, "seated" end
 	local inv = game.master(unit, "inventory")
 	if not (inv and (inv.num_grenades or 0) > 0) then return false, "no_grenades" end
 	self.job = { kind = "grenade", pos = pos, on_done = on_done, phase = "turn", time = 0, total = 0 }
+	return true
+end
+
+-- Throws one satchel charge at a point, charged to the distance as a player throws one; bot:detonate sets it
+-- off. The satchel comes out first when another weapon is in hand. Answers true once started, or false and a
+-- reason: "no_avatar", "no_position", "busy", "seated", "no_satchel" (none in the bot's slots, or none left
+-- to throw). on_done(ok, reason) as throw_at.
+function Bot:throw_satchel(pos, on_done)
+	if self.job then return false, "busy" end
+	local unit = self:unit()
+	if not unit then return false, "no_avatar" end
+	pos = point(pos)
+	if not pos then return false, "no_position" end
+	if vehicles.seat_of(unit) then return false, "seated" end
+	local slot, weapon, tw = P.satchel_of(unit)
+	if not slot or (tonumber(tw.num_mags) or 0) <= 0 then return false, "no_satchel" end
+	self.job = { kind = "grenade", pos = pos, on_done = on_done, phase = "wield", time = 0, total = 0, satchel = slot, weapon = weapon }
 	return true
 end
 
@@ -3080,6 +3218,7 @@ function Bot:remove(opts)
 		if type(task.on_done) == "function" then pcall(task.on_done, false, "cancelled") end
 	end
 	self.rewield, self.leaving, self.ride, self.in_seat, self.detonating = nil, nil, nil, nil, nil
+	self.armor_seen = nil
 	for i, b in ipairs(M.list) do
 		if b == self then
 			table.remove(M.list, i)
@@ -4031,6 +4170,8 @@ function board_step(b, unit, t, f, dt)
 	if d < 0.01 then dx, dy, d = 1, 0, 1 end
 	if not (b.fight_target and b.fight_near) then t.fire_button, f.ax, f.ay = 0, 0, 0 end
 	if s.landed then
+		-- Bodies crowd the door and the hull is in the way, so the API takes the bot aboard from further out.
+		if d <= task.reach and mission.board(unit, task.reach) then return board_step(b, unit, t, f, dt) end
 		f.mx, f.my = dx / d, dy / d
 		P.set_dest(f, unit, dx, dy)
 	elseif d < 5 then
@@ -4046,7 +4187,9 @@ end
 
 -- Gets into the extraction shuttle: the bot walks to the landing zone and waits 5 to 7 metres off the spot the
 -- shuttle comes down on, then walks in at the door once it has landed, where the game takes it aboard as a player.
--- opts.time: the seconds before it gives up (120). on_done may come in place of opts. Answers true once started, or
+-- opts.time: the seconds before it gives up (120); opts.reach: how near the door, in metres, the API takes it
+-- aboard through the game's boarding (api.mission.board, 4; the game alone asks for 1.9). on_done may come in
+-- place of opts. Answers true once started, or
 -- false and a reason: "no_avatar", "busy", "downed", "seated", "no_shuttle" (no shuttle called or on the way).
 -- on_done(ok, reason): true and "aboard", or false and "left" (the shuttle went without the bot), "downed",
 -- "timeout", "cancelled" or "no_avatar". A player bot aboard leaves the level with the shuttle, as a player does,
@@ -4065,6 +4208,8 @@ function Bot:board(opts, on_done)
 	start_task(self, "board", nil, on_done, false)
 	local limit = tonumber(opts.time)
 	self.task.limit = (limit and limit > 0 and limit == limit) and limit or NUM.BOARD_TIME
+	local reach = tonumber(opts.reach)
+	self.task.reach = (reach and reach >= 0 and reach == reach) and reach or mission.BOARD_REACH
 	return true
 end
 
@@ -4130,7 +4275,7 @@ end
 -- away at that press when none are left to throw.
 NUM.DETONATE_TIME = 3
 
-local function satchel_of(unit)
+function P.satchel_of(unit)
 	local inv = game.master(unit, "inventory")
 	if not inv then return nil end
 	for _, slot in ipairs(HEAL_SLOTS) do
@@ -4150,7 +4295,7 @@ function Bot:detonate()
 	local unit = self:unit()
 	local ok, why = can_start(self, unit)
 	if not ok then return false, why end
-	local slot, weapon, tw = satchel_of(unit)
+	local slot, weapon, tw = P.satchel_of(unit)
 	if not slot then return false, "no_satchel" end
 	if type(tw.child_units) ~= "table" or #tw.child_units == 0 then return false, "none_out" end
 	self.detonating = { slot = slot, weapon = weapon, time = 0, wait = 0 }
@@ -4161,7 +4306,7 @@ end
 function Bot:charges_out()
 	local unit = self:unit()
 	if not unit then return nil end
-	local slot, _, tw = satchel_of(unit)
+	local slot, _, tw = P.satchel_of(unit)
 	if not slot then return nil end
 	return type(tw.child_units) == "table" and #tw.child_units or 0
 end
@@ -4621,7 +4766,8 @@ local function drive(b, unit, dt)
 	-- A throw, the bot's own (throw) or an order's: fire held sends the grenade at once at the bot's feet,
 	-- and keeps the throw state from ending after it.
 	local cs = game.master(unit, "character")
-	if b.throw_frames or (cs and in_state(cs, "CharacterStateThrow", "CharacterStateDownedThrow")) then t.fire_button = 0 end
+	-- A satchel is the exception: fire is its throw button, held for the charge (satchel_hold).
+	if b.throw_frames or (not b.satchel_charge and cs and in_state(cs, "CharacterStateThrow", "CharacterStateDownedThrow")) then t.fire_button = 0 end
 	-- This frame's sticks: the orders' own, which a call or a help writes over for this frame only.
 	local f = { mx = b.axes.move[1], my = b.axes.move[2], ax = b.axes.aim[1], ay = b.axes.aim[2], dest = b.dest }
 	if b.job and b.job.kind == "grenade" then
