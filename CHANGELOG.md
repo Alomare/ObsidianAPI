@@ -2,15 +2,15 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
-## Next
+## 1.52.0
 
-- New: `api.mission.board(unit, reach)` takes a Helldiver aboard the landed shuttle from up to 4 metres off the door (the game alone asks for 1.9), through the game's own boarding.
+- New: `api.mission.board(unit, reach)` takes a Helldiver aboard the landed shuttle from up to 4 metres off the door (the game alone asks for 1.9), through the boarding code of the game.
 - New: `bot:board` takes bots aboard from 4 metres by default, set with `opts.reach`.
 - New: `bot:fight` takes `secondary.only = "armored"` or `"heavy"`, for mech rockets kept for armored or heavy targets; `bot:armored(enemy)` and `bot:heavy(enemy)` answer the same test.
 - New: `bot:throw_satchel(pos)` throws one satchel charge at a point, charged to the distance.
 - New: `bot:fight` options for satchel charges: `satchel.every`, `satchel.max`, `satchel.distance` and `satchel.min`.
-- Fixed: a grenade order for a bot in a vehicle seat held the second trigger and fired a Walker's whole rocket rack at once. A bot in a seat no longer throws grenades (`bot:throw_at` answers "seated").
-- Fixed: a bot fighting with a satchel charge threw every charge at its own feet at once; each one now goes to the target, one at a time, never at a target nearer than 6 metres.
+- Fixed: a grenade order for a bot in a vehicle seat held the second trigger and fired the whole rocket rack of a Walker at once. A bot in a seat no longer throws grenades (`bot:throw_at` answers "seated").
+- Fixed: a bot fighting with a satchel charge threw every charge at once, straight down at the feet of the bot; each one now goes to the target, one at a time, never at a target nearer than 6 metres.
 
 ## 1.51.0
 
