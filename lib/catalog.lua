@@ -12,13 +12,14 @@ local function pretty(key)
 	return string.upper(string.sub(s, 1, 1)) .. string.sub(s, 2)
 end
 
--- A display name in the game's language. The menu's font covers Latin-1, so anything beyond that
--- falls back to a readable form of the key rather than a row of boxes.
+-- A display name in the game's language, as the game writes it: Cyrillic and Chinese included, which
+-- the loader draws with the game's chat font when the menu's font lacks a letter. A key the game has
+-- no text for falls back to a readable form of the key.
 function M.text(key)
 	local lm = game.global("LocalizationManager")
 	if type(lm) == "table" and key and key ~= "" then
 		local ok, s = pcall(lm.string, lm, key)
-		if ok and type(s) == "string" and string.sub(s, 1, 4) ~= "LOC:" and not string.find(s, "[\196-\244]") then return s end
+		if ok and type(s) == "string" and s ~= "" and string.sub(s, 1, 4) ~= "LOC:" then return s end
 	end
 	return pretty(key)
 end

@@ -2,6 +2,13 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## Next
+
+- New: the Script Profiler option, off by default. Off, the Script Profiler has no page and measures nothing; on, its page still has Hidden.
+- New: the in-game window and the Script Profiler in Russian and Simplified Chinese; the Script Profiler texts come from the locales in every language.
+- Changed: the value field of a choice or number row takes the width of the widest value it can show, at most half the row, so the arrows stay put as the value changes.
+- Changed: `api.catalog.text` answers the name the game has in every language, Cyrillic and Chinese included.
+
 ## 1.50.0
 
 - New: Script Profiler, a page of the F6 window. A panel in the top left corner, on a 20% black background, lists every running mod with the time the scripts of the mod take each frame and the FPS that costs; a name too long for the column scrolls. The page sets where it shows (hidden, pause menu only, always), the detail (basic, or with the slowest frame, calls a frame and the total), how many mods it lists, the corner and the text size. Needs Obsidian Launcher 2.0 or later; earlier versions show no page.

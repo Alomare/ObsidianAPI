@@ -2187,7 +2187,7 @@ Screenshots: the game's picture, saved as a PNG or JPEG file. The engine has no 
 
 Game content by name. Lists come from the game's own tables where it has them, and paid content a player doesn't own is left out: DLC stays paid. What a player has unlocked by playing doesn't matter here. unlocked() answers that for a mod that wants to know.
 
-- `api.catalog.text(key)`: A display name in the game's language. The menu's font covers Latin-1, so anything beyond that falls back to a readable form of the key rather than a row of boxes.
+- `api.catalog.text(key)`: A display name in the game's language, as the game writes it: Cyrillic and Chinese included, which the loader draws with the game's chat font when the menu's font lacks a letter. A key the game has no text for falls back to a readable form of the key.
 - `api.catalog.KEEP`: The answers of usable() by name, kept for KEEP seconds: the game's checks read the save, and the lists below ask them for every item, so a mod that looks a stratagem up each frame would pay that each frame.
 - `api.catalog.forget()`: Forgets the kept answers: after a pack's ownership or a custom stratagem's base changes.
 - `api.catalog.usable(name)`: False for an item of a paid pack this player doesn't own.
