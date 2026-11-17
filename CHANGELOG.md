@@ -2,6 +2,10 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## Next
+
+- Fixed: a hidden stratagem that nothing can replace in a loadout stays in the slot. Taking it out moved the later picks up and left the last slot empty, which other players saw as a missing stratagem.
+
 ## 1.52.0
 
 - New: `api.mission.board(unit, reach)` takes a Helldiver aboard the landed shuttle from up to 4 metres off the door (the game alone asks for 1.9), through the boarding code of the game.

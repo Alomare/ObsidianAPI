@@ -545,11 +545,12 @@ local function replacement_for(list, name, preferred)
 end
 
 -- Swaps every hidden name in a list of stratagem names. journal: where to record what was there, or nil.
--- customs: also the carried custom stratagems, which a saved loadout may still name.
+-- customs: also the carried custom stratagems, which a saved loadout may still name. An entry with no
+-- replacement stays where it is: taking it out would move the later picks up a slot and leave the last
+-- slot empty, which other players then see as a missing stratagem. The mission inventory leaves it out.
 local function swap_hidden(list, journal, customs)
 	if type(list) ~= "table" then return end
-	local i = 1
-	while i <= #list do
+	for i = 1, #list do
 		local name = list[i]
 		local h = hidden[name] or (customs and carried_custom(name) and {}) or nil
 		if h and not is_static(name) then
@@ -557,13 +558,7 @@ local function swap_hidden(list, journal, customs)
 			if into then
 				if journal then journal[#journal + 1] = { list = list, index = i, old = name } end
 				list[i] = into
-				i = i + 1
-			else
-				if journal then journal[#journal + 1] = { list = list, index = i, old = name, removed = true } end
-				table.remove(list, i)
 			end
-		else
-			i = i + 1
 		end
 	end
 end
@@ -580,7 +575,7 @@ end
 local function restore_defaults()
 	for i = #defaults_journal, 1, -1 do
 		local j = defaults_journal[i]
-		if j.removed then table.insert(j.list, math.min(j.index, #j.list + 1), j.old) else j.list[j.index] = j.old end
+		j.list[j.index] = j.old
 	end
 	defaults_journal = {}
 end
@@ -689,7 +684,7 @@ end
 --   name   the stratagem's name ("stratagem_resupply")
 --   opts   { replace = "stratagem_mortar" }: what takes the hidden one's place in a loadout. By default the first
 --          stratagem the player has that the loadout doesn't hold, one of the same kind where there is
---          one; an entry with no such stratagem is dropped.
+--          one; an entry with no such stratagem stays in the slot and only the mission leaves it out.
 -- Returns true, or false and why: "not_available" (the game has no such stratagem, or replace isn't
 -- one), "static" (the always-present stratagems, such as Reinforce, can't go), "not_cleared".
 function M.hide(name, opts)
