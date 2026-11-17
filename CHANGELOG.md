@@ -2,7 +2,7 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
-## Next
+## 1.53.0
 
 - Fixed: a hidden stratagem that nothing can replace in a loadout stays in the slot. Taking it out moved the later picks up and left the last slot empty, which other players saw as a missing stratagem.
 
