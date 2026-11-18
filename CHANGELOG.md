@@ -7,6 +7,8 @@ New, changed or removed capabilities, one line each, brief and direct. A release
 - New: `api.weapons.define(def)` makes a custom primary or sidearm from one of the game's, with its own name, numbers, icon and model. On the network it is always its base, so players without the mod see and play against the base.
 - New: players who have the same custom weapon see its model on each other's weapons; everyone else sees the base.
 - New: `api.weapons.list`, `get`, `of`, `unlock`, `lock` and `is_unlocked`.
+- New: `api.cosmetics.define(def)` makes a custom helmet, armour or cape from one of the game's, with its own model. Other players see the base unless they have the same mod, and the game's save keeps the base, so it stays good without the mod.
+- New: `api.cosmetics.worn`, `list`, `get`, `unlock`, `lock` and `is_unlocked`.
 
 ## 1.53.0
 

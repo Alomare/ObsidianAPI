@@ -27,11 +27,12 @@ local brain = obsidian.module("lib/brain")
 local mod_settings = obsidian.module("lib/mod_settings")
 local custom = obsidian.module("lib/custom")
 local arms = obsidian.module("lib/arms")
+local wear = obsidian.module("lib/wear")
 local menu = obsidian.module("lib/menu")
 local capture = obsidian.module("lib/capture")
 local profiler = obsidian.module("lib/profiler")
 
-local gear_failed, bots_failed, music_failed, arms_failed = false, false, false, false
+local gear_failed, bots_failed, music_failed, arms_failed, wear_failed = false, false, false, false, false
 
 -- Each part of the frame runs through the loader's profiler (obsidian.profiler.measure), so the Script
 -- Profiler and its log say which part of this library costs. Without measuring it is a plain call.
@@ -71,6 +72,11 @@ obsidian.on_frame(function()
 	if not ran and not arms_failed then
 		arms_failed = true
 		obsidian.log("weapons: " .. tostring(why))
+	end
+	ran, why = pcall(measure, "frame: cosmetics", wear.tick, dt)
+	if not ran and not wear_failed then
+		wear_failed = true
+		obsidian.log("cosmetics: " .. tostring(why))
 	end
 	ran, why = pcall(measure, "frame: lobby", lobby.tick, dt)
 	if not ran then obsidian.log("lobby: " .. tostring(why)) end
@@ -112,6 +118,8 @@ profiler.install(menu)
 world.install()
 -- A drop from api.mission.drop leaves the campaign alone at the mission's end, whoever started it.
 mission.install()
+-- Custom helmets, armour and capes: only looks, in any lobby. The base goes out on the network.
+wear.install()
 
 -- Where a hit is worked out: what it costs (scaled only while api.combat.scale's effects are on, which
 -- an uncleared lobby takes off), and which player of this machine landed it, for api.combat.on_hit in
@@ -196,6 +204,7 @@ return {
 	gear = guard(gear),
 	stratagems = guard(stratagems),
 	weapons = guard(arms, { "list", "get", "of", "is_unlocked", "parse" }),
+	cosmetics = guard(wear, { "define", "list", "get", "worn", "unlock", "lock", "is_unlocked", "parse" }),
 	enemies = guard(enemies, { "available", "list", "count", "carried", "room", "info", "charging", "attacking", "tentacles", "nearest", "near", "chain", "max_enemies", "waves" }),
 	mission = guard(mission, { "objectives", "params", "drop_offs", "extraction", "aboard", "areas" }),
 	progress = guard(progress, { "samples", "max_samples", "loadout", "upgrades", "upgrade_limit", "rank", "owned_cosmetics" }),

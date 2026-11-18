@@ -11,6 +11,7 @@ For people writing mods for Obsidian, and the AI tools they write them with. The
 - [Player and gear](#player-and-gear)
 - [Stratagems](#stratagems)
 - [Weapons](#weapons)
+- [Helmets, armour and capes](#helmets-armour-and-capes)
 - [Enemies and missions](#enemies-and-missions)
 - [World, camera and map](#world-camera-and-map)
 - [Sound and music](#sound-and-music)
@@ -790,6 +791,29 @@ In a lobby that isn't cleared, a custom weapon has the base's numbers, and the l
 The model is spawned as a plain unit and linked to the weapon's root, and the base's meshes are hidden. When the game shows or hides the weapon (a vehicle, a cutscene), the model follows. Model it in the base's pose and scale, with the muzzle where the base has it: flashes, tracers and the laser sight still come from the base's nodes. A model the game can't spawn is logged once, and the weapon keeps the base's look.
 
 Weapon units aren't loaded on the ship, so the menus show the icon, never the model.
+
+## Helmets, armour and capes
+
+`api.cosmetics.define(def)` adds a helmet, an armour or a cape to the Arsenal's profile tab. It starts as a copy of one of the game's own, its base, takes the base's slot and spawns its own model. It answers `{ name, slot, index }`, or `nil` and a reason, and works from a mod's main chunk like the other defines. A cosmetic changes only the look, so a client mod can make one, and it shows in any lobby.
+
+```lua
+api.cosmetics.define({ name = "mymod_visor", base = "cus_helmet_tactical", title = "Recon Visor",
+  model = "mymod/visor", unlock = "manual" })
+api.cosmetics.define({ name = "mymod_plate", base = "cus_body_default", title = "Plate Armour",
+  model = { male = "mymod/plate_male", female = "mymod/plate_female" } })
+```
+
+| Field | What it is |
+|---|---|
+| `name` | Its key: letters, digits and `_`. Must be new |
+| `base` | A cosmetic of the game's: `cus_helmet_...`, `cus_body_...` or `cus_cape_...`. Its slot is the custom one's |
+| `title`, `description` | Its words |
+| `model` | The unit it spawns. For armour, `{ male = path, female = path }`, or one path for both. Model it on the base's skeleton: Minediver exports the base rigged |
+| `unlock` | As a custom stratagem's |
+
+`worn()` answers the custom cosmetics this player wears, by slot. `list()`, `get(name)`, `unlock(name)`, `lock(name)` and `is_unlocked(name)` work as for weapons.
+
+What other players see works as for weapons: the network carries the base's index, and a machine with the same mod draws the custom model. The game's save keeps the base too, and Obsidian API remembers the custom choice with the save, so a save stays good after the mod is removed: the player wears the base.
 
 ## Enemies and missions
 
@@ -2284,6 +2308,16 @@ The developers' console commands. In a release build Debug.console is a dummy th
 - `api.console.denied(name)`
 - `api.console.commands()`: Every command the game has registered right now, sorted, without the denied ones.
 - `api.console.run(line)`: Runs one command line. As in the game's own dispatch, every plugin with that command runs. Returns ok and a message.
+
+### api.cosmetics
+
+Custom cosmetics: helmets, armour and capes, each made from one of the game's own, its base, with its own name and model. Other players always get the base, unless they have the same mod.
+
+- `api.cosmetics.parse(text)`: "helmet=a;cape=b" -> { helmet = "a", cape = "b" }, slots and names checked: what another machine shares.
+- `api.cosmetics.define(def)`: Makes a custom helmet, armour or cape. def: name         its key, letters, digits and _ ("mymod_visor"); must be new base         a cosmetic of the game's ("cus_helmet_tactical", "cus_body_default", "cus_cape_default"): copied, and what other players see. The slot is the base's title        its name: a string, or { en = ..., fr = ..., es = ..., ["pt-BR"] = ... } model        the unit it spawns: for a helmet or cape a path, for armour { male = path, female = path } or one path for both. A mod's own (built with Minediver) or any the game has. The base's if nil unlock       "base" (with its base, as when nil), "free", { rank = n } or "manual" (once api.cosmetics.unlock(name) is called), as a custom stratagem's Answers { name, slot, index }, or nil and a reason. Before the game has its lists, as in a mod's main chunk, it answers { name, pending = true } and makes it once they're there.
+- `api.cosmetics.list()`: The custom cosmetics made so far: { name, base, slot }.
+- `api.cosmetics.get(name)`: The custom cosmetic by its name, or nil: { name, base, slot }.
+- `api.cosmetics.worn()`: What this player wears of the custom cosmetics: slot -> name.
 
 ### api.data
 
