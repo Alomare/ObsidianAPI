@@ -2,14 +2,14 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
-## Next
+## 1.54.0
 
-- New: `api.weapons.define(def)` makes a custom primary or sidearm from one of the game's, with its own name, numbers, icon and model. On the network it is always its base, so players without the mod see and play against the base.
-- New: players who have the same custom weapon see its model on each other's weapons; everyone else sees the base.
+- New: `api.weapons.define(def)` makes a custom primary or sidearm from a game weapon (the base), with a new name, numbers, icon and model. The network always carries the base, so players without the mod see and play against the base.
+- New: teammates with the same mod see the custom model on a custom weapon; everyone else sees the base.
 - New: `api.weapons.list`, `get`, `of`, `unlock`, `lock` and `is_unlocked`.
-- New: `api.cosmetics.define(def)` makes a custom helmet, armour or cape from one of the game's, with its own model. Other players see the base unless they have the same mod, and the game's save keeps the base, so it stays good without the mod.
+- New: `api.cosmetics.define(def)` makes a custom helmet, armour or cape from a game cosmetic, with a new model. Other players see the base unless they have the same mod. The game save keeps the base, so the save stays good without the mod.
 - New: `api.cosmetics.worn`, `list`, `get`, `unlock`, `lock` and `is_unlocked`.
-- New: `api.perks.define(def)` makes a custom perk from one of the game's: the base's effect runs, then the mod's own `on_setup`, `on_update` and `on_remove` on the owner's machine. Other players see the base.
+- New: `api.perks.define(def)` makes a custom perk from a game perk: the base effect runs, then the `on_setup`, `on_update` and `on_remove` functions of the mod, on the machine of the owner. Other players see the base.
 
 ## 1.53.0
 
