@@ -26,11 +26,12 @@ local nav = obsidian.module("lib/nav")
 local brain = obsidian.module("lib/brain")
 local mod_settings = obsidian.module("lib/mod_settings")
 local custom = obsidian.module("lib/custom")
+local arms = obsidian.module("lib/arms")
 local menu = obsidian.module("lib/menu")
 local capture = obsidian.module("lib/capture")
 local profiler = obsidian.module("lib/profiler")
 
-local gear_failed, bots_failed, music_failed = false, false, false
+local gear_failed, bots_failed, music_failed, arms_failed = false, false, false, false
 
 -- Each part of the frame runs through the loader's profiler (obsidian.profiler.measure), so the Script
 -- Profiler and its log say which part of this library costs. Without measuring it is a plain call.
@@ -65,6 +66,12 @@ obsidian.on_frame(function()
 		pcall(measure, "frame: world", world.tick)
 	end
 	-- Who left the lobby, and the last values they shared, once a second.
+	-- Custom weapons' looks, on this machine's players and the others', in any lobby: they only draw.
+	ran, why = pcall(measure, "frame: weapons", arms.tick, dt)
+	if not ran and not arms_failed then
+		arms_failed = true
+		obsidian.log("weapons: " .. tostring(why))
+	end
 	ran, why = pcall(measure, "frame: lobby", lobby.tick, dt)
 	if not ran then obsidian.log("lobby: " .. tostring(why)) end
 	if shared then
@@ -129,6 +136,7 @@ if game.session_mode then
 	enemies.install()
 	combat.spare_with(bots.spares)
 	custom.install()
+	arms.install()
 	obsidian.on_frame(console.install)
 
 	-- Effects and edits come off when the session stops being cleared, and go back when it clears.
@@ -187,6 +195,7 @@ return {
 	player = guard(player, { "lives" }),
 	gear = guard(gear),
 	stratagems = guard(stratagems),
+	weapons = guard(arms, { "list", "get", "of", "is_unlocked", "parse" }),
 	enemies = guard(enemies, { "available", "list", "count", "carried", "room", "info", "charging", "attacking", "tentacles", "nearest", "near", "chain", "max_enemies", "waves" }),
 	mission = guard(mission, { "objectives", "params", "drop_offs", "extraction", "aboard", "areas" }),
 	progress = guard(progress, { "samples", "max_samples", "loadout", "upgrades", "upgrade_limit", "rank", "owned_cosmetics" }),

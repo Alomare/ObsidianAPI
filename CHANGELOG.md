@@ -2,6 +2,12 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## Next
+
+- New: `api.weapons.define(def)` makes a custom primary or sidearm from one of the game's, with its own name, numbers, icon and model. On the network it is always its base, so players without the mod see and play against the base.
+- New: players who have the same custom weapon see its model on each other's weapons; everyone else sees the base.
+- New: `api.weapons.list`, `get`, `of`, `unlock`, `lock` and `is_unlocked`.
+
 ## 1.53.0
 
 - Fixed: a hidden stratagem that nothing can replace in a loadout stays in the slot. Taking it out moved the later picks up and left the last slot empty, which other players saw as a missing stratagem.

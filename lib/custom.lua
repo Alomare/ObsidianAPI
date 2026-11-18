@@ -22,6 +22,10 @@ local catalog = obsidian.module("lib/catalog")
 local M = {}
 
 local defs = {}      -- by name, in the order they were made
+-- Other custom items (weapons, and later armour, capes and perks), by name: { name, base, unlock }. They
+-- share the stratagems' unlock rules, their save-side list, and the paid-pack and Loadout checks below.
+local items = {}
+local function record_of(name) return defs[name] or items[name] end
 local by_id = {}     -- the entry's index in LoadoutSettings.stratagems -> def
 local texts = {}     -- game text key -> words, a string or { en = ..., fr = ... }
 local order = {}
@@ -35,7 +39,7 @@ local art, art_listed = {}, {}
 -- The catalog answers unlocked() for a custom stratagem as for its base. It can't load this file, which
 -- needs it, so the answer is handed to it here.
 function catalog.base_of(name)
-	local r = defs[name]
+	local r = record_of(name)
 	return r and r.base or name
 end
 
@@ -78,7 +82,7 @@ end
 -- True or false by the stratagem's own unlock, or nil where it goes by the base. xp: the player's, or
 -- read from the save when nil.
 local function own_unlock(name, xp)
-	local r = defs[name]
+	local r = record_of(name)
 	local rule = r and r.unlock
 	if rule == nil or rule == "base" then return nil end
 	if rule == "free" or opened[name] then return true end
@@ -1151,17 +1155,17 @@ function M.install()
 	end)
 	-- A paid pack's stratagem stays paid when it's a base.
 	wrap("DlcSettings", "is_item_dlc", function(original, name, ...)
-		local def = defs[name]
+		local def = record_of(name)
 		return original(def and def.base or name, ...)
 	end)
 	wrap("DlcSettings", "can_use", function(original, name, ...)
-		local def = defs[name]
+		local def = record_of(name)
 		return original(def and def.base or name, ...)
 	end)
 	-- Only in a cleared lobby does the Loadout screen offer one: by its own unlock, or to a player who
 	-- has its base.
 	obsidian.hook("ProgressionSettings", "can_use", function(original, name, kind, xp, ...)
-		local def = defs[name]
+		local def = record_of(name)
 		if not def then return original(name, kind, xp, ...) end
 		local own = own_unlock(name, xp)
 		if own ~= nil then return own end
@@ -1360,6 +1364,24 @@ make = function(def, entry, s)
 	return { name = name, id = id }
 end
 
+-- Registers another kind of custom item (lib/arms.lua) under the stratagems' unlock rules: record is
+-- { name, base, unlock }, unlock as a custom stratagem's. The paid-pack checks and the Loadout screen's
+-- go by its own unlock, else by its base. Answers false when the name is taken.
+function M.add_item(record)
+	if type(record) ~= "table" or type(record.name) ~= "string" or record_of(record.name) then return false end
+	items[record.name] = record
+	if catalog.forget then catalog.forget() end
+	return true
+end
+
+-- The unlock rule check of define, for other kinds of custom item: nil when unlock is good.
+function M.bad_unlock(unlock)
+	if unlock == nil or UNLOCKS[unlock] then return nil end
+	local rank = type(unlock) == "table" and unlock.rank
+	if type(rank) == "number" and rank == math.floor(rank) and rank >= 1 and rank <= 100 then return nil end
+	return "bad_type"
+end
+
 -- The custom stratagems made so far: { name, base, id }.
 function M.list()
 	local out = {}
@@ -1376,7 +1398,7 @@ end
 -- Opens a custom stratagem, kept for the next launch: the Loadout screen offers it from now on, whatever
 -- its unlock says. For a mod's own progression, such as a mission done or a goal reached.
 function M.unlock(name)
-	if not defs[name] then return false, "not_available" end
+	if not record_of(name) then return false, "not_available" end
 	if not opened[name] then
 		opened[name] = true
 		changed()
@@ -1386,7 +1408,7 @@ end
 
 -- Takes back what unlock(name) gave. A "free" stratagem or one opened by rank stays open.
 function M.lock(name)
-	if not defs[name] then return false, "not_available" end
+	if not record_of(name) then return false, "not_available" end
 	if opened[name] then
 		opened[name] = nil
 		changed()
@@ -1396,7 +1418,7 @@ end
 
 -- Whether the Loadout screen offers a custom stratagem to this player now: by its unlock, or its base.
 function M.is_unlocked(name)
-	if not defs[name] then return false, "not_available" end
+	if not record_of(name) then return false, "not_available" end
 	return catalog.unlocked(name)
 end
 

@@ -36,6 +36,7 @@
     "lib/player.lua",
     "lib/gear.lua",
     "lib/custom.lua",
+    "lib/arms.lua",
     "lib/stratagems.lua",
     "lib/enemies.lua",
     "lib/mission.lua",

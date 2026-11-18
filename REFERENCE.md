@@ -10,6 +10,7 @@ For people writing mods for Obsidian, and the AI tools they write them with. The
 - [Events](#events)
 - [Player and gear](#player-and-gear)
 - [Stratagems](#stratagems)
+- [Weapons](#weapons)
 - [Enemies and missions](#enemies-and-missions)
 - [World, camera and map](#world-camera-and-map)
 - [Sound and music](#sound-and-music)
@@ -746,6 +747,49 @@ end)
 #### Listing them
 
 `custom()` answers every custom stratagem made so far, from any mod, as `{ name, base, id }`.
+
+## Weapons
+
+`api.weapons.define(def)` adds a primary or a sidearm to the game's lists. Like a custom stratagem, it starts as a copy of one of the game's own, its base, and takes the base's slot. It answers `{ name, slot, index }`, or `nil` and a reason. Called from a mod's main chunk, before the game has its lists, it answers `{ name, pending = true }` and makes the weapon before the save's loadout is read.
+
+```lua
+api.weapons.define({
+  name = "mymod_breaker", base = "weapon_assaultrifle",
+  title = { en = "Breaker", ["pt-BR"] = "Quebrador" },
+  description = "Short barrel, heavy rounds.",
+  model = "mymod/breaker",              -- a unit the mod ships, built with Minediver
+  stats = { power = 120, magazine_capacity = 20, reload_duration = 2 },
+  attributes = { attr_power = 5, attr_ammo_amount = 2 },
+  unlock = "manual",
+})
+```
+
+| Field | What it is |
+|---|---|
+| `name` | Its key: letters, digits and `_`. Must be new |
+| `base` | A primary or sidearm of the game's, such as `"weapon_assaultrifle"`. Its slot is the custom weapon's |
+| `title`, `description` | Its words: a string, or a table by language with `en` in it |
+| `model` | The unit drawn over the base's: one the mod ships (Minediver builds it from a model edited in Blender), or any unit the game has loaded in a mission, such as `"equipment/wep_shotgun_01"`, which is handy for a first test. The base's look when left out |
+| `icon`, `icon_small` | A weapon icon the menus and the HUD have. The base's when left out |
+| `stats` | Its numbers over the base's, as the weapon's `weapon_info` fields: `power`, `firerate`, `magazine_capacity`, `magazines`, `reload_duration`, `range`, `spread_max` and the rest |
+| `attributes` | The bars the menus show, as the game's `attr_` fields |
+| `unlock` | As a custom stratagem's: `"base"`, `"free"`, `{ rank = n }` or `"manual"` |
+
+The weapon keeps the base's upgrades, and the save keeps what the player bought under its own name. `unlock(name)`, `lock(name)` and `is_unlocked(name)` work as they do for stratagems. `list()` answers every custom weapon as `{ name, base, slot }`, `get(name)` one of them, and `of(unit)` the custom weapon a weapon unit is, on any machine that knows it.
+
+#### What other players see
+
+A custom weapon is always its base on the network. Its entry spawns the base's unit, and the loadout sends the base's index, so a player without your mod sees, hears and plays against the base.
+
+Each machine shares the names of its players' custom weapons through the lobby. A machine with the same mod draws the custom look on that player's weapon; any other keeps the base. The numbers are always the shooter's own: only the machine that holds the weapon reads them.
+
+In a lobby that isn't cleared, a custom weapon has the base's numbers, and the look stays, since it changes nothing in the game. The Loadout screen offers custom weapons only while session mods are on.
+
+#### Models
+
+The model is spawned as a plain unit and linked to the weapon's root, and the base's meshes are hidden. When the game shows or hides the weapon (a vehicle, a cutscene), the model follows. Model it in the base's pose and scale, with the muzzle where the base has it: flashes, tracers and the laser sight still come from the base's nodes. A model the game can't spawn is logged once, and the weapon keeps the base's look.
+
+Weapon units aren't loaded on the ship, so the menus show the icon, never the model.
 
 ## Enemies and missions
 
@@ -2632,6 +2676,16 @@ The vehicle under the player. Driving makes a vehicle this peer's, a moment afte
 - `api.vehicles.seat_of(unit)`: The vehicle a Helldiver sits in and the seat's index, or nil. unit: the player's when nil.
 - `api.vehicles.near(pos, radius)`: Vehicles, exosuits and mannable turrets within radius (10 metres) of a position, or of the player, nearest first. A destroyed one isn't listed.
 - `api.vehicles.nearest(pos, radius)`: The vehicle nearest to a position within radius (4 metres), and how far it is: the one under the cursor with api.world.cursor(). nil when there's none.
+
+### api.weapons
+
+Custom weapons: new primaries and sidearms, each made from one of the game's own, its base, with its own name, words, icon, numbers and model. Other players always get the base, unless they have the same mod.
+
+- `api.weapons.parse(text)`: "primary_weapon=a;sidearm_weapon=b" -> { primary_weapon = "a", sidearm_weapon = "b" }, slots and names checked.
+- `api.weapons.define(def)`: Makes a custom weapon. def: name         its key, letters, digits and _ ("mymod_breaker"); must be new base         a primary or sidearm of the game's ("weapon_assaultrifle"): copied, and what other players see. The slot is the base's title        its name: a string, or { en = ..., fr = ..., es = ..., ["pt-BR"] = ... } description  words under it; the base's if nil model        the unit drawn over the base's: a mod's own (built with Minediver) or any unit the game has loaded in a mission ("equipment/wep_shotgun_01"); the base's look if nil icon         a weapon icon the menus and the HUD have ("wepicon_shotgun_01"); icon_small for the HUD's small one. The base's if nil stats        the weapon's numbers over the base's, as its weapon_info fields: power, firerate, magazine_capacity, magazines, reload_duration, range, spread_max, ... attributes   the bars the menus show, as the game's attr_ fields (attr_power = 4) unlock       "base" (with its base, as when nil), "free", { rank = n } or "manual" (once api.weapons.unlock(name) is called), as a custom stratagem's Answers { name, slot, index }, or nil and a reason. Before the game has its lists, as in a mod's main chunk, it answers { name, pending = true } and makes the weapon once the lists are there, before the save's loadout is read.
+- `api.weapons.list()`: The custom weapons made so far: { name, base, slot }.
+- `api.weapons.get(name)`: The custom weapon by its name, or nil: { name, base, slot, model }.
+- `api.weapons.of(unit)`: The custom weapon a weapon unit is, on any machine that knows it, or nil.
 
 ### api.world
 
