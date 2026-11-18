@@ -9,6 +9,7 @@ New, changed or removed capabilities, one line each, brief and direct. A release
 - New: `api.weapons.list`, `get`, `of`, `unlock`, `lock` and `is_unlocked`.
 - New: `api.cosmetics.define(def)` makes a custom helmet, armour or cape from one of the game's, with its own model. Other players see the base unless they have the same mod, and the game's save keeps the base, so it stays good without the mod.
 - New: `api.cosmetics.worn`, `list`, `get`, `unlock`, `lock` and `is_unlocked`.
+- New: `api.perks.define(def)` makes a custom perk from one of the game's: the base's effect runs, then the mod's own `on_setup`, `on_update` and `on_remove` on the owner's machine. Other players see the base.
 
 ## 1.53.0
 

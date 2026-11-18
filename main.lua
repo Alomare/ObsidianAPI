@@ -28,6 +28,7 @@ local mod_settings = obsidian.module("lib/mod_settings")
 local custom = obsidian.module("lib/custom")
 local arms = obsidian.module("lib/arms")
 local wear = obsidian.module("lib/wear")
+local feats = obsidian.module("lib/feats")
 local menu = obsidian.module("lib/menu")
 local capture = obsidian.module("lib/capture")
 local profiler = obsidian.module("lib/profiler")
@@ -64,6 +65,7 @@ obsidian.on_frame(function()
 	if not ran then obsidian.log("mod_settings: " .. tostring(why)) end
 	if shared then
 		pcall(measure, "frame: custom", custom.tick, dt)
+		pcall(measure, "frame: perks", feats.tick)
 		pcall(measure, "frame: world", world.tick)
 	end
 	-- Who left the lobby, and the last values they shared, once a second.
@@ -145,6 +147,7 @@ if game.session_mode then
 	combat.spare_with(bots.spares)
 	custom.install()
 	arms.install()
+	feats.install()
 	obsidian.on_frame(console.install)
 
 	-- Effects and edits come off when the session stops being cleared, and go back when it clears.
@@ -204,6 +207,7 @@ return {
 	gear = guard(gear),
 	stratagems = guard(stratagems),
 	weapons = guard(arms, { "list", "get", "of", "is_unlocked", "parse" }),
+	perks = guard(feats, { "list", "get", "is_unlocked" }),
 	cosmetics = guard(wear, { "define", "list", "get", "worn", "unlock", "lock", "is_unlocked", "parse" }),
 	enemies = guard(enemies, { "available", "list", "count", "carried", "room", "info", "charging", "attacking", "tentacles", "nearest", "near", "chain", "max_enemies", "waves" }),
 	mission = guard(mission, { "objectives", "params", "drop_offs", "extraction", "aboard", "areas" }),

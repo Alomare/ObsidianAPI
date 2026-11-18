@@ -12,6 +12,7 @@ For people writing mods for Obsidian, and the AI tools they write them with. The
 - [Stratagems](#stratagems)
 - [Weapons](#weapons)
 - [Helmets, armour and capes](#helmets-armour-and-capes)
+- [Perks](#perks)
 - [Enemies and missions](#enemies-and-missions)
 - [World, camera and map](#world-camera-and-map)
 - [Sound and music](#sound-and-music)
@@ -814,6 +815,20 @@ api.cosmetics.define({ name = "mymod_plate", base = "cus_body_default", title = 
 `worn()` answers the custom cosmetics this player wears, by slot. `list()`, `get(name)`, `unlock(name)`, `lock(name)` and `is_unlocked(name)` work as for weapons.
 
 What other players see works as for weapons: the network carries the base's index, and a machine with the same mod draws the custom model. The game's save keeps the base too, and Obsidian API remembers the custom choice with the save, so a save stays good after the mod is removed: the player wears the base.
+
+## Perks
+
+`api.perks.define(def)` adds a perk to the Loadout screen. It starts from one of the game's, its base, whose effect keeps running, and adds the mod's own functions after the base's on the owner's machine. It answers `{ name, index }`, or `nil` and a reason.
+
+```lua
+api.perks.define({ name = "mymod_steady", base = "perk_cardio", title = "Steady Hands",
+  description = "Faster recovery after a dive.",
+  on_setup = function(ctx) ctx.state.dives = 0 end,
+  on_update = function(ctx) --[[ ctx.unit, ctx.state, ctx.dt ]] end,
+  unlock = "manual" })
+```
+
+`on_setup(ctx)` runs when the owner's Helldiver spawns with the perk, `on_update(ctx)` each frame after, `on_remove(ctx)` when it goes. `ctx.unit` is the Helldiver, `ctx.state` a table kept for the perk's life. They run only on the owner's machine, and only while session mods are on: elsewhere the perk is its base. Other machines always see and run the base. `list()`, `get(name)`, `unlock(name)`, `lock(name)` and `is_unlocked(name)` work as for weapons.
 
 ## Enemies and missions
 
@@ -2611,6 +2626,14 @@ Walking routes for bots and mods. The game has no walking search that Lua can us
 - `api.nav.walk_clear(from, to)`: Whether a body can walk straight from one point to another: each metre of the way stands on safe ground and no fixed shape blocks the line, by the search's own tests. from, to: { x, y, z }. Answers true, or false and "pit", "wall", "hazard" or "unknown". Costs a handful of rays.
 - `api.nav.path(from, to)`: A route over safe ground from one point to another, around walls, pits, lava and the danger zones, up to about 36 metres ahead. from, to: { x, y, z }. Answers a list of { x, y, z } points and "full", or the list and "partial" for a way toward it that gets as close as it can, or nil and "none" (no way out), "unknown" (no physics to ask) or "far" (the goal is too far for one search: ask for a nearer point). Spends up to a few hundred rays in one frame, so call it when a bot needs a plan, not every frame; a bot:navigate() order runs the searches in small steps by itself.
 - `api.nav.search_grid(sx, sy, tx, ty, blocked, limit)`: A plain search over a grid a mod supplies, for testing or a map a mod keeps: blocked(cx, cy) says a cell is impassable, cells are whole numbers. Answers a list of { x, y } cells from after the start to the goal, or nil. limit: nodes to look at at most (2000).
+
+### api.perks
+
+Custom perks: new entries in the game's perk list, each made from one of the game's own, its base, with its own name, words and icon, and functions of the mod that run beside the base's. Other players always get the base.
+
+- `api.perks.define(def)`: Makes a custom perk. def: name         its key, letters, digits and _ ("mymod_steady"); must be new base         a perk of the game's ("perk_cardio"): its effect runs too, and other players see it title, description  its words; icon, an icon the menus have (the base's if nil) on_setup     function(ctx) when the owner's Helldiver spawns with it. ctx: unit, name, state (the perk's own table, kept until it's removed) on_update    function(ctx) each frame of the owner's game, ctx.dt the frame's seconds on_remove    function(ctx) when the Helldiver goes unlock       as a custom stratagem's The functions run on the owner's machine only, and only in a cleared lobby. Answers { name, index }, or nil and a reason; before the game has its lists, { name, pending = true }.
+- `api.perks.list()`: The custom perks made so far: { name, base }.
+- `api.perks.get(name)`
 
 ### api.player
 

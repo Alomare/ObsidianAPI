@@ -38,6 +38,7 @@
     "lib/custom.lua",
     "lib/arms.lua",
     "lib/wear.lua",
+    "lib/feats.lua",
     "lib/stratagems.lua",
     "lib/enemies.lua",
     "lib/mission.lua",
