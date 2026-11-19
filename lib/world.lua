@@ -1499,6 +1499,8 @@ end
 -- those to keep, or nil for all. pos and radius may both be nil for every pickup on the map. owned: this machine holds
 -- it, so remove_pickup can take it at once. opening: true while it waits in the crate that brought it; a dropped
 -- weapon or a corpse's starts without. weapon: the unit path of the weapon it gives, for a weapon or a backpack.
+-- backpack: the unit path of the pack it gives. stratagem: the name of the stratagem whose crate holds it, or nil.
+-- Free to client mods.
 function M.pickups(pos, radius, kinds)
 	local out = {}
 	if not game.in_mission() then return out end

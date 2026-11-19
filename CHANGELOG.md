@@ -2,6 +2,12 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.55.0
+
+- New: `api.ui.chat(text)` says a line in the game's text chat as this player. Every player sees it, players without the mod too. Free to client mods.
+- New: `api.catalog.stratagem_of(unit_path)` finds the stratagem whose crate holds a weapon or a backpack, from the path of the weapon, the pack or the pickup.
+- New: `api.world.pickups` gives each pickup's `backpack` path and `stratagem` name, and is free to client mods.
+
 ## 1.54.0
 
 - New: `api.weapons.define(def)` makes a custom primary or sidearm from a game weapon (the base), with a new name, numbers, icon and model. The network always carries the base, so players without the mod see and play against the base.
