@@ -90,6 +90,22 @@ function M.ping(pos)
 	return true
 end
 
+-- A line in the game's text chat from this player, as if typed: every player sees it under this
+-- player's name, players without the mod too. Answers false, "not_available" where the game has no
+-- chat (the main menu, a game with no player of this machine).
+function M.chat(text)
+	if type(text) ~= "string" or text == "" then return false, "bad_type" end
+	if #text > 200 then return false, "out_of_range" end
+	local st = game.state()
+	local chat = type(st) == "table" and st.text_chat
+	if type(chat) ~= "table" or not chat.network_router then return false, "not_available" end
+	local ok, player = pcall(chat.get_typing_player, chat)
+	if not (ok and type(player) == "table" and player.player_index) then return false, "not_available" end
+	local sent, err = pcall(chat.network_router.transmit_to_all, chat.network_router, "rpc_text_chat", player.player_index, text)
+	if not sent then return false, tostring(err) end
+	return true
+end
+
 local function pack(...) return { n = select("#", ...), ... } end
 
 -- Runs fn with some of the game's text keys showing other words, as LocalizationManager gives them:

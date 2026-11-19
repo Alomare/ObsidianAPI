@@ -1478,6 +1478,8 @@ end
 
 -- Things lying about that a Helldiver picks up: a dropped support weapon, a backpack, an ammo box.
 local PICKUP_KINDS = { "weapon_pickup", "backpack_pickup", "ammo_pickup" }
+-- Loaded on first use: catalog loads data, which is large.
+local function catalog() return obsidian.module("lib/catalog") end
 local PICKUP_KIND = { weapon_pickup = true, backpack_pickup = true, ammo_pickup = true }
 
 local function live(unit)
@@ -1526,9 +1528,11 @@ function M.pickups(pos, radius, kinds)
 						local master = game.masters(kind)[unit]
 						local mine = type(master) == "table" and master.state or nil
 						local info = type(ctx) == "table" and type(ctx.settings) == "table" and ctx.settings.pickup_info
+						info = type(info) == "table" and info or {}
+						local s = catalog().stratagem_of(info.weapon_path or info.backpack_path)
 						out[#out + 1] = { unit = unit, kind = kind, position = { x = at.x, y = at.y, z = at.z }, enabled = state.enabled ~= false,
 							owned = aux.owned(unit) == true, opening = (mine and (tonumber(mine.hide_time) or 0) > 0) or false,
-							weapon = type(info) == "table" and info.weapon_path or nil, distance = d }
+							weapon = info.weapon_path, backpack = info.backpack_path, stratagem = s and s.name or nil, distance = d }
 					end
 				end
 			end

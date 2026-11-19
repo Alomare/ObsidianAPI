@@ -281,6 +281,27 @@ function M.stratagem(name)
 	return nil
 end
 
+-- The stratagem whose crate holds a weapon or a backpack, from the unit path of the weapon, the backpack
+-- or the pickup that lies on the ground: the LoadoutSettings entry ({ name, icon, ... }), or nil. Paid
+-- stratagems count too, as a teammate may drop one this player doesn't own.
+function M.stratagem_of(unit_path)
+	if type(unit_path) ~= "string" then return nil end
+	local settings, lsm = game.global("LoadoutSettings"), game.global("LuaSettingsManager")
+	if not (settings and lsm) then return nil end
+	local found = nil
+	for _, s in ipairs(settings.stratagems or {}) do
+		each_crate_item(s, function(item, path)
+			local pickup = item.pickup_info or {}
+			if not found and (path == unit_path or lsm:get_settings_path_by_unit_path(path) == unit_path
+				or pickup.weapon_path == unit_path or pickup.backpack_path == unit_path) then
+				found = s
+			end
+		end)
+		if found then return found end
+	end
+	return nil
+end
+
 -- The stratagem or weapon a unit path belongs to, by the name the game keeps upgrades under.
 function M.item_name(unit_path)
 	for _, list in ipairs({ M.primaries(), M.sidearms(), M.support_weapons() }) do
