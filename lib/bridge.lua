@@ -2,14 +2,15 @@
 -- and testing mods without a restart. Off unless the player switched the memory_bridge option on in
 -- Obsidian; off, nothing here is installed.
 --
--- The game can't compile Lua source (loadstring of text answers nothing), but it loads LuaJIT 2.0
--- bytecode. A tool (tools/bridge.py of the HD1 Lua Modding Skill) compiles the code with the LuaJIT that
--- ships beside Obsidian and writes it to the folder below; each frame this reads it, runs it and writes
--- the answer beside it.
+-- The retail game loads no new code: a mod's loadstring answers nothing, source or bytecode. A tool
+-- (tools/bridge.py of the HD1 Lua Modding Skill) compiles the code with the LuaJIT 2.0 that ships beside
+-- Obsidian and writes it to the folder below; each frame this reads it, runs the bytecode through the
+-- interpreter of lib/bridge_vm.lua and writes the answer beside it.
 --
 -- The folder: %APPDATA%\Arrowhead\Helldivers\ObsidianLauncher\bridge\ (the tool makes it).
 --   request         written by the tool (through a rename, so it is never read half written):
---                   "OBSBRIDGE 1\n<id>\n<arguments, tab separated>\n" then the bytecode
+--                   "OBSBRIDGE 1\n<id>\n<arguments, tab separated>\n<bcnames of the compiler>\n"
+--                   then the bytecode of `return function(...) <code> end`
 --   answer_<id>     written here: "<ok|error|refused> <id> <ms>\n" then the lines the code printed and
 --                   one "= <value>" line per value it returned; for refused, why
 --   running         the id of the request being run, gone when it ends: left behind, the game closed
@@ -22,6 +23,7 @@
 -- While the option is on, Galactic War and leaderboard results of this launch are never sent, as with
 -- session mods (the loader's backend_block): a console that runs any code could report anything.
 local game = obsidian.module("lib/game")
+local vm = obsidian.module("lib/bridge_vm")
 
 local M = {
 	on = false, lib = nil, frames = {}, frame_order = {}, hooks = {}, wrapped = {}, journal = {},
@@ -350,37 +352,34 @@ local function environment(lines)
 	end })
 end
 
--- One request: its id, its arguments and its code, from the file's text. nil when the file is wrong.
+-- One request: its id, its arguments, the opcode names of the compiler and the code, from the file's
+-- text. nil when the file is wrong.
 function M.parse(text)
 	if type(text) ~= "string" then return nil end
-	local magic, id, args, code = string.match(text, "^(OBSBRIDGE %d+)\n([%w_%-]+)\n([^\n]*)\n(.*)$")
+	local magic, id, args, names, code = string.match(text, "^(OBSBRIDGE %d+)\n([%w_%-]+)\n([^\n]*)\n([^\n]*)\n(.*)$")
 	if magic ~= "OBSBRIDGE " .. M.VERSION then return nil end
 	local list = {}
 	for a in string.gmatch(args, "[^\t]+") do list[#list + 1] = a end
-	return { id = id, args = list, code = code }
+	return { id = id, args = list, names = names ~= "" and names or nil, code = code }
 end
 
--- The function a request runs. The tool compiles the code wrapped as `return function(...) <code> end`,
--- so running the chunk only makes the function. loadstring first; where it answers nothing, as a mod's
--- loadstring does in the retail game, the bytes go to a file for dofile, which loads bytecode there.
-function M.load(code)
-	local maker, why = loadstring(code)
+-- The function a request runs, with env for its globals, and whether the interpreter runs it. The tool
+-- compiles the code wrapped as `return function(...) <code> end`, so the chunk only makes the function.
+-- loadstring where it works (a development build, the tests); the retail game's answers nothing for a
+-- mod, so there lib/bridge_vm runs the bytecode.
+function M.load(code, env, names)
+	local maker, interpreted = loadstring(code), false
 	if type(maker) == "function" then
-		local ok, fn = pcall(maker)
-		if ok and type(fn) == "function" then return fn end
-		return nil, ok and "the chunk didn't answer a function" or tostring(fn)
+		setfenv(maker, env)
+	else
+		local why
+		maker, why = vm.load(code, env, names)
+		if not maker then return nil, why end
+		interpreted = true
 	end
-	local run_file = rawget(_G, "dofile")
-	if type(run_file) ~= "function" then return nil, "loadstring: " .. tostring(why) .. ", no dofile" end
-	local path = M.dir() .. "chunk.ljbc"
-	local f = io.open(path, "wb")
-	if not f then return nil, "loadstring: " .. tostring(why) .. ", can't write " .. path end
-	f:write(code)
-	f:close()
-	local ok, fn = pcall(run_file, path)
-	os.remove(path)
-	if ok and type(fn) == "function" then return fn end
-	return nil, "loadstring: " .. tostring(why) .. ", dofile: " .. (ok and ("answered " .. type(fn)) or tostring(fn))
+	local ok, fn = pcall(maker)
+	if ok and type(fn) == "function" then return fn, interpreted end
+	return nil, ok and "the chunk didn't answer a function" or tostring(fn)
 end
 
 local function clock()
@@ -391,15 +390,11 @@ end
 function M.run(req)
 	local allowed, why = M.allowed()
 	if not allowed then return "refused " .. req.id .. " 0\n" .. why .. "\n" end
-	local fn, why_not = M.load(req.code)
-	if type(fn) ~= "function" then
-		local head = {}
-		for i = 1, math.min(8, #req.code) do head[#head + 1] = string.format("%02x", string.byte(req.code, i)) end
-		return "error " .. req.id .. " 0\nthe code didn't load: send LuaJIT 2.0 bytecode, as tools/bridge.py compiles it\n"
-			.. "(" .. tostring(why_not) .. "; " .. #req.code .. " bytes, " .. table.concat(head, " ") .. ")\n"
-	end
 	local lines = {}
-	setfenv(fn, environment(lines))
+	local fn, interpreted = M.load(req.code, environment(lines), req.names)
+	if type(fn) ~= "function" then
+		return "error " .. req.id .. " 0\nthe code didn't load: " .. tostring(interpreted) .. "\n"
+	end
 	M.ran = M.ran + 1
 	if not M.told then
 		M.told = true
@@ -408,15 +403,22 @@ function M.run(req)
 	local dir = M.dir()
 	write_file(dir .. "running", req.id .. "\n")
 	obsidian.log("bridge: running " .. req.id)
+	vm.reset()
 	local started = clock()
-	local r = pack(xpcall(function() return fn(unpack(req.args)) end, debug and debug.traceback or tostring))
+	local r = pack(xpcall(function() return fn(unpack(req.args)) end, (not interpreted and debug and debug.traceback) or tostring))
 	local ms = string.format("%.1f", (clock() - started) * 1000)
 	os.remove(dir .. "running")
 	if not r[1] then
-		-- The traceback ends where the request began: the bridge's own calls under it say nothing.
 		local tb = tostring(r[2])
-		local cut = string.find(tb, "\n%s*%[C%]: in function 'xpcall'")
-		lines[#lines + 1] = cut and string.sub(tb, 1, cut - 1) or tb
+		if interpreted then
+			-- The interpreter's own frames say nothing: the code's frames, innermost first.
+			if #vm.trace > 0 then tb = tb .. "\nstack traceback:\n\t" .. table.concat(vm.trace, "\n\t") end
+		else
+			-- The traceback ends where the request began: the bridge's own calls under it say nothing.
+			local cut = string.find(tb, "\n%s*%[C%]: in function 'xpcall'")
+			if cut then tb = string.sub(tb, 1, cut - 1) end
+		end
+		lines[#lines + 1] = tb
 		return "error " .. req.id .. " " .. ms .. "\n" .. table.concat(lines, "\n") .. "\n"
 	end
 	for i = 2, r.n do lines[#lines + 1] = "= " .. M.show(r[i]) end
