@@ -284,7 +284,8 @@ end
 
 local save_scaled
 
--- The copy and the file, right now. Answers the path, or nil and why not.
+-- The copy and the file, right now. Answers the path, or nil and why not ("not_in_front" while another
+-- window is in front of the game: the copy would hold that window).
 function M.save_now(opts)
 	local c, why = load()
 	if not c then return nil, why end
@@ -313,6 +314,8 @@ save_scaled = function(opts)
 	local hwnd = M.find_window()
 	if hwnd == nil then return nil, "no_window" end
 	if u.obsapi_IsIconic(hwnd) ~= 0 then return nil, "minimized" end
+	-- The copy comes off the screen: with another window in front, it would hold that window instead.
+	if u.obsapi_GetForegroundWindow() ~= hwnd then return nil, "not_in_front" end
 	local rect = ffi.new("obsapi_RECT")
 	if u.obsapi_GetClientRect(hwnd, rect) == 0 then return nil, "no_window" end
 	local w, h = rect.right - rect.left, rect.bottom - rect.top
