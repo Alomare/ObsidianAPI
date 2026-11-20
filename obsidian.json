@@ -55,7 +55,8 @@
     "lib/mod_settings.lua",
     "lib/menu.lua",
     "lib/capture.lua",
-    "lib/profiler.lua"
+    "lib/profiler.lua",
+    "lib/bridge.lua"
   ],
   "keybinds": [
     {
@@ -94,6 +95,14 @@
       "scope": "client",
       "label": { "en": "Script Profiler", "pt-BR": "Script Profiler", "zh-CN": "脚本性能分析器", "fr": "Profileur de scripts", "es": "Perfilador de scripts", "ru": "Профилировщик скриптов" },
       "description": { "en": "Adds the Script Profiler page to the F6 menu: a panel over the game with the time the scripts of each mod take every frame. On its page the panel can still be hidden. Off, nothing is measured.", "pt-BR": "Adiciona a página Script Profiler ao menu F6: um painel sobre o jogo com o tempo que os scripts de cada mod levam a cada quadro. Na página, o painel ainda pode ficar escondido. Desligado, nada é medido.", "zh-CN": "在 F6 菜单中添加脚本性能分析器页面：在游戏画面上显示每个模组的脚本每帧所用时间的面板。在该页面上仍可隐藏面板。关闭时不进行任何测量。", "fr": "Ajoute la page du profileur de scripts au menu F6 : un panneau par-dessus le jeu avec le temps que prennent les scripts de chaque mod à chaque image. Sur sa page, le panneau peut toujours être masqué. Désactivé, rien n'est mesuré.", "es": "Añade la página del perfilador de scripts al menú F6: un panel sobre el juego con el tiempo que tardan los scripts de cada mod en cada fotograma. En su página el panel aún puede ocultarse. Desactivado, no se mide nada.", "ru": "Добавляет в меню F6 страницу профилировщика скриптов: панель поверх игры со временем, которое скрипты каждого мода занимают в каждом кадре. На её странице панель по-прежнему можно скрыть. Когда выключено, ничего не измеряется." }
+    },
+    {
+      "id": "memory_bridge",
+      "type": "toggle",
+      "default": false,
+      "scope": "client",
+      "label": { "en": "Memory Bridge", "pt-BR": "Ponte de Memória", "zh-CN": "内存桥", "fr": "Pont mémoire", "es": "Puente de memoria", "ru": "Мост памяти" },
+      "description": { "en": "For making mods. Runs Lua that a developer tool sends while the game runs, and answers it, so a mod can be tried without a restart. Code runs only alone or in a lobby that isn't public. While it is on, Galactic War and leaderboard results aren't sent. Any program on this PC can send it code: leave it off unless making mods.", "pt-BR": "Para criar mods. Executa o Lua que uma ferramenta de desenvolvimento envia com o jogo aberto e responde, para testar um mod sem reiniciar. O código só roda sozinho ou em um lobby que não é público. Ligado, os resultados da Guerra Galáctica e dos placares não são enviados. Qualquer programa neste PC pode enviar código: deixe desligado se não estiver criando mods.", "zh-CN": "用于制作模组。在游戏运行时执行开发工具发送的 Lua 并返回结果，无需重启即可试用模组。代码只在单人或非公开大厅中运行。开启时，银河战争和排行榜结果不会上传。这台电脑上的任何程序都能向它发送代码：不制作模组时请保持关闭。", "fr": "Pour créer des mods. Exécute le Lua qu'un outil de développement envoie pendant que le jeu tourne, et y répond, pour essayer un mod sans redémarrer. Le code ne s'exécute que seul ou dans un salon qui n'est pas public. Activé, les résultats de la Guerre galactique et des classements ne sont pas envoyés. Tout programme de ce PC peut lui envoyer du code : laissez-le désactivé hors création de mods.", "es": "Para crear mods. Ejecuta el Lua que envía una herramienta de desarrollo con el juego en marcha y responde, para probar un mod sin reiniciar. El código solo se ejecuta en solitario o en una sala que no es pública. Activado, los resultados de la Guerra Galáctica y de las clasificaciones no se envían. Cualquier programa de este PC puede enviarle código: déjalo desactivado si no estás creando mods.", "ru": "Для создания модов. Выполняет Lua, который присылает инструмент разработчика, пока игра запущена, и отвечает ему, чтобы мод можно было проверить без перезапуска. Код выполняется только в одиночку или в непубличном лобби. Пока включено, результаты Галактической войны и таблиц лидеров не отправляются. Любая программа на этом ПК может отправить ему код: не включайте, если не создаёте моды." }
     }
   ]
 }

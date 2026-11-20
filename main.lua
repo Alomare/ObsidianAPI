@@ -33,6 +33,7 @@ local feats = obsidian.module("lib/feats")
 local menu = obsidian.module("lib/menu")
 local capture = obsidian.module("lib/capture")
 local profiler = obsidian.module("lib/profiler")
+local bridge = obsidian.module("lib/bridge")
 
 local gear_failed, bots_failed, music_failed, arms_failed, wear_failed = false, false, false, false, false
 
@@ -117,6 +118,15 @@ mod_settings.install()
 menu.install()
 -- The Script Profiler panel and its page in the F6 window, in any lobby: it only reads.
 profiler.install(menu)
+-- The Memory Bridge, when the player switched it on: code from a developer tool, alone or in a lobby
+-- that isn't public, with this library's own modules. Galactic War and leaderboard results stay home.
+bridge.install({
+	game = game, effects = effects, edits = edits, console = console, data = data, catalog = catalog, world = world,
+	player = player, gear = gear, stratagems = stratagems, weapons = arms, perks = feats, cosmetics = wear,
+	enemies = enemies, mission = mission, progress = progress, events = events, combat = combat,
+	vehicles = vehicles, lobby = lobby, ui = ui, map = map, bots = bots, nav = nav, brain = brain, audio = audio,
+	music = music, mod_settings = mod_settings, menu = menu, capture = capture, profiler = profiler,
+})
 -- A camera a mod takes (api.world.camera.take), in any lobby: only this player sees it.
 world.install()
 -- A drop from api.mission.drop leaves the campaign alone at the mission's end, whoever started it.

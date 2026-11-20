@@ -48,5 +48,7 @@
   "profiler_col_peak": "Peak ms",
   "profiler_col_calls": "Calls",
   "profiler_none": "No script ran",
-  "profiler_all": "All scripts %s ms, %s FPS"
+  "profiler_all": "All scripts %s ms, %s FPS",
+  "bridge_running": "Memory Bridge: running code from a developer tool.",
+  "bridge_on_notice": "The Memory Bridge is on. Galactic War and leaderboard results of this launch aren't sent."
 }

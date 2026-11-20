@@ -48,5 +48,7 @@
   "profiler_col_peak": "Pic ms",
   "profiler_col_calls": "Appels",
   "profiler_none": "Aucun script n'a tourné",
-  "profiler_all": "Tous les scripts %s ms, %s FPS"
+  "profiler_all": "Tous les scripts %s ms, %s FPS",
+  "bridge_running": "Pont mémoire : exécution de code venu d'un outil de développement.",
+  "bridge_on_notice": "Le pont mémoire est activé. Les résultats de la Guerre galactique et des classements de cette session ne sont pas envoyés."
 }

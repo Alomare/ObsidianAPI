@@ -48,5 +48,7 @@
   "profiler_col_peak": "峰值毫秒",
   "profiler_col_calls": "调用",
   "profiler_none": "没有脚本运行",
-  "profiler_all": "所有脚本 %s 毫秒，%s FPS"
+  "profiler_all": "所有脚本 %s 毫秒，%s FPS",
+  "bridge_running": "内存桥：正在运行开发工具发送的代码。",
+  "bridge_on_notice": "内存桥已开启。本次启动的银河战争和排行榜结果不会上传。"
 }

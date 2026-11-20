@@ -48,5 +48,7 @@
   "profiler_col_peak": "Pico ms",
   "profiler_col_calls": "Llamadas",
   "profiler_none": "Ningún script se ejecutó",
-  "profiler_all": "Todos los scripts %s ms, %s FPS"
+  "profiler_all": "Todos los scripts %s ms, %s FPS",
+  "bridge_running": "Puente de memoria: ejecutando código de una herramienta de desarrollo.",
+  "bridge_on_notice": "El puente de memoria está activado. Los resultados de la Guerra Galáctica y de las clasificaciones de esta sesión no se envían."
 }
