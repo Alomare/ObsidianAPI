@@ -3,8 +3,13 @@
 local game = obsidian.module("lib/game")
 local pack = game.pack
 local effects = obsidian.module("lib/effects")
+-- Bound while the API loads: obsidian.module called later, from inside a call another mod makes, looks
+-- for the file in that mod's folder and fails. main.lua loads lib/catalog before this file and hands
+-- lib/enemies over once loaded (M.enemies), as lib/enemies loads this file.
+local catalog_lib = obsidian.module("lib/catalog")
 
 local M = {}
+M.enemies = nil
 
 local function camera()
 	return game.global("CameraManager")
@@ -626,8 +631,8 @@ function M.shoot(from, to, opts)
 	local p = best[1]
 	local landed = { x = p.x, y = p.y, z = p.z }
 	if best_unit and opts.power and opts.power > 0 then
-		local enemies = obsidian.module("lib/enemies")
-		pcall(enemies.damage, best_unit, opts.power)
+		local enemies = M.enemies
+		if enemies then pcall(enemies.damage, best_unit, opts.power) end
 	end
 	if opts.explosion then
 		local done, why = M.blast(landed, opts.explosion, { spare_players = opts.spare_players })
@@ -1478,8 +1483,7 @@ end
 
 -- Things lying about that a Helldiver picks up: a dropped support weapon, a backpack, an ammo box.
 local PICKUP_KINDS = { "weapon_pickup", "backpack_pickup", "ammo_pickup" }
--- Loaded on first use: catalog loads data, which is large.
-local function catalog() return obsidian.module("lib/catalog") end
+local function catalog() return catalog_lib end
 local PICKUP_KIND = { weapon_pickup = true, backpack_pickup = true, ammo_pickup = true }
 
 local function live(unit)

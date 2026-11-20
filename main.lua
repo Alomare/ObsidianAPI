@@ -11,6 +11,7 @@ local player = obsidian.module("lib/player")
 local gear = obsidian.module("lib/gear")
 local stratagems = obsidian.module("lib/stratagems")
 local enemies = obsidian.module("lib/enemies")
+world.enemies = enemies
 local mission = obsidian.module("lib/mission")
 local progress = obsidian.module("lib/progress")
 local events = obsidian.module("lib/events")

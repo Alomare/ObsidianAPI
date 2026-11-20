@@ -2,6 +2,10 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.55.1
+
+- Fixed: `api.world.pickups` failed when another mod called it, and `api.world.shoot` with `power` left enemies unhurt.
+
 ## 1.55.0
 
 - New: `api.ui.chat(text)` says a line in the game's text chat as this player. Every player sees it, players without the mod too. Free to client mods.
