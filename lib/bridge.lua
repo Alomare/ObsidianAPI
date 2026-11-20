@@ -134,13 +134,13 @@ end
 -- The names a value answers to: its own keys, then those of each __index table up its metatables, with
 -- the type of each. A game class instance lists its methods this way.
 function M.fields(v)
-	local out, seen, level = {}, {}, 0
+	local out, seen, named, level = {}, {}, {}, 0
 	while type(v) == "table" and not seen[v] and level < 8 do
 		seen[v] = true
 		for _, k in ipairs(sorted_keys(v)) do
 			local name = tostring(k)
-			if not out[name] then
-				out[name] = true
+			if not named[name] then
+				named[name] = true
 				out[#out + 1] = name .. " (" .. type(v[k]) .. (level > 0 and ", from metatable " .. level or "") .. ")"
 			end
 		end
@@ -360,6 +360,29 @@ function M.parse(text)
 	return { id = id, args = list, code = code }
 end
 
+-- The function a request runs. The tool compiles the code wrapped as `return function(...) <code> end`,
+-- so running the chunk only makes the function. loadstring first; where it answers nothing, as a mod's
+-- loadstring does in the retail game, the bytes go to a file for dofile, which loads bytecode there.
+function M.load(code)
+	local maker, why = loadstring(code)
+	if type(maker) == "function" then
+		local ok, fn = pcall(maker)
+		if ok and type(fn) == "function" then return fn end
+		return nil, ok and "the chunk didn't answer a function" or tostring(fn)
+	end
+	local run_file = rawget(_G, "dofile")
+	if type(run_file) ~= "function" then return nil, "loadstring: " .. tostring(why) .. ", no dofile" end
+	local path = M.dir() .. "chunk.ljbc"
+	local f = io.open(path, "wb")
+	if not f then return nil, "loadstring: " .. tostring(why) .. ", can't write " .. path end
+	f:write(code)
+	f:close()
+	local ok, fn = pcall(run_file, path)
+	os.remove(path)
+	if ok and type(fn) == "function" then return fn end
+	return nil, "loadstring: " .. tostring(why) .. ", dofile: " .. (ok and ("answered " .. type(fn)) or tostring(fn))
+end
+
 local function clock()
 	return os.clock()
 end
@@ -368,9 +391,12 @@ end
 function M.run(req)
 	local allowed, why = M.allowed()
 	if not allowed then return "refused " .. req.id .. " 0\n" .. why .. "\n" end
-	local fn = loadstring(req.code)
+	local fn, why_not = M.load(req.code)
 	if type(fn) ~= "function" then
+		local head = {}
+		for i = 1, math.min(8, #req.code) do head[#head + 1] = string.format("%02x", string.byte(req.code, i)) end
 		return "error " .. req.id .. " 0\nthe code didn't load: send LuaJIT 2.0 bytecode, as tools/bridge.py compiles it\n"
+			.. "(" .. tostring(why_not) .. "; " .. #req.code .. " bytes, " .. table.concat(head, " ") .. ")\n"
 	end
 	local lines = {}
 	setfenv(fn, environment(lines))
@@ -387,7 +413,10 @@ function M.run(req)
 	local ms = string.format("%.1f", (clock() - started) * 1000)
 	os.remove(dir .. "running")
 	if not r[1] then
-		lines[#lines + 1] = tostring(r[2])
+		-- The traceback ends where the request began: the bridge's own calls under it say nothing.
+		local tb = tostring(r[2])
+		local cut = string.find(tb, "\n%s*%[C%]: in function 'xpcall'")
+		lines[#lines + 1] = cut and string.sub(tb, 1, cut - 1) or tb
 		return "error " .. req.id .. " " .. ms .. "\n" .. table.concat(lines, "\n") .. "\n"
 	end
 	for i = 2, r.n do lines[#lines + 1] = "= " .. M.show(r[i]) end
