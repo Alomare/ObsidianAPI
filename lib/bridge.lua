@@ -433,10 +433,9 @@ function M.tick(dt)
 		if took.frames + took.hooks + took.writes > 0 then M.emit("public lobby: undid " .. M.show(took, 1)) end
 	end
 	M.allowed_before = allowed
-	if allowed then
-		M.poll()
-		run_frames(dt)
-	end
+	-- A request still gets an answer where code can't run: refused, and why.
+	M.poll()
+	if allowed then run_frames(dt) end
 	if M.frame % M.STATUS_EVERY == 1 then status() end
 	if not M.warned and game.state_name() == "menu" then
 		M.warned = true
