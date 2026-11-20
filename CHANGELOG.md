@@ -2,6 +2,13 @@
 
 New, changed or removed capabilities, one line each, brief and direct. A release's section becomes its release notes.
 
+## 1.56.0
+
+- New: Memory Bridge option, off by default. While it is on, Lua sent by a developer tool runs in the game while it runs, and the answer goes back to the tool, so a mod can be tried without a restart. The tool is `tools/bridge.py` of the HD1 Lua Modding Skill, and `REFERENCE.md` has the details.
+- New: Memory Bridge code runs only alone or in a lobby that isn't public. When a lobby turns public, everything the code left running is undone.
+- New: Galactic War and leaderboard results aren't sent from a launch with the Memory Bridge on.
+- Fixed: `api.capture` no longer saves a shot while another window is in front of the game. The shot held that window instead of the game.
+
 ## 1.55.1
 
 - Fixed: `api.world.pickups` failed when another mod called it, and `api.world.shoot` with `power` left enemies unhurt.
