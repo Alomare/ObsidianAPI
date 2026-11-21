@@ -1414,6 +1414,7 @@ panel:open()
 |---|---|
 | `hint(text, seconds)` | Shows the game's hint box, even with hints turned off. `text` is your words, or a hint name such as `"hint_alarm"`. `seconds` is 7 when left out |
 | `ping(pos)` | Puts this player's mark on the map at a position, or takes it away with `nil`. Everyone sees it |
+| `speech(unit, text, seconds)` | Shows your words over a Helldiver, the way the game shows a quick message (Yes, No, Wait, Move), with no voice line. On this machine only. `seconds` is 3 when left out |
 
 Your words in a hint go through `obsidian.notify` (in Obsidian's Wiki), so `hint` can answer `false, "queue_full"` when your mod already has three waiting.
 
@@ -2737,6 +2738,7 @@ Messages and map marks, through the game's own HUD.
 - `api.ui.ping(pos)`: The player's map mark at a world position, or off with nil. Every player sees it.
 - `api.ui.chat(text)`: A line in the game's text chat from this player, as if typed: every player sees it under this player's name, players without the mod too. Answers false, "not_available" where the game has no chat (the main menu, a game with no player of this machine).
 - `api.ui.with_texts(texts, fn, ...)`: Runs fn with some of the game's text keys showing other words, as LocalizationManager gives them: texts is { key = words }. Only while fn runs, so a screen of the game can be reused with a mod's words and nothing else changes. Answers what fn answers; an error in fn is raised again after.
+- `api.ui.speech(unit, text, seconds)`: Shows `text` over the Helldiver `unit` (any player's, this machine only, with no voice or gesture) for `seconds` (the game's 3 when nil), in the look of the game's quick messages, replacing one that shows. Answers false and "no_avatar" for a unit without the game's customization state.
 
 ### api.vehicles
 

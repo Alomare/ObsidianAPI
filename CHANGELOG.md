@@ -2,6 +2,10 @@
 
 New, changed or removed capabilities, one line each, brief and direct. The section of a release becomes the notes of that release.
 
+## Next
+
+- New: `api.ui.speech(unit, text, seconds)` shows text from a mod over a Helldiver, in the look of the quick messages (Yes, No, Wait, Move).
+
 ## 1.56.0
 
 - New: Memory Bridge option, off by default. While it is on, Lua sent by a developer tool runs in the running game, and the answer goes back to the tool, so a mod can be tried without a restart. The tool is `tools/bridge.py` of the HD1 Lua Modding Skill, and `REFERENCE.md` has the details.
