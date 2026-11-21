@@ -127,4 +127,43 @@ function M.with_texts(texts, fn, ...)
 	return unpack(r, 2, r.n)
 end
 
+-- Speech over a Helldiver: the words the game shows over a player who uses a quick message (Yes, No,
+-- Wait, Move). The game keeps the one showing in the customization component's state of each unit
+-- (current_communication_event = { time, duration, event_info = { text = <text key> } }) and draws it
+-- in CustomizationComponent.draw_ui, through LocalizationManager:string. A mod's words go under a key of
+-- the API's own, which shows them while draw_ui runs.
+local SPEECH_KEY = "obsidian_speech_"
+local speech = { texts = {}, n = 0, hooked = false }
+
+local function hook_speech()
+	if speech.hooked then return end
+	speech.hooked = true
+	obsidian.hook("CustomizationComponent", "draw_ui", function(original, ...)
+		if next(speech.texts) == nil then return original(...) end
+		return M.with_texts(speech.texts, original, ...)
+	end)
+end
+
+-- Shows `text` over the Helldiver `unit` (any player's, this machine only, with no voice or gesture) for
+-- `seconds` (the game's 3 when nil), in the look of the game's quick messages, replacing one that shows.
+-- Answers false and "no_avatar" for a unit without the game's customization state.
+function M.speech(unit, text, seconds)
+	if type(text) ~= "string" or text == "" then return false, "bad_type" end
+	if seconds ~= nil and not (type(seconds) == "number" and seconds > 0 and seconds <= 30) then return false, "out_of_range" end
+	local ctx = unit and game.slaves("customization")[unit]
+	local state = type(ctx) == "table" and ctx.state
+	if type(state) ~= "table" then return false, "no_avatar" end
+	hook_speech()
+	-- One key per unit, so words over two players don't overwrite each other.
+	local key = state.obsidian_speech_key
+	if not key then
+		speech.n = speech.n + 1
+		key = SPEECH_KEY .. speech.n
+		state.obsidian_speech_key = key
+	end
+	speech.texts[key] = text
+	state.current_communication_event = { time = 0, duration = seconds or 3, event_info = { text = key } }
+	return true
+end
+
 return M
