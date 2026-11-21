@@ -181,7 +181,7 @@ function Page:button(label, fn, opts)
 	add(self, { kind = "button", label = check_words(label, "a label"), info = check_words(opts and opts.info, "info"), fn = fn })
 end
 
--- A group: a row that opens a page of its own, titled `title`, which takes rows like the page (not
+-- A group: a row that opens a separate page, titled `title`, which takes rows like the page (not
 -- groups). Rows of a group keep their ids among the whole page's, and the page's get and set reach them.
 -- Asking again with the same title gives the same group.
 function Page:group(title, opts)
@@ -195,7 +195,7 @@ function Page:group(title, opts)
 	return sub
 end
 
--- The rows with a value of a page and of its groups.
+-- The rows with a value of a page and of the groups in it.
 local function each_row(page)
 	local out = {}
 	for _, row in ipairs(page.rows) do
@@ -389,7 +389,7 @@ local function make_screen(main, kind)
 		end
 	else
 		screen.on_enter = function(self, args)
-			-- Coming back from a screen above, args is that screen: the page, its screen of rows and the
+			-- Coming back from a screen above, args is that screen: the page, the screen of rows shown and the
 			-- selected row stay.
 			local fresh = type(args) == "table" and args.page ~= nil and args.parent == nil
 			local page = fresh and args.page or self.page

@@ -1461,13 +1461,13 @@ The game's pause menu gets a **Mods** row under its own Settings. It opens a lis
 | `page:choice(id, opts)` | One of `opts.choices`, a list of `{ id, label }`. `opts.default` is an id, the first when left out |
 | `page:number(id, opts)` | From `opts.min` to `opts.max` in steps of `opts.step`, 100 steps at most. `opts.format(value)` gives the words shown |
 | `page:button(label, fn, opts)` | A row that calls `fn` when pressed |
-| `page:group(title, opts)` | A row that opens a page of its own, titled `title`, which takes the same rows as the page (but no groups). `opts.info` is its line of help. Asking again with the same title gives the same group |
-| `page:get(id)` | The value now, of a row of the page or of one of its groups |
+| `page:group(title, opts)` | A row that opens a separate page, titled `title`, which takes the same rows as the page (but no groups). `opts.info` is the line of help for the row. Asking again with the same title gives the same group |
+| `page:get(id)` | The value now, of a row of the page or of one of the groups in it |
 | `page:set(id, value)` | Changes it as the page would. `false` when the value doesn't fit the row |
 
 Every row but a button takes `opts.label`, `opts.info` (the line of help) and `opts.on_change(value)`, called when the value changes, from the menu or from `set`. The row calls answer the value the row starts with: the one kept from the last time, or the default.
 
-The game's Settings screen has no scrolling, so a page or group with more than 12 rows goes on numbered screens of 11, with a **Page** row on top that goes from one to the next. Groups keep a long page short: one row per group, each opening its rows. Ids stay unique across the whole page, groups included. `api.mod_settings.page(...).group` exists from Obsidian API 1.58.0 on; check for it and add the rows to the page itself on an older API.
+The game's Settings screen has no scrolling, so a page or group with more than 12 rows goes on numbered screens of 11, with a **Page** row on top that goes from one to the next. Groups keep a long page short: one row per group, each opening the rows of that group. Ids stay unique across the whole page, groups included. `api.mod_settings.page(...).group` exists from Obsidian API 1.58.0 on; check for it and add the rows to the page itself on an older API.
 
 Any words (the page title, a label, the info, a choice's label) can be a string or a table by language, `{ en = "...", fr = "...", es = "...", ["pt-BR"] = "..." }`. The page shows the game's language, else English. Pages are made at boot, before the game knows its language, so the table is read each time the page is drawn. Labels are shown in capitals, accents included.
 
@@ -2603,7 +2603,7 @@ Mod Settings: a row of the game's pause menu that opens a list of mods, and a pa
 - `page:choice(id, opts)`: opts.choices: { { id = "...", label = "..." }, ... }; default: one of the ids, else the first.
 - `page:number(id, opts)`: opts: min, max, step (each step is a stop on the row's arrows, 100 at most), default, format(value) for the words shown.
 - `page:button(label, fn, opts)`: A row that does something when pressed. Nothing is kept.
-- `page:group(title, opts)`: A group: a row that opens a page of its own, titled `title`, which takes rows like the page (not groups). Rows of a group keep their ids among the whole page's, and the page's get and set reach them. Asking again with the same title gives the same group.
+- `page:group(title, opts)`: A group: a row that opens a separate page, titled `title`, which takes rows like the page (not groups). Rows of a group keep their ids among the whole page's, and the page's get and set reach them. Asking again with the same title gives the same group.
 - `page:get(id)`
 - `page:set(id, value)`: Sets a value as the page would; false when there's no such row or the value doesn't fit it.
 - `api.mod_settings.page(title)`: The calling mod's page, titled for the list of mods. Asking again gives the same page.
