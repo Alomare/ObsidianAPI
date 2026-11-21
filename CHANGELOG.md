@@ -2,7 +2,7 @@
 
 New, changed or removed capabilities, one line each, brief and direct. The section of a release becomes the notes of that release.
 
-## Next
+## 1.58.0
 
 - New: `page:group(title)` in `api.mod_settings` adds a row that opens a page of its own, to split a long page of settings.
 - Fixed: A page of settings with more than 12 rows no longer runs off the screen. Its rows go on numbered screens with a Page row on top.
