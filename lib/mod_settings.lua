@@ -63,7 +63,7 @@ end
 
 -- The game writes its menus in capitals, in the texts themselves, so ours are too. Help lines aren't.
 -- string.upper leaves letters outside ASCII alone: the accented ones of the game's languages are two
--- bytes in UTF-8, the capital 32 below the small one (à to þ, but ÷), and œ.
+-- bytes in UTF-8, the capital 32 below the small one (Ã  to Ã¾, but Ã·), and Å“.
 local function caps(s)
 	s = s:upper():gsub("\195([\160-\190])", function(c)
 		return c == "\183" and "\195\183" or "\195" .. string.char(c:byte() - 32)
@@ -320,7 +320,7 @@ end
 -- The game's screen draws every row, from the middle up and down, and has no scrolling: past ROWS_SHOWN
 -- rows, the rows go on numbered screens, with a PAGE row on top to go from one to the next.
 local ROWS_SHOWN = 12
-local PAGE_WORDS = { en = "Page", fr = "Page", es = "Página", ["pt-BR"] = "Página" }
+local PAGE_WORDS = { en = "Page", fr = "Page", es = "PÃ¡gina", ["pt-BR"] = "PÃ¡gina" }
 
 -- The rows of screen `at` of a list, the number of the screen shown, and how many there are.
 function M.chunk(rows, at)
