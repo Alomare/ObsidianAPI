@@ -26,7 +26,7 @@ local M = { pages = {}, order = {}, BINDS = true }
 
 local ENTRY = "obsidian_mod_settings"
 local TITLE_KEY = "menu_options_title"
-local LIST, PAGE = "obsidian_mod_list", "obsidian_mod_page"
+local LIST, PAGE, GROUP = "obsidian_mod_list", "obsidian_mod_page", "obsidian_mod_group"
 local WORDS = {
 	en = "Mods", fr = "Mods", es = "Mods", bp = "Mods",
 }
@@ -63,7 +63,7 @@ end
 
 -- The game writes its menus in capitals, in the texts themselves, so ours are too. Help lines aren't.
 -- string.upper leaves letters outside ASCII alone: the accented ones of the game's languages are two
--- bytes in UTF-8, the capital 32 below the small one (Ã  to Ã¾, but Ã·), and Å“.
+-- bytes in UTF-8, the capital 32 below the small one (à to þ, but ÷), and œ.
 local function caps(s)
 	s = s:upper():gsub("\195([\160-\190])", function(c)
 		return c == "\183" and "\195\183" or "\195" .. string.char(c:byte() - 32)
@@ -181,9 +181,36 @@ function Page:button(label, fn, opts)
 	add(self, { kind = "button", label = check_words(label, "a label"), info = check_words(opts and opts.info, "info"), fn = fn })
 end
 
-function Page:get(id)
+-- A group: a row that opens a page of its own, titled `title`, which takes rows like the page (not
+-- groups). Rows of a group keep their ids among the whole page's, and the page's get and set reach them.
+-- Asking again with the same title gives the same group.
+function Page:group(title, opts)
+	if self.parent then error("mod_settings: a group can't hold groups", 2) end
+	check_words(title, "a title")
 	for _, row in ipairs(self.rows) do
-		if row.id == id then return row.value end
+		if row.kind == "group" and say(row.label) == say(title) then return row.group end
+	end
+	local sub = setmetatable({ owner = self.owner, rows = {}, title = title, parent = self }, Page)
+	self.rows[#self.rows + 1] = { kind = "group", label = title, info = check_words(opts and opts.info, "info"), group = sub }
+	return sub
+end
+
+-- The rows with a value of a page and of its groups.
+local function each_row(page)
+	local out = {}
+	for _, row in ipairs(page.rows) do
+		if row.kind == "group" then
+			for _, r in ipairs(row.group.rows) do out[#out + 1] = { r, row.group } end
+		else
+			out[#out + 1] = { row, page }
+		end
+	end
+	return out
+end
+
+function Page:get(id)
+	for _, e in ipairs(each_row(self)) do
+		if e[1].id == id then return e[1].value end
 	end
 	return nil
 end
@@ -206,10 +233,11 @@ end
 
 -- Sets a value as the page would; false when there's no such row or the value doesn't fit it.
 function Page:set(id, value)
-	for _, row in ipairs(self.rows) do
+	for _, e in ipairs(each_row(self)) do
+		local row = e[1]
 		if row.id == id and row.kind ~= "button" then
 			if not fits(row, value) then return false end
-			changed(self, row, value)
+			changed(e[2], row, value)
 			return true
 		end
 	end
@@ -267,7 +295,9 @@ local function game_row(row, n, texts)
 		out.info = name .. "_info"
 		texts[out.info] = say(row.info)
 	end
-	if row.kind == "toggle" then
+	if row.kind == "group" then
+		-- No value: the row opens the group when pressed.
+	elseif row.kind == "toggle" then
 		out.options = { { name = "options_no", value = false }, { name = "options_yes", value = true }, selected_index = row.value and 2 or 1 }
 	elseif row.kind == "choice" then
 		out.options, out.ignore_loc_option_names = { selected_index = 1 }, true
@@ -287,13 +317,55 @@ local function game_row(row, n, texts)
 	return out
 end
 
-local function open_screen(screen, rows, title)
+-- The game's screen draws every row, from the middle up and down, and has no scrolling: past ROWS_SHOWN
+-- rows, the rows go on numbered screens, with a PAGE row on top to go from one to the next.
+local ROWS_SHOWN = 12
+local PAGE_WORDS = { en = "Page", fr = "Page", es = "Página", ["pt-BR"] = "Página" }
+
+-- The rows of screen `at` of a list, the number of the screen shown, and how many there are.
+function M.chunk(rows, at)
+	if #rows <= ROWS_SHOWN then return rows, 1, 1 end
+	local per = ROWS_SHOWN - 1
+	local count = math.ceil(#rows / per)
+	at = ((at or 1) - 1) % count + 1
+	local out = {}
+	for i = (at - 1) * per + 1, math.min(at * per, #rows) do out[#out + 1] = rows[i] end
+	return out, at, count
+end
+
+local function open_screen(screen, rows, title, at, keep)
+	local shown_rows, now, count = M.chunk(rows, at)
+	screen.all_rows, screen.at = rows, now
+	if count > 1 then
+		local nav = { kind = "choice", nav = true, label = PAGE_WORDS, choices = {}, value = now }
+		for i = 1, count do nav.choices[i] = { id = i, label = i .. " / " .. count } end
+		local list = { nav }
+		for _, row in ipairs(shown_rows) do list[#list + 1] = row end
+		shown_rows = list
+	end
 	screen.user_pad_number = screen.parent.user_pad_number
 	screen.options, screen.texts = {}, { [TITLE_KEY] = caps(say(title)) }
-	for n, row in ipairs(rows) do screen.options[n] = game_row(row, n, screen.texts) end
-	screen.rows = rows
-	screen.selected_option = 1
+	for n, row in ipairs(shown_rows) do screen.options[n] = game_row(row, n, screen.texts) end
+	screen.rows = shown_rows
+	screen.selected_option = keep and math.min(keep, #shown_rows) or 1
 	screen.cursor_selection_direction = nil
+end
+
+-- Buttons and groups act when pressed.
+local function wire_buttons(screen)
+	for n, row in ipairs(screen.rows) do
+		if row.kind == "button" then
+			screen.options[n].on_pressed = function()
+				local ok, err = pcall(row.fn)
+				if not ok then obsidian.log("mod_settings: " .. tostring(screen.page and screen.page.owner) .. " button: " .. tostring(err)) end
+			end
+		elseif row.kind == "group" then
+			screen.options[n].on_pressed = function()
+				screen:play_sound_accept(nil, screen.user_pad_number)
+				screen.parent:push_menu(GROUP, { page = row.group })
+			end
+		end
+	end
 end
 
 local function make_screen(main, kind)
@@ -303,7 +375,7 @@ local function make_screen(main, kind)
 		return ui.with_texts(self.texts or {}, Options.update, self, dt, t)
 	end
 	if kind == LIST then
-		screen.on_enter = function(self)
+		screen.on_enter = function(self, args)
 			local rows = {}
 			for _, page in ipairs(shown()) do
 				rows[#rows + 1] = { kind = "button", label = page.title, fn = function()
@@ -311,33 +383,42 @@ local function make_screen(main, kind)
 					self.parent:push_menu(PAGE, { page = page })
 				end }
 			end
-			open_screen(self, rows, words())
-			for n, row in ipairs(rows) do self.options[n].on_pressed = row.fn end
+			local back = not (type(args) == "table" and next(args) == nil)
+			open_screen(self, rows, words(), back and self.at or 1)
+			wire_buttons(self)
 		end
 	else
 		screen.on_enter = function(self, args)
-			-- Coming back from a screen above, args is that screen: the page stays.
-			local page = type(args) == "table" and args.page or self.page
+			-- Coming back from a screen above, args is that screen: the page, its screen of rows and the
+			-- selected row stay.
+			local fresh = type(args) == "table" and args.page ~= nil and args.parent == nil
+			local page = fresh and args.page or self.page
+			local keep = not fresh and self.selected_option or nil
 			self.page = page
-			open_screen(self, page and page.rows or {}, page and page.title or words())
-			for n, row in ipairs(self.rows) do
-				if row.kind == "button" then
-					self.options[n].on_pressed = function()
-						local ok, err = pcall(row.fn)
-						if not ok then obsidian.log("mod_settings: " .. page.owner .. " button: " .. tostring(err)) end
+			open_screen(self, page and page.rows or {}, page and page.title or words(), fresh and 1 or self.at, keep)
+			wire_buttons(self)
+		end
+	end
+	-- The game applies its own rows by name. Ours are read back after its input.
+	screen.handle_input = function(self, input)
+		local r = pack(Options.handle_input(self, input))
+		for n, row in ipairs(self.rows or {}) do
+			local o = self.options[n] and self.options[n].options
+			local v = o and o[o.selected_index] and o[o.selected_index].value
+			if v ~= nil then
+				if row.nav then
+					if v ~= self.at then
+						local title = self.page and self.page.title or words()
+						open_screen(self, self.all_rows, title, v, n)
+						wire_buttons(self)
+						break
 					end
+				elseif self.page then
+					changed(self.page, row, v)
 				end
 			end
 		end
-		-- The game applies its own rows by name. Ours are read back after its input.
-		screen.handle_input = function(self, input)
-			local r = pack(Options.handle_input(self, input))
-			for n, row in ipairs(self.rows or {}) do
-				local o = self.options[n] and self.options[n].options
-				if o and o[o.selected_index] then changed(self.page, row, o[o.selected_index].value) end
-			end
-			return unpack(r, 1, r.n)
-		end
+		return unpack(r, 1, r.n)
 	end
 	return screen
 end
@@ -347,6 +428,7 @@ local function screens(main)
 	if not main.states[LIST] then
 		main.states[LIST] = make_screen(main, LIST)
 		main.states[PAGE] = make_screen(main, PAGE)
+		main.states[GROUP] = make_screen(main, GROUP)
 	end
 	return true
 end
