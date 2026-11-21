@@ -2,7 +2,7 @@
 
 New, changed or removed capabilities, one line each, brief and direct. The section of a release becomes the notes of that release.
 
-## Next
+## 1.57.0
 
 - New: `api.ui.speech(unit, text, seconds)` shows text from a mod over a Helldiver, in the look of the quick messages (Yes, No, Wait, Move).
 
