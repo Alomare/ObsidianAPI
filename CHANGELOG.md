@@ -2,6 +2,10 @@
 
 New, changed or removed capabilities, one line each, brief and direct. The section of a release becomes the notes of that release.
 
+## 1.58.2
+
+- Fixed: The reference for `api.world.shading` said a value goes on again in each new mission. It goes on again at every change of screen, the ship and the title screen included.
+
 ## 1.58.1
 
 - New: `page:group(title)` in `api.mod_settings` adds a row that opens a separate page, to split a long page of settings.

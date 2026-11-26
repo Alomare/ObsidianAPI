@@ -303,7 +303,8 @@ end
 M.SHADING = SHADING
 
 -- A value of the look of the mission. kind: scalar, vector2 or vector3. value: a number, or a list
--- of 2 or 3. nil gives it back to the planet. It goes on again in each new mission.
+-- of 2 or 3. nil gives it back to the planet. It goes on again at every change of screen, the ship
+-- and the title screen included, until given back.
 function M.shading(name, kind, value)
 	local known = shading_kind(name)
 	if not known then return false, "unknown_shading" end
